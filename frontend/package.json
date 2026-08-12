@@ -9,6 +9,7 @@
 		"preview": "vite preview"
 	},
 	"dependencies": {
+		"dompurify": "^3.4.13",
 		"lucide-react": "^0.468.0",
 		"marked": "^18.0.9",
 		"react": "^19.0.0",

@@ -2,6 +2,7 @@ import { ImapFlow } from "imapflow";
 import nodemailer from "nodemailer";
 import { simpleParser } from "mailparser";
 import { marked } from "marked";
+import sanitizeHtml from "sanitize-html";
 import { MAIL_SERVER } from "../config.js";
 import { getUser } from "../plugins/auth.plugin.js";
 import { generalLogger as logger } from "../logger.js";
@@ -275,7 +276,9 @@ export const MailService = {
 			let html = body.html;
 			if (body.markdown && !html && body.text) {
 				try {
-					html = marked.parse(body.text);
+					// Convert markdown → HTML, then sanitize so any markdown-embedded
+					// HTML/scripts can't execute in recipients' mail clients.
+					html = sanitizeHtml(marked.parse(body.text));
 				} catch {
 					html = undefined;
 				}

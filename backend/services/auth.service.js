@@ -4,12 +4,20 @@ import { getUser } from "../plugins/auth.plugin.js";
 import { isLLMPresent } from "./llm.service.js";
 import { generalLogger as logger } from "../logger.js";
 
+// The mailbox password travels inside the JWT cookie (required for the
+// IMAP/SMTP proxy). Secure is forced ON in production so the cookie is never
+// sent over plaintext HTTP; an explicit COOKIE_SECURE=true can override for
+// reverse-proxy setups that terminate TLS upstream.
+const COOKIE_SECURE =
+	process.env.COOKIE_SECURE === "true" ||
+	process.env.NODE_ENV === "production";
+
 function setAuthCookies({ cookie, accessToken, rememberMe }) {
 	cookie.ezmail_access.set({
 		value: accessToken,
 		httpOnly: true,
 		sameSite: "strict",
-		secure: process.env.NODE_ENV === "production",
+		secure: COOKIE_SECURE,
 		path: "/",
 		maxAge: rememberMe ? 60 * 60 * 24 * 7 : 24 * 60 * 60,
 	});
@@ -20,7 +28,7 @@ function clearAuthCookies({ cookie }) {
 		value: "",
 		httpOnly: true,
 		sameSite: "strict",
-		secure: process.env.NODE_ENV === "production",
+		secure: COOKIE_SECURE,
 		path: "/",
 		maxAge: 0,
 	});

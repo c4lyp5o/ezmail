@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { marked } from "marked";
+import DOMPurify from "dompurify";
 import { apiCall } from "../utils/apiCall.js";
 import { ArrowLeft, Mail as MailIcon, Trash2, ChevronDown, ChevronRight, Paperclip, Download, FileWarning } from "lucide-react";
 
@@ -233,7 +234,11 @@ export default function MessageView({ folder, uid, initialMsg, onBack }) {
 					looksLikeMarkdown(msg.text) ? (
 						<div
 							className="mail-markdown prose prose-invert max-w-none text-sm leading-relaxed text-zinc-300"
-							dangerouslySetInnerHTML={{ __html: marked.parse(msg.text) }}
+							dangerouslySetInnerHTML={{
+								// Incoming mail is untrusted — sanitize the rendered
+								// markdown so embedded HTML/script can not run.
+								__html: DOMPurify.sanitize(marked.parse(msg.text)),
+							}}
 						/>
 					) : (
 						<pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed text-zinc-300">
