@@ -271,7 +271,7 @@ export default function MailPage() {
 			{/* Mobile: hamburger to open the sidebar drawer */}
 			<button
 				onClick={() => setMobileSidebar(true)}
-				className="fixed left-3 top-3 z-30 flex h-10 w-10 items-center justify-center rounded-lg border border-zinc-800 bg-zinc-900 text-zinc-300 shadow-lg md:hidden"
+				className="fixed left-3 top-1.5 z-30 flex h-10 w-10 items-center justify-center rounded-lg border border-zinc-800 bg-zinc-900 text-zinc-300 shadow-lg md:hidden"
 				aria-label="Open folders"
 			>
 				<Menu className="h-4 w-4" />

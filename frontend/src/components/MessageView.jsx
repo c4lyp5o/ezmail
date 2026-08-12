@@ -115,7 +115,7 @@ export default function MessageView({ folder, uid, initialMsg, onBack }) {
 							<div className="flex items-center gap-2 border-b border-zinc-800 py-3 pl-14 pr-4 md:pl-4">
 				<button
 					onClick={onBack}
-					className="flex items-center gap-1 rounded-lg px-2 py-1.5 text-sm text-zinc-400 transition hover:bg-zinc-800 hover:text-zinc-200"
+					className="flex items-center gap-1 rounded-lg px-2 py-1 text-sm text-zinc-400 transition hover:bg-zinc-800 hover:text-zinc-200"
 				>
 					<ArrowLeft className="h-4 w-4" /> Back
 				</button>
