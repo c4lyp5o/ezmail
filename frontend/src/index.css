@@ -1,0 +1,52 @@
+@import "tailwindcss";
+
+/* Email bodies are rendered inside a sandboxed iframe so the email's own CSS
+   cannot bleed out into the app's UI. The frame itself gets neutral styling. */
+.mail-body-frame {
+	background: #fff;
+	color-scheme: light;
+}
+
+/* Rendered markdown (reader view) */
+.mail-markdown {
+	line-height: 1.7;
+}
+.mail-markdown h1,
+.mail-markdown h2,
+.mail-markdown h3 {
+	color: #e4e4e7;
+	font-weight: 600;
+	margin: 1em 0 0.5em;
+}
+.mail-markdown h1 { font-size: 1.4em; }
+.mail-markdown h2 { font-size: 1.2em; }
+.mail-markdown h3 { font-size: 1.05em; }
+.mail-markdown p { margin: 0.6em 0; }
+.mail-markdown ul,
+.mail-markdown ol { margin: 0.6em 0; padding-left: 1.5em; }
+.mail-markdown li { margin: 0.2em 0; }
+.mail-markdown code {
+	background: rgba(244, 244, 245, 0.08);
+	border-radius: 4px;
+	padding: 0.1em 0.35em;
+	font-size: 0.9em;
+}
+.mail-markdown pre {
+	background: rgba(244, 244, 245, 0.06);
+	border-radius: 8px;
+	padding: 0.9em;
+	overflow-x: auto;
+	margin: 0.8em 0;
+}
+.mail-markdown pre code { background: none; padding: 0; }
+.mail-markdown blockquote {
+	border-left: 3px solid #4f46e5;
+	padding-left: 1em;
+	color: #a1a1aa;
+	margin: 0.8em 0;
+}
+.mail-markdown a { color: #818cf8; text-decoration: underline; }
+.mail-markdown table { border-collapse: collapse; margin: 0.8em 0; }
+.mail-markdown th,
+.mail-markdown td { border: 1px solid #3f3f46; padding: 0.4em 0.7em; }
+.mail-markdown img { max-width: 100%; }
