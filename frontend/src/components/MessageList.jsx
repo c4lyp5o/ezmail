@@ -1,7 +1,7 @@
 import { useCallback, useEffect, memo, useState } from "react";
 import useSWR from "swr";
 import { apiCall } from "../utils/apiCall.js";
-import { Search, ArrowUpDown, ArrowUp, ArrowDown, ChevronLeft, ChevronRight, Paperclip } from "lucide-react";
+import { Search, ArrowUpDown, ArrowUp, ArrowDown, ChevronLeft, ChevronRight } from "lucide-react";
 
 const PAGE_SIZE = 50;
 
@@ -46,9 +46,6 @@ const MessageRow = memo(function MessageRow({ msg, selected, onToggle, onClick, 
 					</div>
 				</div>
 				<div className="shrink-0 text-right">
-					{msg.attachments > 0 && (
-						<Paperclip className="ml-auto mb-0.5 h-3.5 w-3.5 text-zinc-500" />
-					)}
 					<div className="text-xs text-zinc-500">{formatDate(msg.date)}</div>
 				</div>
 			</button>

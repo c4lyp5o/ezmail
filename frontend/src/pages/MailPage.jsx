@@ -267,7 +267,7 @@ export default function MailPage() {
 	);
 
 	return (
-		<div className="flex h-screen bg-zinc-950 text-zinc-100">
+		<div className="flex h-screen w-full overflow-x-hidden bg-zinc-950 text-zinc-100">
 			{/* Mobile: hamburger to open the sidebar drawer */}
 			<button
 				onClick={() => setMobileSidebar(true)}
@@ -328,9 +328,9 @@ export default function MailPage() {
 				className={`relative shrink-0 flex-col border-r border-zinc-800 ${
 					isMobile
 						? mobilePane === "list"
-							? "flex w-full"
+							? "flex w-full max-w-full min-w-0"
 							: "hidden"
-						: "flex"
+						: "flex min-w-0"
 				}`}
 			>
 				{/* Drag handle on the separator edge (desktop only) */}
@@ -386,8 +386,8 @@ export default function MailPage() {
 						</button>
 					</div>
 				) : (
-					<div className="border-b border-zinc-800 px-4 py-3">
-						<div className="flex items-center gap-2">
+							<div className="border-b border-zinc-800 py-3 pl-14 pr-4 md:pl-4">
+							<div className="flex items-center gap-2">
 							<h2 className="text-lg font-semibold capitalize">{activeFolder}</h2>
 							{listIsValidating && (
 								<div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-zinc-700 border-t-indigo-500" />
@@ -396,7 +396,7 @@ export default function MailPage() {
 					</div>
 				)}
 
-				<div className="flex min-h-0 flex-1 flex-col pt-12 md:pt-0">
+				<div className="flex min-h-0 flex-1 flex-col">
 					{/* MessageList manages its own scroll */}
 					<MessageList
 						activeFolder={activeFolder}
@@ -453,9 +453,9 @@ export default function MailPage() {
 			</div>
 
 			{/* Main content column */}
-			<main
-				className={`flex-1 ${isMobile && mobilePane === "list" ? "hidden" : ""}`}
-			>
+							<main
+								className={`min-w-0 flex-1 ${isMobile && mobilePane === "list" ? "hidden" : ""}`}
+							>
 				{view.type === "compose" && (
 					<ComposeView onBack={handleBack} />
 				)}
