@@ -98,7 +98,7 @@ if (process.env.NODE_ENV === "development") {
 					contact: {
 						name: "c4lyp5o",
 						url: "https://github.com/c4lyp5o",
-						email: "calypso[at]calypsocloud.one",
+						email: "contact@example.com",
 					},
 					license: {
 						name: "MIT",
