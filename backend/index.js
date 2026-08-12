@@ -81,6 +81,20 @@ export const app = new Elysia()
 		detail: {
 			hide: true,
 		},
+	})
+
+	.get("/*urlPath", ({ set, path: urlPath }) => {
+		// SPA fallback: serve index.html for any client-side route refresh (React Router).
+		// Never intercept API/asset requests — unmatched /api/* and file paths return a real 404.
+		if (urlPath.startsWith("/api") || urlPath.includes(".")) {
+			set.status = 404;
+			return { success: false, message: "Not Found" };
+		}
+		return file(path.join(CLIENT_DIR, "index.html"));
+	}, {
+		detail: {
+			hide: true,
+		},
 	});
 
 if (process.env.NODE_ENV === "development") {
