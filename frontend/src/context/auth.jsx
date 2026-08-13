@@ -28,6 +28,17 @@ export function AuthProvider({ children }) {
 	const login = useCallback(
 		async (mailbox, password, rememberMe) => {
 			const res = await apiCall.post("/login", { mailbox, password, rememberMe });
+			// res.totp === true when the mailbox uses passwordless TOTP — caller
+			// then routes to the code step. Otherwise log straight in.
+			if (!res?.totp) await checkAuth();
+			return res;
+		},
+		[checkAuth],
+	);
+
+	const loginWithCode = useCallback(
+		async (mailbox, code, rememberMe) => {
+			const res = await apiCall.post("/login/code", { mailbox, code, rememberMe });
 			await checkAuth();
 			return res;
 		},
@@ -40,7 +51,7 @@ export function AuthProvider({ children }) {
 	}, []);
 
 	return (
-		<AuthContext.Provider value={{ user, loading, login, logout }}>
+		<AuthContext.Provider value={{ user, loading, login, loginWithCode, logout }}>
 			{children}
 		</AuthContext.Provider>
 	);

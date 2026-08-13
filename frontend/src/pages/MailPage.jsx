@@ -7,6 +7,7 @@ import MessageList from "../components/MessageList.jsx";
 import MessageView from "../components/MessageView.jsx";
 import ComposeView from "../components/ComposeView.jsx";
 import SummaryColumn from "../components/SummaryColumn.jsx";
+import SettingsModal from "../components/SettingsModal.jsx";
 import {
 	Inbox,
 	LogOut,
@@ -18,6 +19,7 @@ import {
 	ChevronLeft,
 	ChevronRight,
 	Menu,
+	Settings,
 } from "lucide-react";
 
 // Builds a compact page-number list with ellipses, e.g.
@@ -45,6 +47,7 @@ export default function MailPage() {
 	const [selected, setSelected] = useState(() => new Set()); // Set of UIDs, persists across opens
 	const [movePopup, setMovePopup] = useState(false);
 	const [bulkBusy, setBulkBusy] = useState(false);
+	const [settingsOpen, setSettingsOpen] = useState(false);
 
 	// Mobile: sidebar drawer open state + which pane is shown
 	const [mobileSidebar, setMobileSidebar] = useState(false);
@@ -309,8 +312,18 @@ export default function MailPage() {
 				<FolderList folders={folders} active={activeFolder} onSelect={selectFolder} />
 
 				<div className="mt-auto border-t border-zinc-800 p-4">
-					<div className="mb-2 truncate text-sm text-zinc-400">
-						{user?.mailbox || "mailbox"}
+					<div className="mb-2 flex items-center gap-2">
+						<div className="min-w-0 flex-1 truncate text-sm text-zinc-400">
+							{user?.mailbox || "mailbox"}
+						</div>
+						<button
+							onClick={() => setSettingsOpen(true)}
+							aria-label="Account settings"
+							title="Account & security"
+							className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-zinc-500 transition hover:bg-zinc-800 hover:text-zinc-200"
+						>
+							<Settings className="h-4 w-4" />
+						</button>
 					</div>
 					<button
 						onClick={handleLogout}
@@ -518,6 +531,12 @@ export default function MailPage() {
 					</div>
 				</div>
 			)}
+
+			<SettingsModal
+				open={settingsOpen}
+				onClose={() => setSettingsOpen(false)}
+				mailbox={user?.mailbox}
+			/>
 		</div>
 	);
 }
