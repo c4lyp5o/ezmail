@@ -9,6 +9,7 @@ const MessageRow = memo(function MessageRow({ msg, isReading, selected, onToggle
 	const isUnread = !alwaysRead && !msg.seen;
 	return (
 		<div
+      onClick={onClick}
 			className={`group flex w-full items-center gap-3 border-b border-hair px-4 py-3 text-left transition hover:bg-hover/40 ${
 				selected ? "bg-accent/10 font-bold" : ""
 			} ${isReading === msg.uid ? "bg-accent/30" : ""}`}
@@ -23,7 +24,7 @@ const MessageRow = memo(function MessageRow({ msg, isReading, selected, onToggle
 				onClick={(e) => e.stopPropagation()}
 				className="h-4 w-4 shrink-0 cursor-pointer rounded border-hair-strong accent-accent"
 			/>
-			<button onClick={onClick} className="flex min-w-0 flex-1 items-center gap-3 text-left">
+			<button className="flex min-w-0 flex-1 items-center gap-3 text-left">
 				<div className={`min-w-0 flex-1 ${selected ? 'bg-red' : ""}`}>
 					<div
 						className={`truncate text-sm ${
