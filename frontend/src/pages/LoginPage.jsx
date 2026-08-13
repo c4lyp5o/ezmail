@@ -2,6 +2,10 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/auth.jsx";
 import { Mail, ShieldCheck, ArrowLeft, Loader2 } from "lucide-react";
+import ThemeToggle from "../components/ThemeToggle.jsx";
+
+const inputCls =
+	"w-full rounded-lg border border-hair bg-panel px-3 py-2.5 text-ink placeholder:text-ink-faint outline-none transition focus:border-accent focus:ring-2 focus:ring-accent/25";
 
 export default function LoginPage() {
 	const { login, loginWithCode } = useAuth();
@@ -52,18 +56,29 @@ export default function LoginPage() {
 	};
 
 	return (
-		<div className="flex min-h-screen items-center justify-center bg-zinc-950 px-4">
-			<div className="w-full max-w-sm">
+		<div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-canvas px-4">
+			{/* theme toggle in top corner */}
+			<div className="absolute right-4 top-4">
+				<ThemeToggle />
+			</div>
+			{/* soft ambient glow behind the card — one restrained accent */}
+			<div
+				aria-hidden
+				className="pointer-events-none absolute -top-40 left-1/2 h-80 w-[36rem] -translate-x-1/2 rounded-full bg-accent/15 blur-[120px]"
+			/>
+			<div className="relative w-full max-w-sm">
 				<div className="mb-8 flex flex-col items-center gap-3">
-					<div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-indigo-500/20 text-indigo-400">
+					<div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-hair bg-panel text-accent shadow-sm">
 						{needsCode ? (
-							<ShieldCheck className="h-7 w-7" />
+							<ShieldCheck className="h-6 w-6" />
 						) : (
-							<Mail className="h-7 w-7" />
+							<Mail className="h-6 w-6" />
 						)}
 					</div>
-					<h1 className="text-2xl font-semibold text-zinc-100">ezmail</h1>
-					<p className="text-sm text-zinc-500">
+					<h1 className="text-2xl font-semibold tracking-tight text-ink">
+						ezmail
+					</h1>
+					<p className="text-sm text-ink-muted">
 						{needsCode
 							? "Enter your 6-digit code"
 							: "Sign in to your mailbox"}
@@ -73,14 +88,14 @@ export default function LoginPage() {
 				{needsCode ? (
 					<form onSubmit={submitCode} className="space-y-4">
 						<div>
-							<label className="mb-1 block text-sm font-medium text-zinc-400">
+							<label className="mb-1.5 block text-sm font-medium text-ink-2">
 								Authenticator code
 							</label>
 							<input
 								type="text"
 								value={code}
 								onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
-								className="w-full rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-center text-lg tracking-[0.3em] text-zinc-100 outline-none focus:border-indigo-500"
+								className={`${inputCls} text-center font-mono text-lg tracking-[0.3em] text-ink`}
 								placeholder="000000"
 								maxLength={6}
 								inputMode="numeric"
@@ -91,7 +106,7 @@ export default function LoginPage() {
 						</div>
 
 						{error && (
-							<div className="rounded-lg border border-red-800 bg-red-950/50 px-3 py-2 text-sm text-red-400">
+							<div className="rounded-lg border border-danger/20 bg-danger/10 px-3 py-2 text-sm text-danger">
 								{error}
 							</div>
 						)}
@@ -99,14 +114,14 @@ export default function LoginPage() {
 						<button
 							type="submit"
 							disabled={busy}
-							className="flex w-full items-center justify-center gap-2 rounded-lg bg-indigo-600 py-2 font-medium text-white transition hover:bg-indigo-500 disabled:opacity-50"
+							className="flex w-full items-center justify-center gap-2 rounded-lg bg-accent py-2.5 font-medium text-white transition hover:bg-accent-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 disabled:opacity-50"
 						>
 							{busy ? (
 								<Loader2 className="h-4 w-4 animate-spin" />
 							) : (
 								<ShieldCheck className="h-4 w-4" />
 							)}
-							{busy ? "Signing in…" : "Sign in"}
+							{busy ? "Signing in…" : "Verify"}
 						</button>
 
 						<button
@@ -116,7 +131,7 @@ export default function LoginPage() {
 								setCode("");
 								setError("");
 							}}
-							className="flex w-full items-center justify-center gap-2 rounded-lg py-2 text-sm text-zinc-400 transition hover:text-zinc-200"
+							className="flex w-full items-center justify-center gap-2 rounded-lg py-2 text-sm text-ink-muted transition hover:text-ink"
 						>
 							<ArrowLeft className="h-4 w-4" />
 							Back
@@ -125,14 +140,14 @@ export default function LoginPage() {
 				) : (
 					<form onSubmit={submit} className="space-y-4">
 						<div>
-							<label className="mb-1 block text-sm font-medium text-zinc-400">
+							<label className="mb-1.5 block text-sm font-medium text-ink-2">
 								Email address
 							</label>
 							<input
 								type="email"
 								value={mailbox}
 								onChange={(e) => setMailbox(e.target.value)}
-								className="w-full rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-zinc-100 outline-none focus:border-indigo-500"
+								className={inputCls}
 								placeholder="you@example.com"
 								autoFocus
 								required
@@ -140,31 +155,31 @@ export default function LoginPage() {
 						</div>
 
 						<div>
-							<label className="mb-1 block text-sm font-medium text-zinc-400">
+							<label className="mb-1.5 block text-sm font-medium text-ink-2">
 								Password
 							</label>
 							<input
 								type="password"
 								value={password}
 								onChange={(e) => setPassword(e.target.value)}
-								className="w-full rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-zinc-100 outline-none focus:border-indigo-500"
+								className={inputCls}
 								placeholder="Enter your mail password"
 								required
 							/>
 						</div>
 
-						<label className="flex items-center gap-2 text-sm text-zinc-400">
+						<label className="flex items-center gap-2 text-sm text-ink-muted">
 							<input
 								type="checkbox"
 								checked={rememberMe}
 								onChange={(e) => setRememberMe(e.target.checked)}
-								className="h-4 w-4 rounded border-zinc-800 bg-zinc-900"
+								className="h-4 w-4 rounded border-hair-strong bg-panel accent-accent"
 							/>
 							Remember me
 						</label>
 
 						{error && (
-							<div className="rounded-lg border border-red-800 bg-red-950/50 px-3 py-2 text-sm text-red-400">
+							<div className="rounded-lg border border-danger/20 bg-danger/10 px-3 py-2 text-sm text-danger">
 								{error}
 							</div>
 						)}
@@ -172,7 +187,7 @@ export default function LoginPage() {
 						<button
 							type="submit"
 							disabled={busy}
-							className="w-full rounded-lg bg-indigo-600 py-2 font-medium text-white transition hover:bg-indigo-500 disabled:opacity-50"
+							className="w-full rounded-lg bg-accent py-2.5 font-medium text-white transition hover:bg-accent-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 disabled:opacity-50"
 						>
 							{busy ? "Signing in…" : "Sign in"}
 						</button>

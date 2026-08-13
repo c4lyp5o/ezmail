@@ -21,7 +21,10 @@ export async function probeAndRecordLLM() {
 		try {
 			const headers = { Accept: "application/json" };
 			if (auth && LLM.apiKey) headers.Authorization = `Bearer ${LLM.apiKey}`;
-			const res = await fetch(url, { headers, signal: AbortSignal.timeout(4000) });
+			const res = await fetch(url, {
+				headers,
+				signal: AbortSignal.timeout(4000),
+			});
 			if (res.ok) {
 				setSetting("LLM_PRESENT", "true");
 				logger.info(
@@ -79,7 +82,7 @@ export async function summarizeText(text) {
 			method: "POST",
 			headers,
 			body: JSON.stringify(body),
-			signal: AbortSignal.timeout(15000),
+			signal: AbortSignal.timeout(40000),
 		});
 		if (!res.ok) {
 			const text = await res.text().catch(() => "");

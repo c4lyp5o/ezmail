@@ -55,11 +55,11 @@ export default function ComposeView({ onBack }) {
 
 	if (sent) {
 		return (
-			<div className="flex h-full flex-col items-center justify-center gap-4 p-8 text-zinc-500">
-				<p className="text-zinc-200">Message sent ✅</p>
+			<div className="flex h-full flex-col items-center justify-center gap-4 p-8 text-ink-muted">
+				<p className="text-ink-2">Message sent ✅</p>
 				<button
 					onClick={onBack}
-					className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-indigo-500"
+					className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white transition hover:bg-accent"
 				>
 					Back to inbox
 				</button>
@@ -70,10 +70,10 @@ export default function ComposeView({ onBack }) {
 	return (
 		<div className="flex h-full flex-col">
 			{/* Toolbar */}
-			<div className="flex items-center gap-2 border-b border-zinc-800 py-3 pl-14 pr-4 md:pl-4">
+			<div className="flex items-center gap-2 border-b border-hair py-3 pl-14 pr-4 md:pl-4">
 				<button
 					onClick={onBack}
-					className="flex items-center gap-1 rounded-lg px-2 py-1 text-sm text-zinc-400 transition hover:bg-zinc-800 hover:text-zinc-200"
+					className="flex items-center gap-1 rounded-lg px-2 py-1 text-sm text-ink-muted transition hover:bg-hover hover:text-ink-2"
 				>
 					<ArrowLeft className="h-4 w-4" />
 					Back
@@ -83,7 +83,7 @@ export default function ComposeView({ onBack }) {
 				<button
 					onClick={submit}
 					disabled={busy}
-					className="flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-indigo-500 disabled:opacity-50"
+					className="flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white transition hover:bg-accent disabled:opacity-50"
 				>
 					<Send className="h-4 w-4" />
 					{busy ? "Sending…" : "Send"}
@@ -91,7 +91,7 @@ export default function ComposeView({ onBack }) {
 			</div>
 
 			{error && (
-				<div className="m-4 rounded-lg border border-red-800 bg-red-950/50 p-3 text-sm text-red-400">
+				<div className="m-4 rounded-lg border border-danger/20 bg-danger/10 p-3 text-sm text-danger">
 					{error}
 				</div>
 			)}
@@ -122,18 +122,18 @@ export default function ComposeView({ onBack }) {
 
 					{/* Attachment chips */}
 					{attachments.length > 0 && (
-						<div className="flex flex-wrap gap-2 border-b border-zinc-800 px-4 py-2">
+						<div className="flex flex-wrap gap-2 border-b border-hair px-4 py-2">
 							{attachments.map((a, i) => (
 								<span
 									key={`${a.filename}-${i}`}
-									className="flex items-center gap-1.5 rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-zinc-300"
+									className="flex items-center gap-1.5 rounded-md border border-hair-strong bg-panel px-2 py-1 text-xs text-ink-2"
 								>
-									<FileText className="h-3.5 w-3.5 text-indigo-400" />
+									<FileText className="h-3.5 w-3.5 text-accent" />
 									<span className="max-w-[180px] truncate">{a.filename}</span>
 									<button
 										type="button"
 										onClick={() => removeAttachment(i)}
-										className="text-zinc-500 hover:text-red-400"
+										className="text-ink-muted hover:text-danger"
 									>
 										<X className="h-3.5 w-3.5" />
 									</button>
@@ -143,11 +143,11 @@ export default function ComposeView({ onBack }) {
 					)}
 
 					{/* Body toolbar: attach + markdown toggle */}
-					<div className="flex items-center gap-2 border-b border-zinc-800 px-4 py-1.5">
+					<div className="flex items-center gap-2 border-b border-hair px-4 py-1.5">
 						<button
 							type="button"
 							onClick={() => fileRef.current?.click()}
-							className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-zinc-400 transition hover:bg-zinc-800 hover:text-zinc-200"
+							className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-ink-muted transition hover:bg-hover hover:text-ink-2"
 						>
 							<Paperclip className="h-3.5 w-3.5" /> Attach
 						</button>
@@ -158,12 +158,12 @@ export default function ComposeView({ onBack }) {
 							onChange={onFiles}
 							className="hidden"
 						/>
-						<label className="flex cursor-pointer items-center gap-1.5 rounded-md px-2 py-1 text-xs text-zinc-400 transition hover:bg-zinc-800 hover:text-zinc-200">
+						<label className="flex cursor-pointer items-center gap-1.5 rounded-md px-2 py-1 text-xs text-ink-muted transition hover:bg-hover hover:text-ink-2">
 							<input
 								type="checkbox"
 								checked={form.markdown}
 								onChange={(e) => setForm((f) => ({ ...f, markdown: e.target.checked }))}
-								className="accent-indigo-500"
+								className="accent-accent"
 							/>
 							Markdown
 						</label>
@@ -173,7 +173,7 @@ export default function ComposeView({ onBack }) {
 				<textarea
 					value={form.text}
 					onChange={set("text")}
-					className="flex-1 resize-none border-t border-zinc-800 bg-zinc-950 p-4 text-sm text-zinc-100 outline-none placeholder:text-zinc-600"
+					className="flex-1 resize-none border-t border-hair bg-canvas p-4 text-sm text-ink outline-none placeholder:text-ink-faint"
 					placeholder={
 						form.markdown
 							? "Write your message in **markdown**… (# heading, - list, *italic*…)"
@@ -187,8 +187,8 @@ export default function ComposeView({ onBack }) {
 
 function Field({ label, value, onChange, placeholder, type, required }) {
 	return (
-		<div className="flex items-center gap-3 border-b border-zinc-800 px-4 py-2">
-			<label className="w-16 shrink-0 text-sm font-medium text-zinc-500">
+		<div className="flex items-center gap-3 border-b border-hair px-4 py-2">
+			<label className="w-16 shrink-0 text-sm font-medium text-ink-muted">
 				{label}
 			</label>
 			<input
@@ -197,7 +197,7 @@ function Field({ label, value, onChange, placeholder, type, required }) {
 				onChange={onChange}
 				placeholder={placeholder}
 				required={required}
-				className="flex-1 bg-transparent text-sm text-zinc-100 outline-none placeholder:text-zinc-600"
+				className="flex-1 bg-transparent text-sm text-ink outline-none placeholder:text-ink-faint"
 			/>
 		</div>
 	);

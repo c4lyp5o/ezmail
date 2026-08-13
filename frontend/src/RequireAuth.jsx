@@ -9,7 +9,7 @@ export default function RequireAuth({ children }) {
 
 	if (loading) {
 		return (
-			<div className="flex h-screen items-center justify-center text-zinc-500">
+			<div className="flex h-screen items-center justify-center text-ink-muted">
 				Loading…
 			</div>
 		);

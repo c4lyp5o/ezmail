@@ -10,9 +10,9 @@ const SPECIAL_ICONS = {
 
 export default function FolderList({ folders, active, onSelect }) {
 	return (
-		<nav className="flex-1 space-y-0.5 overflow-y-auto px-2">
+		<nav className="flex-1 space-y-0.5 overflow-y-auto px-2 py-2">
 			{folders.length === 0 && (
-				<div className="px-3 py-2 text-sm text-zinc-600">No folders</div>
+				<div className="px-3 py-2 text-sm text-ink-faint">No folders</div>
 			)}
 			{folders.map((folder) => {
 				const Icon = SPECIAL_ICONS[folder.name] || Folder;
@@ -21,13 +21,20 @@ export default function FolderList({ folders, active, onSelect }) {
 					<button
 						key={folder.path}
 						onClick={() => onSelect(folder.path)}
-						className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm transition ${
+						className={`relative flex w-full items-center gap-2.5 rounded-md px-3 py-1.5 text-sm transition ${
 							isActive
-								? "bg-indigo-600/15 text-indigo-300"
-								: "text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200"
+								? "bg-accent/12 text-ink font-medium"
+								: "text-ink-muted hover:bg-hover hover:text-ink"
 						}`}
 					>
-						<Icon className="h-4 w-4 shrink-0" />
+						{isActive && (
+							<span className="absolute left-0 top-1/2 h-4 w-0.5 -translate-y-1/2 rounded-full bg-accent" />
+						)}
+						<Icon
+							className={`h-4 w-4 shrink-0 ${
+								isActive ? "text-accent" : "text-ink-faint"
+							}`}
+						/>
 						<span className="truncate">{folder.name}</span>
 					</button>
 				);

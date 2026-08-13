@@ -70,14 +70,14 @@ export default function SummaryColumn({ message, onClose }) {
 	}, [message]);
 
 	return (
-		<aside className="flex w-80 shrink-0 flex-col border-l border-zinc-800 bg-zinc-900/40">
-			<div className="flex items-center gap-2 border-b border-zinc-800 px-4 py-3">
-				<Sparkles className="h-4 w-4 text-indigo-400" />
+		<aside className="flex w-80 shrink-0 flex-col border-l border-hair bg-panel/40">
+			<div className="flex items-center gap-2 border-b border-hair px-4 py-3">
+				<Sparkles className="h-4 w-4 text-accent" />
 				<span className="text-sm font-semibold">Summary</span>
 				<div className="flex-1" />
 				<button
 					onClick={onClose}
-					className="rounded-lg p-1 text-zinc-500 transition hover:bg-zinc-800 hover:text-zinc-200"
+					className="rounded-lg p-1 text-ink-muted transition hover:bg-hover hover:text-ink-2"
 				>
 					<X className="h-4 w-4" />
 				</button>
@@ -85,23 +85,23 @@ export default function SummaryColumn({ message, onClose }) {
 
 			<div className="flex-1 overflow-y-auto p-4">
 				{summarizing && (
-					<div className="flex items-center gap-3 text-sm text-zinc-400">
-						<div className="h-4 w-4 animate-spin rounded-full border-2 border-zinc-700 border-t-indigo-500" />
+					<div className="flex items-center gap-3 text-sm text-ink-muted">
+						<div className="h-4 w-4 animate-spin rounded-full border-2 border-hair-strong border-t-indigo-500" />
 						Summarizing…
 					</div>
 				)}
 				{!summarizing && error && (
-					<div className="rounded-lg border border-red-800 bg-red-950/50 p-3 text-sm text-red-400">
+					<div className="rounded-lg border border-danger/20 bg-danger/10 p-3 text-sm text-danger">
 						{error}
 					</div>
 				)}
 				{!summarizing && !error && summary && (
-					<div className="whitespace-pre-wrap text-sm leading-relaxed text-zinc-300">
+					<div className="whitespace-pre-wrap text-sm leading-relaxed text-ink-2">
 						{summary}
 					</div>
 				)}
 				{!summarizing && !error && !summary && (
-					<div className="text-sm text-zinc-500">No summary</div>
+					<div className="text-sm text-ink-muted">No summary</div>
 				)}
 			</div>
 		</aside>

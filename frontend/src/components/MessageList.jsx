@@ -9,8 +9,8 @@ const MessageRow = memo(function MessageRow({ msg, selected, onToggle, onClick, 
 	const isUnread = !alwaysRead && !msg.seen;
 	return (
 		<div
-			className={`group flex w-full items-center gap-3 border-b border-zinc-800/60 px-4 py-3 text-left transition hover:bg-zinc-800/40 ${
-				selected ? "bg-indigo-950/40" : ""
+			className={`group flex w-full items-center gap-3 border-b border-hair px-4 py-3 text-left transition hover:bg-hover/40 ${
+				selected ? "bg-accent/10" : ""
 			}`}
 		>
 			<input
@@ -21,24 +21,24 @@ const MessageRow = memo(function MessageRow({ msg, selected, onToggle, onClick, 
 					onToggle(msg.uid);
 				}}
 				onClick={(e) => e.stopPropagation()}
-				className="h-4 w-4 shrink-0 cursor-pointer rounded border-zinc-700 accent-indigo-500"
+				className="h-4 w-4 shrink-0 cursor-pointer rounded border-hair-strong accent-accent"
 			/>
 			<button onClick={onClick} className="flex min-w-0 flex-1 items-center gap-3 text-left">
 				<div className="min-w-0 flex-1">
 					<div
 						className={`truncate text-sm ${
-							isUnread ? "font-semibold text-zinc-100" : "text-zinc-400"
+							isUnread ? "font-semibold text-ink" : "text-ink-muted"
 						}`}
 					>
 						{msg.fromName || msg.from}
 					</div>
 					<div className="flex items-center gap-2">
 						{isUnread && (
-							<span className="h-2 w-2 shrink-0 rounded-full bg-indigo-500" />
+							<span className="h-2 w-2 shrink-0 rounded-full bg-accent" />
 						)}
 						<div
 							className={`truncate text-sm ${
-								isUnread ? "text-zinc-300" : "text-zinc-500"
+								isUnread ? "text-ink-2" : "text-ink-muted"
 							}`}
 						>
 							{msg.subject}
@@ -46,7 +46,7 @@ const MessageRow = memo(function MessageRow({ msg, selected, onToggle, onClick, 
 					</div>
 				</div>
 				<div className="shrink-0 text-right">
-					<div className="text-xs text-zinc-500">{formatDate(msg.date)}</div>
+					<div className="text-xs text-ink-muted">{formatDate(msg.date)}</div>
 				</div>
 			</button>
 		</div>
@@ -131,20 +131,20 @@ export default function MessageList({
 	return (
 		<div className="flex h-full flex-col">
 			{/* Search + sort toolbar */}
-			<div className="flex items-center gap-2 border-b border-zinc-800 px-3 py-2">
+			<div className="flex items-center gap-2 border-b border-hair px-3 py-2">
 				<div className="relative flex-1">
-					<Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-500" />
+					<Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink-muted" />
 					<input
 						value={search}
 						onChange={(e) => setSearch(e.target.value)}
 						placeholder="Search mail…"
-						className="w-full rounded-md border border-zinc-800 bg-zinc-900/60 py-1.5 pl-8 pr-3 text-sm text-zinc-200 outline-none transition placeholder:text-zinc-600 focus:border-indigo-600"
+						className="w-full rounded-md border border-hair bg-panel/60 py-1.5 pl-8 pr-3 text-sm text-ink-2 outline-none transition placeholder:text-ink-faint focus:border-indigo-600"
 					/>
 				</div>
 				<button
 					onClick={() => setSort(sort === "desc" ? "asc" : "desc")}
 					title={`Sort by date: ${sort === "desc" ? "Newest first" : "Oldest first"}`}
-					className="flex items-center gap-1 rounded-md border border-zinc-800 px-2 py-1.5 text-zinc-400 transition hover:bg-zinc-800 hover:text-zinc-200"
+					className="flex items-center gap-1 rounded-md border border-hair px-2 py-1.5 text-ink-muted transition hover:bg-hover hover:text-ink-2"
 				>
 					{sort === "desc" ? (
 						<ArrowDown className="h-3.5 w-3.5" />
@@ -158,18 +158,18 @@ export default function MessageList({
 			{/* Message list */}
 			<div className="flex-1 overflow-y-auto">
 				{isValidating && !messages.length && (
-					<div className="flex flex-col items-center gap-3 p-12 text-zinc-500">
-						<div className="h-6 w-6 animate-spin rounded-full border-2 border-zinc-700 border-t-indigo-500" />
+					<div className="flex flex-col items-center gap-3 p-12 text-ink-muted">
+						<div className="h-6 w-6 animate-spin rounded-full border-2 border-hair-strong border-t-indigo-500" />
 						<span className="text-sm">Loading…</span>
 					</div>
 				)}
 				{error && (
-					<div className="m-4 rounded-lg border border-red-800 bg-red-950/50 p-4 text-sm text-red-400">
+					<div className="m-4 rounded-lg border border-danger/20 bg-danger/10 p-4 text-sm text-danger">
 						{error}
 					</div>
 				)}
 				{!isValidating && !error && messages.length === 0 && (
-					<div className="p-8 text-center text-zinc-500">
+					<div className="p-8 text-center text-ink-muted">
 						{search ? "No messages match your search" : "No messages"}
 					</div>
 				)}

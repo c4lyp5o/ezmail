@@ -81,7 +81,7 @@ export default function MessageView({ folder, uid, initialMsg, onBack }) {
 
 	if (loading) {
 		return (
-			<div className="flex h-full items-center justify-center text-zinc-500">
+			<div className="flex h-full items-center justify-center text-ink-muted">
 				Loading…
 			</div>
 		);
@@ -90,12 +90,12 @@ export default function MessageView({ folder, uid, initialMsg, onBack }) {
 	if (error && !msg) {
 		return (
 			<div className="flex h-full flex-col items-center justify-center gap-4 p-8">
-				<div className="rounded-lg border border-red-800 bg-red-950/50 p-4 text-sm text-red-400">
+				<div className="rounded-lg border border-danger/20 bg-danger/10 p-4 text-sm text-danger">
 					{error}
 				</div>
 				<button
 					onClick={onBack}
-					className="flex items-center gap-2 text-sm text-zinc-400 hover:text-zinc-200"
+					className="flex items-center gap-2 text-sm text-ink-muted hover:text-ink-2"
 				>
 					<ArrowLeft className="h-4 w-4" /> Back
 				</button>
@@ -105,12 +105,12 @@ export default function MessageView({ folder, uid, initialMsg, onBack }) {
 
 	if (!msg) {
 		return (
-			<div className="flex h-full flex-col items-center justify-center gap-4 p-8 text-zinc-500">
+			<div className="flex h-full flex-col items-center justify-center gap-4 p-8 text-ink-muted">
 				<MailIcon className="h-10 w-10" />
 				<p>No message</p>
 				<button
 					onClick={onBack}
-					className="flex items-center gap-2 text-sm text-zinc-400 hover:text-zinc-200"
+					className="flex items-center gap-2 text-sm text-ink-muted hover:text-ink-2"
 				>
 					<ArrowLeft className="h-4 w-4" /> Back
 				</button>
@@ -121,10 +121,10 @@ export default function MessageView({ folder, uid, initialMsg, onBack }) {
 	return (
 				<div className="flex h-full w-full flex-col overflow-y-auto overflow-x-hidden">
 			{/* Toolbar */}
-							<div className="flex items-center gap-2 border-b border-zinc-800 py-3 pl-14 pr-4 md:pl-4">
+							<div className="flex items-center gap-2 border-b border-hair py-3 pl-14 pr-4 md:pl-4">
 				<button
 					onClick={onBack}
-					className="flex items-center gap-1 rounded-lg px-2 py-1 text-sm text-zinc-400 transition hover:bg-zinc-800 hover:text-zinc-200"
+					className="flex items-center gap-1 rounded-lg px-2 py-1 text-sm text-ink-muted transition hover:bg-hover hover:text-ink-2"
 				>
 					<ArrowLeft className="h-4 w-4" /> Back
 				</button>
@@ -132,26 +132,26 @@ export default function MessageView({ folder, uid, initialMsg, onBack }) {
 				<button
 					onClick={remove}
 					title="Move to Trash"
-					className="flex items-center gap-1 rounded-lg px-2 py-1.5 text-sm text-zinc-400 transition hover:bg-red-950 hover:text-red-400"
+					className="flex items-center gap-1 rounded-lg px-2 py-1.5 text-sm text-ink-muted transition hover:bg-danger/10 hover:text-danger"
 				>
 					<Trash2 className="h-4 w-4" /> Delete
 				</button>
 			</div>
 
 			{/* Headers */}
-			<div className="border-b border-zinc-800 px-6 py-5">
-				<h1 className="text-xl font-semibold text-zinc-100">
+			<div className="border-b border-hair px-6 py-5">
+				<h1 className="text-xl font-semibold text-ink">
 					{msg.subject || "(no subject)"}
 				</h1>
-				<div className="mt-3 flex items-center gap-2 text-sm text-zinc-400">
-					<div className="flex h-9 w-9 items-center justify-center rounded-full bg-indigo-500/20 text-sm font-medium text-indigo-300">
+				<div className="mt-3 flex items-center gap-2 text-sm text-ink-muted">
+					<div className="flex h-9 w-9 items-center justify-center rounded-full bg-accent/20 text-sm font-medium text-accent">
 						{(msg.fromName || msg.from || "?").charAt(0).toUpperCase()}
 					</div>
 					<div>
-						<div className="font-medium text-zinc-200">
+						<div className="font-medium text-ink-2">
 							{msg.fromName || msg.from}
 						</div>
-						<div className="text-xs text-zinc-500">
+						<div className="text-xs text-ink-muted">
 							{msg.from}
 							{msg.to ? `  →  ${msg.to}` : ""}
 						</div>
@@ -159,14 +159,14 @@ export default function MessageView({ folder, uid, initialMsg, onBack }) {
 					<div className="flex-1" />
 					<div className="flex items-center gap-2">
 						{!!msg.attachments?.length && (
-							<span className="flex items-center gap-1 text-xs text-zinc-500">
+							<span className="flex items-center gap-1 text-xs text-ink-muted">
 								<Paperclip className="h-3.5 w-3.5" />
 								{msg.attachments.length}
 							</span>
 						)}
 						<button
 							onClick={() => setShowDetails((v) => !v)}
-							className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-zinc-400 transition hover:bg-zinc-800 hover:text-zinc-200"
+							className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-ink-muted transition hover:bg-hover hover:text-ink-2"
 						>
 							{showDetails ? (
 								<ChevronDown className="h-3.5 w-3.5" />
@@ -176,10 +176,10 @@ export default function MessageView({ folder, uid, initialMsg, onBack }) {
 							Details
 						</button>
 						<div className="text-right">
-												<div className="text-xs text-zinc-500">
+												<div className="text-xs text-ink-muted">
 													{msg.date ? formatDate(msg.date) : ""}
 												</div>
-												<div className="text-[10px] text-zinc-600">
+												<div className="text-[10px] text-ink-faint">
 													{msg.date ? new Date(msg.date).toLocaleString() : ""}
 												</div>
 											</div>
@@ -188,7 +188,7 @@ export default function MessageView({ folder, uid, initialMsg, onBack }) {
 
 				{/* Toggleable full detail panel */}
 				{showDetails && (
-					<div className="mt-4 space-y-1.5 rounded-lg border border-zinc-800 bg-zinc-900/40 p-4 text-sm">
+					<div className="mt-4 space-y-1.5 rounded-lg border border-hair bg-panel/40 p-4 text-sm">
 						<DetailRow label="From" value={msg.from || "—"} />
 						<DetailRow label="Reply-to" value={msg.replyTo || "—"} />
 						<DetailRow label="To" value={msg.to || "—"} />
@@ -206,21 +206,21 @@ export default function MessageView({ folder, uid, initialMsg, onBack }) {
 								onClick={() => downloadAttachment(a)}
 								disabled={!a.content}
 								title={a.content ? `Download ${a.filename}` : "Attachment unavailable"}
-								className="flex w-full items-center gap-3 rounded-lg border border-zinc-800 bg-zinc-900/40 p-3 text-left transition hover:border-indigo-700 hover:bg-zinc-900 disabled:opacity-50"
+								className="flex w-full items-center gap-3 rounded-lg border border-hair bg-panel/40 p-3 text-left transition hover:border-indigo-700 hover:bg-panel disabled:opacity-50"
 							>
-								<div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-indigo-500/15 text-indigo-400">
+								<div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-accent/15 text-accent">
 									<Download className="h-4 w-4" />
 								</div>
 								<div className="min-w-0 flex-1">
-									<div className="truncate text-sm font-medium text-zinc-200">
+									<div className="truncate text-sm font-medium text-ink-2">
 										{a.filename}
 									</div>
-									<div className="truncate text-xs text-zinc-500">
+									<div className="truncate text-xs text-ink-muted">
 										{a.contentType}
 										{a.size ? ` · ${formatBytes(a.size)}` : ""}
 									</div>
 								</div>
-								<FileWarning className="h-4 w-4 shrink-0 text-zinc-600" />
+								<FileWarning className="h-4 w-4 shrink-0 text-ink-faint" />
 							</button>
 						))}
 					</div>
@@ -235,13 +235,13 @@ export default function MessageView({ folder, uid, initialMsg, onBack }) {
 						title="email-body"
 						sandbox="allow-same-origin"
 						srcDoc={emailDoc(msg.html)}
-						className="mail-body-frame block w-full rounded-lg border border-zinc-800 bg-white"
+						className="mail-body-frame block w-full rounded-lg border border-hair bg-white"
 						style={{ height: "75vh" }}
 					/>
 				) : msg.text ? (
 					looksLikeMarkdown(msg.text) ? (
 						<div
-							className="mail-markdown prose prose-invert max-w-none text-sm leading-relaxed text-zinc-300"
+							className="mail-markdown prose prose-invert max-w-none text-sm leading-relaxed text-ink-2"
 							dangerouslySetInnerHTML={{
 								// Incoming mail is untrusted — sanitize the rendered
 								// markdown so embedded HTML/script can not run.
@@ -249,12 +249,12 @@ export default function MessageView({ folder, uid, initialMsg, onBack }) {
 							}}
 						/>
 					) : (
-						<pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed text-zinc-300">
+						<pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed text-ink-2">
 							{msg.text}
 						</pre>
 					)
 				) : (
-					<div className="text-sm text-zinc-500">(no body)</div>
+					<div className="text-sm text-ink-muted">(no body)</div>
 				)}
 			</div>
 		</div>
@@ -264,8 +264,8 @@ export default function MessageView({ folder, uid, initialMsg, onBack }) {
 function DetailRow({ label, value }) {
 	return (
 		<div className="flex gap-3">
-			<span className="w-24 shrink-0 text-zinc-500">{label}</span>
-			<span className="min-w-0 break-all text-zinc-300">{value}</span>
+			<span className="w-24 shrink-0 text-ink-muted">{label}</span>
+			<span className="min-w-0 break-all text-ink-2">{value}</span>
 		</div>
 	);
 }

@@ -104,70 +104,70 @@ export default function SettingsModal({ open, onClose, mailbox }) {
 			onClick={close}
 		>
 			<div
-				className="w-full max-w-md rounded-xl border border-zinc-700 bg-zinc-900 p-6 shadow-2xl"
+				className="w-full max-w-md rounded-xl border border-hair-strong bg-panel p-6 shadow-2xl"
 				onClick={(e) => e.stopPropagation()}
 			>
 				<div className="mb-4 flex items-center justify-between">
-					<h3 className="flex items-center gap-2 text-base font-semibold text-zinc-100">
-						<ShieldCheck className="h-5 w-5 text-indigo-400" />
+					<h3 className="flex items-center gap-2 text-base font-semibold text-ink">
+						<ShieldCheck className="h-5 w-5 text-accent" />
 						Account security
 					</h3>
 					<button
 						onClick={close}
 						aria-label="Close settings"
-						className="rounded p-1 text-zinc-500 transition hover:bg-zinc-800 hover:text-zinc-200"
+						className="rounded p-1 text-ink-muted transition hover:bg-hover hover:text-ink-2"
 					>
 						<X className="h-4 w-4" />
 					</button>
 				</div>
 
 				{mailbox && (
-					<p className="mb-4 truncate text-xs text-zinc-500">{mailbox}</p>
+					<p className="mb-4 truncate text-xs text-ink-muted">{mailbox}</p>
 				)}
 
 				{error && (
-					<div className="mb-4 rounded-lg border border-red-800 bg-red-950/50 px-3 py-2 text-sm text-red-400">
+					<div className="mb-4 rounded-lg border border-danger/20 bg-danger/10 px-3 py-2 text-sm text-danger">
 						{error}
 					</div>
 				)}
 
 				{/* Status summary */}
 				{status?.enabled ? (
-					<div className="mb-4 flex items-center justify-between rounded-lg border border-emerald-800/60 bg-emerald-950/30 p-3">
-						<div className="flex items-center gap-2 text-sm text-emerald-300">
+					<div className="mb-4 flex items-center justify-between rounded-lg border border-success/20/60 bg-success/10/30 p-3">
+						<div className="flex items-center gap-2 text-sm text-success">
 							<ShieldCheck className="h-4 w-4" />
 							TOTP enabled — passwordless login active
 						</div>
 						<button
 							onClick={handleDisable}
 							disabled={busy}
-							className="flex items-center gap-1.5 rounded-md border border-red-800/60 px-2.5 py-1.5 text-xs font-medium text-red-400 transition hover:bg-red-950/50"
+							className="flex items-center gap-1.5 rounded-md border border-danger/20/60 px-2.5 py-1.5 text-xs font-medium text-danger transition hover:bg-danger/10"
 						>
 							<Trash2 className="h-3.5 w-3.5" />
 							Disable
 						</button>
 					</div>
 				) : status?.enrolled && step === "idle" ? (
-					<div className="mb-4 rounded-lg border border-amber-800/60 bg-amber-950/30 p-3 text-sm text-amber-300">
+					<div className="mb-4 rounded-lg border border-warn/20/60 bg-warn/10/30 p-3 text-sm text-warn">
 						TOTP is partially set up. Scan a fresh QR to finish, or disable to discard.
 						<div className="mt-3 flex gap-2">
 							<button
 								onClick={() => setStep("qr")}
-								className="rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-indigo-500"
+								className="rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-white transition hover:bg-accent"
 							>
 								Resume setup
 							</button>
 							<button
 								onClick={handleDisable}
 								disabled={busy}
-								className="rounded-md border border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-400 transition hover:bg-zinc-800"
+								className="rounded-md border border-hair-strong px-3 py-1.5 text-xs font-medium text-ink-muted transition hover:bg-hover"
 							>
 								Discard
 							</button>
 						</div>
 					</div>
 				) : status && !status.enrolled && step === "idle" ? (
-					<p className="mb-4 text-sm text-zinc-400">
+					<p className="mb-4 text-sm text-ink-muted">
 						Turn on passwordless login. Sign in with just a 6-digit code from your
 						authenticator app — no password prompt.
 					</p>
@@ -177,14 +177,14 @@ export default function SettingsModal({ open, onClose, mailbox }) {
 				{step === "idle" && status && !status.enabled && (
 					<form onSubmit={handleStart} className="space-y-3">
 						<div>
-							<label className="mb-1 block text-sm font-medium text-zinc-400">
+							<label className="mb-1 block text-sm font-medium text-ink-muted">
 								Mailbox password (one-time, to verify your account)
 							</label>
 							<input
 								type="password"
 								value={password}
 								onChange={(e) => setPassword(e.target.value)}
-								className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-zinc-100 outline-none focus:border-indigo-500"
+								className="w-full rounded-lg border border-hair bg-canvas px-3 py-2 text-ink outline-none focus:border-accent"
 								placeholder="Enter your mail password"
 								autoFocus
 								required
@@ -193,7 +193,7 @@ export default function SettingsModal({ open, onClose, mailbox }) {
 						<button
 							type="submit"
 							disabled={busy}
-							className="flex w-full items-center justify-center gap-2 rounded-lg bg-indigo-600 py-2 font-medium text-white transition hover:bg-indigo-500 disabled:opacity-50"
+							className="flex w-full items-center justify-center gap-2 rounded-lg bg-accent py-2 font-medium text-white transition hover:bg-accent disabled:opacity-50"
 						>
 							{busy ? (
 								<Loader2 className="h-4 w-4 animate-spin" />
@@ -207,26 +207,26 @@ export default function SettingsModal({ open, onClose, mailbox }) {
 
 				{step === "qr" && qrDraft && (
 					<div>
-						<div className="mb-3 rounded-lg border border-zinc-700 bg-white p-4">
+						<div className="mb-3 rounded-lg border border-hair-strong bg-white p-4">
 							<img
 								src={qrDraft.qrCode}
 								alt="TOTP enrollment QR code"
 								className="mx-auto h-44 w-44 object-contain"
 							/>
 						</div>
-						<p className="mb-3 text-center text-xs text-zinc-400">
+						<p className="mb-3 text-center text-xs text-ink-muted">
 							Scan with your authenticator app (e.g. Google Authenticator, Aegis).
 						</p>
 						<form onSubmit={handleComplete} className="space-y-3">
 							<div>
-								<label className="mb-1 block text-sm font-medium text-zinc-400">
+								<label className="mb-1 block text-sm font-medium text-ink-muted">
 									Enter the 6-digit code
 								</label>
 								<input
 									type="text"
 									value={code}
 									onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
-									className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-center text-lg tracking-[0.3em] text-zinc-100 outline-none focus:border-indigo-500"
+									className="w-full rounded-lg border border-hair bg-canvas px-3 py-2 text-center text-lg tracking-[0.3em] text-ink outline-none focus:border-accent"
 									placeholder="000000"
 									maxLength={6}
 									inputMode="numeric"
@@ -239,14 +239,14 @@ export default function SettingsModal({ open, onClose, mailbox }) {
 								<button
 									type="button"
 									onClick={() => setStep("idle")}
-									className="rounded-lg border border-zinc-700 px-3 py-2 text-sm font-medium text-zinc-400 transition hover:bg-zinc-800"
+									className="rounded-lg border border-hair-strong px-3 py-2 text-sm font-medium text-ink-muted transition hover:bg-hover"
 								>
 									Back
 								</button>
 								<button
 									type="submit"
 									disabled={busy}
-									className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-emerald-600 py-2 font-medium text-white transition hover:bg-emerald-500 disabled:opacity-50"
+									className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-success py-2 font-medium text-white transition hover:bg-success disabled:opacity-50"
 								>
 									{busy ? (
 										<Loader2 className="h-4 w-4 animate-spin" />
@@ -261,14 +261,14 @@ export default function SettingsModal({ open, onClose, mailbox }) {
 				)}
 
 				{step === "done" && (
-					<div className="rounded-lg border border-emerald-800/60 bg-emerald-950/30 p-4 text-center">
-						<ShieldCheck className="mx-auto mb-2 h-8 w-8 text-emerald-400" />
-						<p className="text-sm font-medium text-emerald-300">
+					<div className="rounded-lg border border-success/20/60 bg-success/10/30 p-4 text-center">
+						<ShieldCheck className="mx-auto mb-2 h-8 w-8 text-success" />
+						<p className="text-sm font-medium text-success">
 							TOTP enabled. Sign in with your code from now on.
 						</p>
 						<button
 							onClick={close}
-							className="mt-3 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-500"
+							className="mt-3 rounded-lg bg-success px-4 py-2 text-sm font-medium text-white transition hover:bg-success"
 						>
 							Done
 						</button>
