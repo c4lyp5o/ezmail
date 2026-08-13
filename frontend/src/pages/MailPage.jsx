@@ -48,6 +48,7 @@ export default function MailPage() {
 	const [movePopup, setMovePopup] = useState(false);
 	const [bulkBusy, setBulkBusy] = useState(false);
 	const [settingsOpen, setSettingsOpen] = useState(false);
+	const [emptyTrashBusy, setEmptyTrashBusy] = useState(false);
 
 	// Mobile: sidebar drawer open state + which pane is shown
 	const [mobileSidebar, setMobileSidebar] = useState(false);
@@ -193,13 +194,35 @@ export default function MailPage() {
 			await Promise.all(
 				selectedUids.map((uid) =>
 					apiCall
-						.post("/mail/move", { uid, from: activeFolder, to: "Trash" })
+						.post(
+							activeFolder === "Trash"
+								? "/mail/delete"
+								: "/mail/move",
+							activeFolder === "Trash"
+								? { uid, folder: activeFolder }
+								: { uid, from: activeFolder, to: "Trash" },
+						)
 						.catch(() => {}),
 				),
 			);
 			afterMutation();
 		} finally {
 			setBulkBusy(false);
+		}
+	};
+
+	// Permanently delete every message in the Trash folder.
+	const emptyTrash = async () => {
+		if (!window.confirm("Permanently delete ALL mail in Trash? This cannot be undone.")) return;
+		setEmptyTrashBusy(true);
+		try {
+			await apiCall.post("/mail/expunge", { folder: "Trash" });
+			clearSelection();
+			if (refreshList) refreshList();
+		} catch (err) {
+			console.error("Failed to empty trash:", err.message);
+		} finally {
+			setEmptyTrashBusy(false);
 		}
 	};
 
@@ -402,6 +425,21 @@ export default function MailPage() {
 							<div className="border-b border-zinc-800 py-3 pl-14 pr-4 md:pl-4">
 							<div className="flex items-center gap-2">
 							<h2 className="text-lg font-semibold capitalize">{activeFolder}</h2>
+							{activeFolder === "Trash" && (
+								<button
+									onClick={emptyTrash}
+									disabled={bulkBusy || emptyTrashBusy}
+									title="Delete all mail permanently"
+									className="flex items-center gap-1.5 rounded-lg border border-red-800/50 px-2.5 py-1 text-xs font-medium text-red-400 transition hover:bg-red-950/40 disabled:opacity-40"
+								>
+									{emptyTrashBusy ? (
+										<div className="h-3 w-3 animate-spin rounded-full border-2 border-red-400 border-t-transparent" />
+									) : (
+										<Trash2 className="h-3.5 w-3.5" />
+									)}
+									Delete all
+								</button>
+							)}
 							{listIsValidating && (
 								<div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-zinc-700 border-t-indigo-500" />
 							)}

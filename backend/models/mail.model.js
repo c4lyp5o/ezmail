@@ -115,6 +115,15 @@ export const MailModel = {
 		to: t.String(),
 	}),
 
+	deleteMessageBody: t.Object({
+		uid: t.Number(),
+		folder: t.String(),
+	}),
+
+	expungeFolderBody: t.Object({
+		folder: t.String(),
+	}),
+
 	moveMessageResponse: t.Object({
 		success: t.Boolean(),
 		message: t.Optional(t.String()),

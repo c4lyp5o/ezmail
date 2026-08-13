@@ -253,6 +253,38 @@ export const MailService = {
 		});
 	},
 
+	// Permanently delete a single message: flag \Deleted then expunge it from the
+	// mailbox. Used when deleting from Trash — the message is removed for good.
+	deleteMessage: async ({ jwt, cookie, body }) => {
+		const user = await getUser(jwt, cookie);
+		const { uid, folder } = body;
+		if (!user?.mailbox || !user?.password) return { success: false, message: "Unauthorized" };
+		return withClient(user, async (client) => {
+			await client.mailboxOpen(folder || "INBOX");
+			await client.messageFlagsAdd([Number(uid)], ["\\Deleted"], { uid: true });
+			const result = await client.messageExpunge([Number(uid)], { uid: true });
+			return { success: true, data: { uid: Number(uid), folder: folder || "INBOX", expunged: result?.expunged ?? 1 } };
+		});
+	},
+
+	// Permanently delete every message in a folder (e.g. empty Trash). Flags all
+	// messages as \Deleted and expunges the mailbox.
+	expungeFolder: async ({ jwt, cookie, body }) => {
+		const user = await getUser(jwt, cookie);
+		const { folder } = body;
+		if (!user?.mailbox || !user?.password) return { success: false, message: "Unauthorized" };
+		return withClient(user, async (client) => {
+			const meta = await client.mailboxOpen(folder || "INBOX");
+			const count = meta.exists || 0;
+			if (count > 0) {
+				// Bulk-flag all messages as \Deleted, then expunge.
+				await client.messageFlagsAdd(`1:${count}`, ["\\Deleted"]);
+				await client.messageExpunge();
+			}
+			return { success: true, data: { folder: folder || "INBOX", removed: count } };
+		});
+	},
+
 	// --- send ---
 	sendMessage: async ({ jwt, cookie, body }) => {
 		const user = await getUser(jwt, cookie);

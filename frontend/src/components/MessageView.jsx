@@ -60,11 +60,19 @@ export default function MessageView({ folder, uid, initialMsg, onBack }) {
 
 	const remove = async () => {
 		try {
-			await apiCall.post("/mail/move", {
-				uid: Number(uid),
-				from: thisFolder,
-				to: "Trash",
-			});
+			if (thisFolder === "Trash") {
+				// Deleting from Trash = permanent removal.
+				await apiCall.post("/mail/delete", {
+					uid: Number(uid),
+					folder: thisFolder,
+				});
+			} else {
+				await apiCall.post("/mail/move", {
+					uid: Number(uid),
+					from: thisFolder,
+					to: "Trash",
+				});
+			}
 			onBack?.();
 		} catch (err) {
 			setError(err.message || "Failed to delete");

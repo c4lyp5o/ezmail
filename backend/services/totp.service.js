@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import * as OTPAuth from "otpauth";
 import encodeQR from "qr";
-import { getSetting, setSetting } from "../db.js";
+import { getSetting, setSetting, deleteSetting } from "../db.js";
 
 // TOTP-based passwordless login for ezmail.
 //
@@ -24,9 +24,16 @@ const keyFor = (mailbox) => {
 	};
 };
 
-// ---- key derivation (reuse JWT_SECRET — stable across restarts) ----
+// ---- key derivation ----
+// Prefer a dedicated TOTP_ENC_KEY so the at-rest encryption key is independent of
+// the JWT signing secret (defense in depth: a leaked signing key still can't open
+// stored passwords). Falls back to JWT_SECRET for environments that only set that.
 function encryptionKey() {
-	const secret = process.env.JWT_SECRET || getSetting("jwtSecret") || "";
+	const secret =
+		process.env.TOTP_ENC_KEY ||
+		process.env.JWT_SECRET ||
+		getSetting("jwtSecret") ||
+		"";
 	const digest = crypto.createHash("sha256").update(secret).digest();
 	return digest; // 32 bytes for AES-256
 }
@@ -131,9 +138,14 @@ export function verifyLoginCode(mailbox, token) {
 	return { ok: true, password };
 }
 
-// Disable TOTP for a mailbox (e.g. from settings). Removes secret + stored
-// password so the mailbox falls back to password login.
+// Disable TOTP for a mailbox (e.g. from settings). Removes the stored secret AND
+// the encrypted mailbox password, so the mailbox falls back to password login.
+// Deleting the secret also resets the enrollment state (totpStatus.enrolled = false),
+// so a later re-enroll starts clean and rotates to a fresh secret.
 export function disableTotp(mailbox) {
 	const k = keyFor(mailbox);
 	setSetting(k.enabled, "false");
+	deleteSetting(k.secret);
+	deleteSetting(k.passEnc);
+	deleteSetting(k.verifyMailbox);
 }

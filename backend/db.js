@@ -30,3 +30,7 @@ export function setSetting(key, value) {
 		`,
 	).run(key, value);
 }
+
+export function deleteSetting(key) {
+	db.query("DELETE FROM settings WHERE key = ?").run(key);
+}

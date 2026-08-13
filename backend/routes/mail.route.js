@@ -59,6 +59,22 @@ export const MailRoutes = new Elysia({ prefix: "/api/v1/mail" })
 			tags: ["Mail"],
 		},
 	})
+	.post("/delete", MailService.deleteMessage, {
+		body: MailModel.deleteMessageBody,
+		detail: {
+			summary: "Permanently delete a message",
+			description: "Flags a message as \\Deleted and expunges it from the folder (permanent, used on Trash items).",
+			tags: ["Mail"],
+		},
+	})
+	.post("/expunge", MailService.expungeFolder, {
+		body: MailModel.expungeFolderBody,
+		detail: {
+			summary: "Empty a folder permanently",
+			description: "Flags every message in the folder as \\Deleted and expunges the mailbox (delete-all).",
+			tags: ["Mail"],
+		},
+	})
 	.post("/send", MailService.sendMessage, {
 		body: MailModel.sendMessageBody,
 		response: MailModel.sendMessageResponse,
