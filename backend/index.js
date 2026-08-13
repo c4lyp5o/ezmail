@@ -56,6 +56,19 @@ export const app = new Elysia()
 		}),
 	)
 
+	// Security headers for every response (CSP, clickjacking, feature policy).
+	.onAfterHandle(({ set }) => {
+		set.headers["X-Frame-Options"] = "DENY";
+		set.headers["X-Content-Type-Options"] = "nosniff";
+		set.headers["Referrer-Policy"] = "strict-origin-when-cross-origin";
+		set.headers["Permissions-Policy"] =
+			"camera=(), microphone=(), geolocation=(), payment=(), usb=()";
+		set.headers["X-XSS-Protection"] = "1; mode=block";
+		set.headers[
+			"Content-Security-Policy"
+		] = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'";
+	})
+
 	.use(HealthRoute)
 
 	.guard((authApi) => authApi.use(AuthPlugin).use(AuthRoutes))
