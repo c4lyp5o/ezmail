@@ -4,12 +4,100 @@ import DOMPurify from "dompurify";
 import { apiCall } from "../utils/apiCall.js";
 import { ArrowLeft, Mail as MailIcon, Trash2, ChevronDown, ChevronRight, Paperclip, Download, FileWarning, Image as ImageIcon } from "lucide-react";
 
-export default function MessageView({ folder, uid, initialMsg, onBack }) {
+function DetailRow({ label, value }) {
+	return (
+		<div className="flex gap-3">
+			<span className="w-24 shrink-0 text-ink-muted">{label}</span>
+			<span className="min-w-0 break-all text-ink-2">{value}</span>
+		</div>
+	);
+}
+
+function formatDate(date) {
+	if (!date) return "";
+	const d = new Date(date);
+	const diffMs = Date.now() - d.getTime();
+	if (diffMs >= 0 && diffMs < 60 * 1000) return "just now";
+	if (diffMs >= 0 && diffMs < 3600 * 1000) return `${Math.max(1, Math.floor(diffMs / 60000))}m ago`;
+	if (diffMs >= 0 && diffMs < 24 * 3600 * 1000) return `${Math.floor(diffMs / 3600000)}h ago`;
+	if (diffMs >= 0 && diffMs < 7 * 24 * 3600 * 1000) return `${Math.floor(diffMs / 86400000)}d ago`;
+	return d.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" });
+}
+
+// Heuristic: a plain-text body is treated as markdown when it contains common
+// markdown signals (headings, lists, bold/italic, code fences, links).
+function looksLikeMarkdown(text) {
+	if (!text) return false;
+	return /(?:^|\n)\s{0,3}#{1,6}\s|(?:^|\n)\s*[-*+]\s+|(?:^|\n)\s*\d+\.\s+|```|(\*\*|__).+?(\*\*|__)|\[[^\]]+\]\([^)]+\)/.test(text);
+}
+
+// Triggers a browser download for a base64 attachment.
+function downloadAttachment(a) {
+	if (!a?.content) return;
+	const bytes = atob(a.content);
+	const arr = new Uint8Array(bytes.length);
+	for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
+	const blob = new Blob([arr], { type: a.contentType || "application/octet-stream" });
+	const url = URL.createObjectURL(blob);
+	const link = document.createElement("a");
+	link.href = url;
+	link.download = a.filename || "attachment";
+	document.body.appendChild(link);
+	link.click();
+	link.remove();
+	URL.revokeObjectURL(url);
+}
+
+function formatBytes(bytes) {
+	if (!bytes || bytes <= 0) return "0 B";
+	const units = ["B", "KB", "MB", "GB"];
+	const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+	return `${(bytes / 1024 ** i).toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
+}
+
+// Wraps an email's HTML in a standalone document for the sandboxed iframe.
+function emailDoc(html, showRemote) {
+	return `<!doctype html>
+<html>
+<head><meta charset="utf-8"><style>
+	body{margin:0;padding:0;font-family:Helvetica,Arial,sans-serif;font-size:14px;line-height:1.5;color:#18181b;}
+	img{max-width:100%;height:auto;}
+	table{max-width:100%;border-collapse:collapse;}
+	a{color:#3451b1;}
+	/* Remote images stay hidden until the user opts in (privacy / tracking-safe). */
+	img.remote{visibility:hidden;}
+	.show-remote img.remote{visibility:visible;}
+	.show-remote img[src^="cid:"]{display:none;}
+</style></head>
+<body class="${showRemote ? "show-remote" : ""}">${prepareHtml(html)}</body>
+</html>`;
+}
+
+// Mark remote (<img src="http(s)://...">) images as .remote so they only
+// render once the user taps "Load remote images". Same-origin/inline stay.
+function prepareHtml(html) {
+	const doc = new DOMParser().parseFromString(html, "text/html");
+	const imgs = doc.querySelectorAll("img");
+	imgs.forEach((img) => {
+		const src = img.getAttribute("src") || "";
+		const isRemote = /^(https?:)?\/\//i.test(src);
+		if (isRemote) img.classList.add("remote");
+	});
+	// Ensure external links open in a new tab (sandbox allows popups to escape).
+	doc.querySelectorAll("a[href]").forEach((a) => {
+		if (/^(https?:|mailto:)/i.test(a.getAttribute("href") || "")) {
+			a.target = "_blank";
+			a.rel = "noopener noreferrer";
+		}
+	});
+	return doc.body.innerHTML;
+}
+
+export default function MessageView({ folder, uid, initialMsg, onBack, refresh, setShowRemote, showRemote }) {
 	const [msg, setMsg] = useState(initialMsg || null);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState("");
 	const [showDetails, setShowDetails] = useState(false);
-	const [showRemote, setShowRemote] = useState(false);
 
 	// True when the loaded HTML contains externally-hosted images (http(s)://),
 	// so we can offer a Gmail-style "Load remote images" button.
@@ -33,6 +121,7 @@ export default function MessageView({ folder, uid, initialMsg, onBack }) {
 			const res = await apiCall.get(
 				`/mail/message/${encodeURIComponent(thisFolder)}/${uid}`,
 			);
+      setShowRemote(false);
 			setMsg(res.data || null);
 		} catch (err) {
 			setError(err.message || "Failed to load message");
@@ -69,18 +158,18 @@ export default function MessageView({ folder, uid, initialMsg, onBack }) {
 	const remove = async () => {
 		try {
 			if (thisFolder === "Trash") {
-				// Deleting from Trash = permanent removal.
 				await apiCall.post("/mail/delete", {
-					uid: Number(uid),
+					uids: [Number(uid)],
 					folder: thisFolder,
 				});
 			} else {
 				await apiCall.post("/mail/move", {
-					uid: Number(uid),
+					uids: [Number(uid)],
 					from: thisFolder,
 					to: "Trash",
 				});
 			}
+      refresh();
 			onBack?.();
 		} catch (err) {
 			setError(err.message || "Failed to delete");
@@ -128,9 +217,9 @@ export default function MessageView({ folder, uid, initialMsg, onBack }) {
 	}
 
 	return (
-				<div className="flex h-full w-full flex-col overflow-y-auto overflow-x-hidden">
+    <div className="flex h-full w-full flex-col overflow-y-auto overflow-x-hidden">
 			{/* Toolbar */}
-							<div className="flex items-center gap-2 border-b border-hair py-3 pl-14 pr-4 md:pl-4">
+			<div className="flex items-center gap-2 border-b border-hair py-3 pl-14 pr-4 md:pl-4">
 				<button
 					onClick={onBack}
 					className="flex items-center gap-1 rounded-lg px-2 py-1 text-sm text-ink-muted transition hover:bg-hover hover:text-ink-2"
@@ -185,13 +274,13 @@ export default function MessageView({ folder, uid, initialMsg, onBack }) {
 							Details
 						</button>
 						<div className="text-right">
-												<div className="text-xs text-ink-muted">
-													{msg.date ? formatDate(msg.date) : ""}
-												</div>
-												<div className="text-[10px] text-ink-faint">
-													{msg.date ? new Date(msg.date).toLocaleString() : ""}
-												</div>
-											</div>
+              <div className="text-xs text-ink-muted">
+                {msg.date ? formatDate(msg.date) : ""}
+              </div>
+              <div className="text-[10px] text-ink-faint">
+                {msg.date ? new Date(msg.date).toLocaleString() : ""}
+              </div>
+            </div>
 					</div>
 				</div>
 
@@ -280,93 +369,4 @@ export default function MessageView({ folder, uid, initialMsg, onBack }) {
 			</div>
 		</div>
 	);
-}
-
-function DetailRow({ label, value }) {
-	return (
-		<div className="flex gap-3">
-			<span className="w-24 shrink-0 text-ink-muted">{label}</span>
-			<span className="min-w-0 break-all text-ink-2">{value}</span>
-		</div>
-	);
-}
-
-function formatDate(date) {
-	if (!date) return "";
-	const d = new Date(date);
-	const diffMs = Date.now() - d.getTime();
-	if (diffMs >= 0 && diffMs < 60 * 1000) return "just now";
-	if (diffMs >= 0 && diffMs < 3600 * 1000) return `${Math.max(1, Math.floor(diffMs / 60000))}m ago`;
-	if (diffMs >= 0 && diffMs < 24 * 3600 * 1000) return `${Math.floor(diffMs / 3600000)}h ago`;
-	if (diffMs >= 0 && diffMs < 7 * 24 * 3600 * 1000) return `${Math.floor(diffMs / 86400000)}d ago`;
-	return d.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" });
-}
-
-// Heuristic: a plain-text body is treated as markdown when it contains common
-// markdown signals (headings, lists, bold/italic, code fences, links).
-function looksLikeMarkdown(text) {
-	if (!text) return false;
-	return /(?:^|\n)\s{0,3}#{1,6}\s|(?:^|\n)\s*[-*+]\s+|(?:^|\n)\s*\d+\.\s+|```|(\*\*|__).+?(\*\*|__)|\[[^\]]+\]\([^)]+\)/.test(text);
-}
-
-// Triggers a browser download for a base64 attachment.
-function downloadAttachment(a) {
-	if (!a?.content) return;
-	const bytes = atob(a.content);
-	const arr = new Uint8Array(bytes.length);
-	for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
-	const blob = new Blob([arr], { type: a.contentType || "application/octet-stream" });
-	const url = URL.createObjectURL(blob);
-	const link = document.createElement("a");
-	link.href = url;
-	link.download = a.filename || "attachment";
-	document.body.appendChild(link);
-	link.click();
-	link.remove();
-	URL.revokeObjectURL(url);
-}
-
-function formatBytes(bytes) {
-	if (!bytes || bytes <= 0) return "0 B";
-	const units = ["B", "KB", "MB", "GB"];
-	const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
-	return `${(bytes / 1024 ** i).toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
-}
-
-// Wraps an email's HTML in a standalone document for the sandboxed iframe.
-function emailDoc(html, showRemote) {
-	return `<!doctype html>
-<html>
-<head><meta charset="utf-8"><style>
-	body{margin:0;padding:0;font-family:Helvetica,Arial,sans-serif;font-size:14px;line-height:1.5;color:#18181b;}
-	img{max-width:100%;height:auto;}
-	table{max-width:100%;border-collapse:collapse;}
-	a{color:#3451b1;}
-	/* Remote images stay hidden until the user opts in (privacy / tracking-safe). */
-	img.remote{visibility:hidden;}
-	.show-remote img.remote{visibility:visible;}
-	.show-remote img[src^="cid:"]{display:none;}
-</style></head>
-<body class="${showRemote ? "show-remote" : ""}">${prepareHtml(html)}</body>
-</html>`;
-}
-
-// Mark remote (<img src="http(s)://...">) images as .remote so they only
-// render once the user taps "Load remote images". Same-origin/inline stay.
-function prepareHtml(html) {
-	const doc = new DOMParser().parseFromString(html, "text/html");
-	const imgs = doc.querySelectorAll("img");
-	imgs.forEach((img) => {
-		const src = img.getAttribute("src") || "";
-		const isRemote = /^(https?:)?\/\//i.test(src);
-		if (isRemote) img.classList.add("remote");
-	});
-	// Ensure external links open in a new tab (sandbox allows popups to escape).
-	doc.querySelectorAll("a[href]").forEach((a) => {
-		if (/^(https?:|mailto:)/i.test(a.getAttribute("href") || "")) {
-			a.target = "_blank";
-			a.rel = "noopener noreferrer";
-		}
-	});
-	return doc.body.innerHTML;
 }
