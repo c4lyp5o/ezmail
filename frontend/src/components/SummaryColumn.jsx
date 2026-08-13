@@ -79,7 +79,6 @@ export default function SummaryColumn({ message, onClose }) {
 					onClick={onClose}
 					className="rounded-lg p-1 text-ink-muted transition hover:bg-hover hover:text-ink-2"
 				>
-					<X className="h-4 w-4" />
 				</button>
 			</div>
 
