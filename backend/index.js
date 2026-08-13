@@ -7,7 +7,7 @@ import { openapi } from "@elysiajs/openapi";
 import staticPlugin from "@elysiajs/static";
 import { getSetting, setSetting } from "./db.js";
 import { generalLogger as logger } from "./logger.js";
-import { CLIENT_DIR } from "./config.js";
+import { CLIENT_DIR, MAIL_SERVER } from "./config.js";
 
 import { AuthPlugin } from "./plugins/auth.plugin.js";
 import { ProtectorPlugin } from "./plugins/protector.plugin.js";
@@ -149,6 +149,16 @@ if (process.env.NODE_ENV === "development") {
 }
 
 const startServer = async () => {
+	if (
+		!MAIL_SERVER.imapHost ||
+		MAIL_SERVER.imapHost === "mail.example.com" ||
+		MAIL_SERVER.imapHost === "localhost"
+	) {
+		logger.error(
+			"[SERVER] ❌ IMAP_HOST is not set or is a placeholder. Refusing to start. Set IMAP_HOST (and IMAP_PORT/IMAP_SECURE) in backend/.env, then restart.",
+		);
+		process.exit(1);
+	}
 	try {
 		await probeAndRecordLLM();
 		app.listen(process.env.PORT || 5000);
