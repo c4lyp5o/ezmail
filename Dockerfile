@@ -32,9 +32,11 @@ RUN cd backend && bun install --production
 # Copy backend source code
 COPY backend ./backend
 
-# Copy main package.json, pm2 config and .env (if present)
+# Copy main package.json, pm2 config, start shim and .env (if present)
 COPY package.json ./
 COPY ecosystem.config.js ./
+COPY start.sh ./
+RUN chmod +x start.sh
 
 # Copy built client bundle — the static server reads frontend/dist (backend/config.js CLIENT_DIR)
 COPY --from=builder /app/frontend/dist ./frontend/dist

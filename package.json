@@ -2,7 +2,7 @@
 	"name": "ezmail",
 	"private": true,
 	"type": "module",
-	"version": "1.2.0",
+	"version": "1.2.1",
 	"scripts": {
 		"install:backend": "cd backend && bun install",
 		"install:frontend": "cd frontend && bun install",
