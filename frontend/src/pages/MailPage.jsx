@@ -21,6 +21,8 @@ import {
 	ChevronRight,
 	Menu,
 	KeyRound,
+  MailOpen,
+  Mail,
 } from "lucide-react";
 
 // Builds a compact page-number list with ellipses, e.g.
@@ -50,6 +52,7 @@ export default function MailPage() {
 	const [bulkBusy, setBulkBusy] = useState(false);
 	const [settingsOpen, setSettingsOpen] = useState(false);
 	const [emptyTrashBusy, setEmptyTrashBusy] = useState(false);
+	const [showRemote, setShowRemote] = useState(false);
 
 	// Mobile: sidebar drawer open state + which pane is shown
 	const [mobileSidebar, setMobileSidebar] = useState(false);
@@ -57,6 +60,7 @@ export default function MailPage() {
 
 	// Track viewport size so the resizable list column only applies on desktop.
 	const [isMobile, setIsMobile] = useState(() => window.matchMedia("(max-width: 767px)").matches);
+
 	useEffect(() => {
 		const mq = window.matchMedia("(max-width: 767px)");
 		const onChange = (e) => setIsMobile(e.matches);
@@ -115,6 +119,7 @@ export default function MailPage() {
 			// localStorage may be unavailable; non-fatal
 		}
 	}, [listWidth]);
+
 	const [listState, setListState] = useState({
 		refresh: null,
 		isValidating: false,
@@ -123,6 +128,7 @@ export default function MailPage() {
 		total: 0,
 		totalPages: 1,
 	});
+
 	const {
 		refresh: refreshList,
 		isValidating: listIsValidating,
@@ -171,46 +177,53 @@ export default function MailPage() {
 	const selectedUids = [...selected];
 
 	// ---- bulk actions ----
-	const bulkMarkRead = async () => {
-		if (!selectedUids.length) return;
-		setBulkBusy(true);
-		try {
-			await Promise.all(
-				selectedUids.map((uid) =>
-					apiCall
-						.post("/mail/flags", { folder: activeFolder, uid, flags: ["\\Seen"] })
-						.catch(() => {}),
-				),
-			);
-			afterMutation();
-		} finally {
-			setBulkBusy(false);
-		}
-	};
+  const handleBulkFlags = async (flags, action) => {
+    if (!selectedUids.length) return;
+    setBulkBusy(true);
+    try {
+      await apiCall.post(`/mail/${action === "add" ? "flags" : "unflag"}`, {
+        folder: activeFolder,
+        uids: selectedUids,
+        action,
+        flags,
+      });
+      afterMutation();
+    } catch (err) {
+      console.error(`Failed to update flags (${action})`, err);
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
+	const bulkMarkRead = () => handleBulkFlags(["\\Seen"], "add");
+  const bulkMarkUnread = () => handleBulkFlags(["\\Seen"], "remove");
+  const bulkStar = () => handleBulkFlags(["\\Flagged"], "add");
+  const bulkUnstar = () => handleBulkFlags(["\\Flagged"], "remove");
 
 	const bulkDelete = async () => {
-		if (!selectedUids.length) return;
-		setBulkBusy(true);
-		try {
-			await Promise.all(
-				selectedUids.map((uid) =>
-					apiCall
-						.post(
-							activeFolder === "Trash"
-								? "/mail/delete"
-								: "/mail/move",
-							activeFolder === "Trash"
-								? { uid, folder: activeFolder }
-								: { uid, from: activeFolder, to: "Trash" },
-						)
-						.catch(() => {}),
-				),
-			);
-			afterMutation();
-		} finally {
-			setBulkBusy(false);
-		}
-	};
+    if (!selectedUids.length) return;
+    setBulkBusy(true);
+    try {
+      const isTrash = activeFolder === "Trash";
+      if (isTrash) {
+        await apiCall.post("/mail/delete", {
+          folder: activeFolder,
+          uids: selectedUids,
+        });
+      } else {
+        await apiCall.post("/mail/move", {
+          from: activeFolder,
+          to: "Trash",
+          uids: selectedUids,
+        });
+      }
+      afterMutation();
+    } catch (err) {
+      console.error("Bulk delete failed:", err);
+    } finally {
+      setBulkBusy(false);
+    }
+  };
 
 	// Permanently delete every message in the Trash folder.
 	const emptyTrash = async () => {
@@ -219,7 +232,7 @@ export default function MailPage() {
 		try {
 			await apiCall.post("/mail/expunge", { folder: "Trash" });
 			clearSelection();
-			if (refreshList) refreshList();
+      afterMutation();
 		} catch (err) {
 			console.error("Failed to empty trash:", err.message);
 		} finally {
@@ -232,13 +245,11 @@ export default function MailPage() {
 		setMovePopup(false);
 		setBulkBusy(true);
 		try {
-			await Promise.all(
-				selectedUids.map((uid) =>
-					apiCall
-						.post("/mail/move", { uid, from: activeFolder, to: toFolder })
-						.catch(() => {}),
-				),
-			);
+      await apiCall.post("/mail/move", {
+        uids: selectedUids,
+        from: activeFolder,
+        to: toFolder
+      });
 			afterMutation();
 		} finally {
 			setBulkBusy(false);
@@ -276,6 +287,7 @@ export default function MailPage() {
 	// detail view AND the summary column get the real text/html (the list item
 	// passed in has no body). Also refresh the list so the read state updates.
 	const [fullMessage, setFullMessage] = useState(null);
+
 	const openMessageWithBody = useCallback(
 		async (folder, uid, msg) => {
 			setFullMessage(null); // clear previous body so no stale summary
@@ -362,7 +374,7 @@ export default function MailPage() {
 				</div>
 			</aside>
 
-							{/* Message list column — resizable on desktop, full-screen when selected on mobile */}
+			{/* Message list column — resizable on desktop, full-screen when selected on mobile */}
 			<div
 				style={isMobile ? undefined : { width: listWidth }}
 				className={`relative shrink-0 flex-col border-r border-hair ${
@@ -399,7 +411,15 @@ export default function MailPage() {
 							title="Mark as read"
 							className="rounded-lg p-2 text-ink-2 transition hover:bg-hover disabled:opacity-50"
 						>
-							<CheckCheck className="h-4 w-4" />
+							<MailOpen className="h-4 w-4" />
+						</button>
+            <button
+							onClick={bulkMarkUnread}
+							disabled={bulkBusy}
+							title="Mark as unread"
+							className="rounded-lg p-2 text-ink-2 transition hover:bg-hover disabled:opacity-50"
+						>
+							<Mail className="h-4 w-4" />
 						</button>
 						<button
 							onClick={() => setMovePopup(true)}
@@ -426,9 +446,9 @@ export default function MailPage() {
 						</button>
 					</div>
 				) : (
-							<div className="border-b border-hair py-3 pl-14 pr-4 md:pl-4">
-							<div className="flex items-center gap-2">
-							<h2 className="text-lg font-semibold capitalize">{activeFolder}</h2>
+          <div className="border-b border-hair py-3 pl-14 pr-4 md:pl-4">
+            <div className="flex items-center gap-2">
+							<h2 className="ml-1 text-lg font-semibold capitalize md:ml-0">{activeFolder}</h2>
 							{activeFolder === "Trash" && (
 								<button
 									onClick={emptyTrash}
@@ -464,53 +484,59 @@ export default function MailPage() {
 				</div>
 
 				{/* Fixed bottom pagination bar */}
-				{totalPages > 1 && (
-					<div className="flex items-center justify-center gap-1 border-t border-hair bg-panel/60 px-3 py-2">
-						<button
-							onClick={() => setListPage?.(Math.max(1, listPage - 1))}
-							disabled={listPage <= 1}
-							className="rounded-md p-1.5 text-ink-muted transition hover:bg-hover disabled:opacity-40"
-							title="Previous page"
-						>
-							<ChevronLeft className="h-4 w-4" />
-						</button>
-						{pageNumbers(totalPages, listPage).map((p, i) =>
-							p === "…" ? (
-								<span key={`e${i}`} className="px-1 text-ink-faint">
-									…
-								</span>
-							) : (
-								<button
-									key={p}
-									onClick={() => setListPage?.(p)}
-									className={`min-w-7 rounded-md px-2 py-1 text-sm transition ${
-										p === listPage
-											? "bg-accent text-white"
-											: "text-ink-muted hover:bg-hover hover:text-ink-2"
-									}`}
-								>
-									{p}
-								</button>
-							),
-						)}
-						<button
-							onClick={() =>
-								setListPage?.(Math.min(totalPages, listPage + 1))
-							}
-							disabled={listPage >= totalPages}
-							className="rounded-md p-1.5 text-ink-muted transition hover:bg-hover disabled:opacity-40"
-							title="Next page"
-						>
-							<ChevronRight className="h-4 w-4" />
-						</button>
-					</div>
-				)}
+				<div className="flex items-center justify-center gap-1 border-t border-hair bg-panel/60 px-3 py-2">
+          {totalPages > 1 ? (
+            <>
+              <button
+                onClick={() => setListPage?.(Math.max(1, listPage - 1))}
+                disabled={listPage <= 1}
+                className="rounded-md p-1.5 text-ink-muted transition hover:bg-hover disabled:opacity-40"
+                title="Previous page"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </button>
+
+              {pageNumbers(totalPages, listPage).map((p, i) =>
+                p === "…" ? (
+                  <span key={`e${i}`} className="px-1 text-ink-faint">
+                    …
+                  </span>
+                ) : (
+                  <button
+                    key={p}
+                    onClick={() => setListPage?.(p)}
+                    className={`min-w-7 rounded-md px-2 py-1 text-sm transition ${
+                      p === listPage
+                        ? "bg-accent text-white"
+                        : "text-ink-muted hover:bg-hover hover:text-ink-2"
+                    }`}
+                  >
+                    {p}
+                  </button>
+                )
+              )}
+
+              <button
+                onClick={() =>
+                  setListPage?.(Math.min(totalPages, listPage + 1))
+                }
+                disabled={listPage >= totalPages}
+                className="rounded-md p-1.5 text-ink-muted transition hover:bg-hover disabled:opacity-40"
+                title="Next page"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </button>
+            </>
+          ) : (
+            <div className="invisible py-1 text-sm">&nbsp;</div>
+          )}
+        </div>
 			</div>
 
 			{/* Main content column */}
-							<main
-								className={`min-w-0 flex-1 ${isMobile && mobilePane === "list" ? "hidden" : ""}`}
-							>
+      <main
+        className={`min-w-0 flex-1 ${isMobile && mobilePane === "list" ? "hidden" : ""}`}
+      >
 				{view.type === "compose" && (
 					<ComposeView onBack={handleBack} />
 				)}
@@ -520,6 +546,9 @@ export default function MailPage() {
 						uid={view.uid}
 						initialMsg={view.msg}
 						onBack={handleBack}
+            refresh={afterMutation}
+            setShowRemote={setShowRemote}
+            showRemote={showRemote}
 					/>
 				)}
 				{view.type === "folder" && (
@@ -528,7 +557,7 @@ export default function MailPage() {
 						Select a message to read it
 					</div>
 				)}
-			</main>
+      </main>
 
 			{/* Summary column when viewing a message with LLM present (hidden on
 			    small screens — the reader stays full-width on mobile) */}
