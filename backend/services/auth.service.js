@@ -18,9 +18,13 @@ function cookiePayload(mailbox, password) {
 
 // The mailbox password travels inside the JWT cookie (required for the
 // IMAP/SMTP proxy). Secure is forced ON in production so the cookie is never
-// sent over plaintext HTTP; an explicit COOKIE_SECURE=true can override for
-// reverse-proxy setups that terminate TLS upstream.
-const COOKIE_SECURE = process.env.NODE_ENV === "production";
+// sent over plaintext HTTP; set COOKIE_SECURE via env to override — e.g.
+// COOKIE_SECURE=false for local HTTP testing, or true behind a TLS-terminating
+// reverse proxy.
+const COOKIE_SECURE =
+	process.env.COOKIE_SECURE !== undefined
+		? process.env.COOKIE_SECURE === "true"
+		: process.env.NODE_ENV === "production";
 
 function setAuthCookies({ cookie, accessToken, rememberMe }) {
 	cookie.ezmail_access.set({
