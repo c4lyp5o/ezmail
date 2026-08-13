@@ -5,13 +5,13 @@ import { Search, ArrowUpDown, ArrowUp, ArrowDown, ChevronLeft, ChevronRight } fr
 
 const PAGE_SIZE = 50;
 
-const MessageRow = memo(function MessageRow({ msg, selected, onToggle, onClick, alwaysRead }) {
+const MessageRow = memo(function MessageRow({ msg, isReading, selected, onToggle, onClick, alwaysRead }) {
 	const isUnread = !alwaysRead && !msg.seen;
 	return (
 		<div
 			className={`group flex w-full items-center gap-3 border-b border-hair px-4 py-3 text-left transition hover:bg-hover/40 ${
-				selected ? "bg-accent/10" : ""
-			}`}
+				selected ? "bg-accent/10 font-bold" : ""
+			} ${isReading === msg.uid ? "bg-accent/30" : ""}`}
 		>
 			<input
 				type="checkbox"
@@ -24,7 +24,7 @@ const MessageRow = memo(function MessageRow({ msg, selected, onToggle, onClick, 
 				className="h-4 w-4 shrink-0 cursor-pointer rounded border-hair-strong accent-accent"
 			/>
 			<button onClick={onClick} className="flex min-w-0 flex-1 items-center gap-3 text-left">
-				<div className="min-w-0 flex-1">
+				<div className={`min-w-0 flex-1 ${selected ? 'bg-red' : ""}`}>
 					<div
 						className={`truncate text-sm ${
 							isUnread ? "font-semibold text-ink" : "text-ink-muted"
@@ -72,6 +72,7 @@ export default function MessageList({
 	const [sort, setSort] = useState("desc");
 	const [search, setSearch] = useState("");
 	const [page, setPage] = useState(1);
+  const [isReading, setIsReading] = useState("");
 
 	const {
 		data,
@@ -117,13 +118,14 @@ export default function MessageList({
 				apiCall
 					.post("/mail/flags", {
 						folder: activeFolder,
-						uid: Number(msg.uid),
+						uids: [msg.uid],
+            action: "add",
 						flags: ["\\Seen"],
 					})
 					.then(() => mutate())
 					.catch(() => {});
 			}
-			if (onOpenMessage) onOpenMessage(msg);
+			if (onOpenMessage) { onOpenMessage(msg); setIsReading(msg.uid); };
 		},
 		[activeFolder, alwaysRead, onOpenMessage, mutate],
 	);
@@ -178,6 +180,7 @@ export default function MessageList({
 					<MessageRow
 						key={msg.uid}
 						msg={msg}
+            isReading={isReading}
 						selected={selected?.has(msg.uid)}
 						onToggle={() => onToggleSelect(msg.uid)}
 						onClick={() => openMessage(msg)}
