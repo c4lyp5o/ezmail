@@ -135,15 +135,19 @@ if (process.env.NODE_ENV === "development") {
 	);
 }
 
-try {
-	await probeAndRecordLLM();
-	app.listen(process.env.PORT || 5000);
-	process.env.NODE_ENV === "development" &&
-		logger.info("[SERVER] 📘 ezmail OpenAPI UI enabled at /openapi");
-	logger.info(
-		`[SERVER] ezmail is running at ${app.server?.hostname}:${app.server?.port}`,
-	);
-} catch (err) {
-	logger.error("[SERVER] Failed to start server: ", err);
-	process.exit(1);
-}
+const startServer = async () => {
+	try {
+		await probeAndRecordLLM();
+		app.listen(process.env.PORT || 5000);
+		process.env.NODE_ENV === "development" &&
+			logger.info("[SERVER] 📘 ezmail OpenAPI UI enabled at /openapi");
+		logger.info(
+			`[SERVER] ezmail is running at ${app.server?.hostname}:${app.server?.port}`,
+		);
+	} catch (err) {
+		logger.error("[SERVER] Failed to start server: ", err);
+		process.exit(1);
+	}
+};
+
+startServer();

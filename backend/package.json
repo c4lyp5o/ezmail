@@ -2,7 +2,7 @@
 	"name": "ezmail-backend",
 	"private": true,
 	"type": "module",
-	"version": "1.2.1",
+	"version": "1.2.2",
 	"scripts": {
 		"dev": "bun --watch index.js",
 		"start": "bun index.js",
