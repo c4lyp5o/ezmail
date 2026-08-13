@@ -21,6 +21,7 @@ import {
 	ChevronRight,
 	Menu,
 	Settings,
+	KeyRound,
 } from "lucide-react";
 
 // Builds a compact page-number list with ellipses, e.g.
@@ -278,6 +279,7 @@ export default function MailPage() {
 	const [fullMessage, setFullMessage] = useState(null);
 	const openMessageWithBody = useCallback(
 		async (folder, uid, msg) => {
+			setFullMessage(null); // clear previous body so no stale summary
 			setView({ type: "message", folder, uid, msg });
 			setMobilePane("reader");
 			setMobileSidebar(false);
@@ -336,23 +338,33 @@ export default function MailPage() {
 				<FolderList folders={folders} active={activeFolder} onSelect={selectFolder} />
 
 				<div className="mt-auto border-t border-hair p-4">
-					<div className="mb-2 flex items-center gap-2">
-						<div className="min-w-0 flex-1 truncate text-sm text-ink-muted">
-							{user?.mailbox || "mailbox"}
-						</div>
+					<div className="px-1">
+						<div className="min-w-0 truncate text-sm font-medium text-ink-2">{user?.mailbox || "mailbox"}</div>
+					</div>
+					<div className="mt-3 flex items-center justify-between px-1">
 						<button
-												onClick={() => setSettingsOpen(true)}
-												aria-label="Account settings"
-												title="Account & security"
-												className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-ink-muted transition hover:bg-hover hover:text-ink-2"
-											>
-												<Settings className="h-4 w-4" />
-											</button>
-											<ThemeToggle />
+							type="button"
+							onClick={() => setSettingsOpen(true)}
+							aria-label="Account security (TOTP)"
+							title="Account & security"
+							className="flex h-8 w-8 items-center justify-center rounded-md text-ink-muted transition hover:bg-hover hover:text-ink-2"
+						>
+							<KeyRound className="h-4 w-4" />
+						</button>
+						<ThemeToggle />
+						<button
+							type="button"
+							onClick={() => setSettingsOpen(true)}
+							aria-label="Account settings"
+							title="Settings"
+							className="flex h-8 w-8 items-center justify-center rounded-md text-ink-muted transition hover:bg-hover hover:text-ink-2"
+						>
+							<Settings className="h-4 w-4" />
+						</button>
 					</div>
 					<button
 						onClick={handleLogout}
-						className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-ink-muted transition hover:bg-hover hover:text-ink-2"
+						className="mt-2 flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-ink-muted transition hover:bg-hover hover:text-ink-2"
 					>
 						<LogOut className="h-4 w-4" />
 						Log out
@@ -360,7 +372,7 @@ export default function MailPage() {
 				</div>
 			</aside>
 
-			{/* Message list column — resizable on desktop, full-screen when selected on mobile */}
+							{/* Message list column — resizable on desktop, full-screen when selected on mobile */}
 			<div
 				style={isMobile ? undefined : { width: listWidth }}
 				className={`relative shrink-0 flex-col border-r border-hair ${
@@ -530,9 +542,9 @@ export default function MailPage() {
 
 			{/* Summary column when viewing a message with LLM present (hidden on
 			    small screens — the reader stays full-width on mobile) */}
-			{llmPresent && view.type === "message" && !isMobile && (
+			{llmPresent && view.type === "message" && !isMobile && fullMessage && (
 				<SummaryColumn
-					message={fullMessage || view.msg}
+					message={fullMessage}
 					onClose={() => setView((v) => ({ ...v, summaryClosed: true }))}
 				/>
 			)}

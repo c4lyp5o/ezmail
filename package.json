@@ -1,24 +1,24 @@
 {
-	"name": "ezmail",
-	"private": true,
-	"type": "module",
-	"version": "1.2.3",
-	"scripts": {
-		"install:backend": "cd backend && bun install",
-		"install:frontend": "cd frontend && bun install",
-		"install": "bun install:backend && bun install:frontend",
-		"dev:backend": "cd backend && bun --watch index.js",
-		"dev:frontend": "cd frontend && bun dev",
-		"dev": "conc -n \"BACKEND,FRONTEND\" -c \"cyan,yellow\" \"npm run dev:backend\" \"npm run dev:frontend\"",
-		"build:client": "cd frontend && bun run build",
-		"test:backend": "cd backend && bun test",
-		"start": "pm2-runtime start ecosystem.config.js --env production",
-		"stop": "pm2 stop all",
-		"restart": "pm2 restart all",
-		"logs": "pm2 monit"
-	},
-	"devDependencies": {
-		"@types/bun": "latest",
-		"concurrently": "^9.2.1"
-	}
+  "name": "ezmail",
+  "private": true,
+  "type": "module",
+  "version": "1.3.0",
+  "scripts": {
+    "install:backend": "cd backend && bun install",
+    "install:frontend": "cd frontend && bun install",
+    "install": "bun install:backend && bun install:frontend",
+    "dev:backend": "cd backend && bun --watch index.js",
+    "dev:frontend": "cd frontend && bun dev",
+    "dev": "conc -n \"BACKEND,FRONTEND\" -c \"cyan,yellow\" \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "build:client": "cd frontend && bun run build",
+    "test:backend": "cd backend && bun test",
+    "start": "pm2-runtime start ecosystem.config.js --env production",
+    "stop": "pm2 stop all",
+    "restart": "pm2 restart all",
+    "logs": "pm2 monit"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "concurrently": "^9.2.1"
+  }
 }

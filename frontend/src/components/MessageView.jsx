@@ -1,14 +1,22 @@
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
 import { apiCall } from "../utils/apiCall.js";
-import { ArrowLeft, Mail as MailIcon, Trash2, ChevronDown, ChevronRight, Paperclip, Download, FileWarning } from "lucide-react";
+import { ArrowLeft, Mail as MailIcon, Trash2, ChevronDown, ChevronRight, Paperclip, Download, FileWarning, Image as ImageIcon } from "lucide-react";
 
 export default function MessageView({ folder, uid, initialMsg, onBack }) {
 	const [msg, setMsg] = useState(initialMsg || null);
-	const [loading, setLoading] = useState(!initialMsg);
+	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState("");
 	const [showDetails, setShowDetails] = useState(false);
+	const [showRemote, setShowRemote] = useState(false);
+
+	// True when the loaded HTML contains externally-hosted images (http(s)://),
+	// so we can offer a Gmail-style "Load remote images" button.
+	const showRemoteButton = useMemo(() => {
+		if (!msg?.html) return false;
+		return /<img[^>]+src=["'](?:\/\/|https?:)?\/\//i.test(msg.html);
+	}, [msg?.html]);
 
 	const thisFolder = decodeURIComponent(folder || "INBOX");
 
@@ -81,8 +89,9 @@ export default function MessageView({ folder, uid, initialMsg, onBack }) {
 
 	if (loading) {
 		return (
-			<div className="flex h-full items-center justify-center text-ink-muted">
-				Loading…
+			<div className="flex h-full flex-col items-center justify-center gap-3 text-ink-muted">
+				<div className="h-8 w-8 animate-spin rounded-full border-2 border-hair-strong border-t-indigo-500" />
+				<span className="text-sm">Loading…</span>
 			</div>
 		);
 	}
@@ -230,11 +239,23 @@ export default function MessageView({ folder, uid, initialMsg, onBack }) {
 			{/* Body — rendered inside a sandboxed iframe so the email's own CSS
 			    cannot bleed out into the app's styling. */}
 			<div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+				{showRemoteButton && (
+					<div className="mb-3 flex justify-end">
+						<button
+							onClick={() => setShowRemote(true)}
+							title="Load images sent from external servers"
+							className="flex items-center gap-1.5 rounded-lg border border-hair bg-panel px-3 py-1.5 text-xs text-ink-2 transition hover:bg-hover"
+						>
+							<ImageIcon className="h-3.5 w-3.5 text-ink-muted" />
+							Load remote images
+						</button>
+					</div>
+				)}
 				{msg.html ? (
 					<iframe
 						title="email-body"
-						sandbox="allow-same-origin"
-						srcDoc={emailDoc(msg.html)}
+						sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+						srcDoc={emailDoc(msg.html, showRemote)}
 						className="mail-body-frame block w-full rounded-lg border border-hair bg-white"
 						style={{ height: "75vh" }}
 					/>
@@ -313,7 +334,7 @@ function formatBytes(bytes) {
 }
 
 // Wraps an email's HTML in a standalone document for the sandboxed iframe.
-function emailDoc(html) {
+function emailDoc(html, showRemote) {
 	return `<!doctype html>
 <html>
 <head><meta charset="utf-8"><style>
@@ -321,7 +342,31 @@ function emailDoc(html) {
 	img{max-width:100%;height:auto;}
 	table{max-width:100%;border-collapse:collapse;}
 	a{color:#3451b1;}
+	/* Remote images stay hidden until the user opts in (privacy / tracking-safe). */
+	img.remote{visibility:hidden;}
+	.show-remote img.remote{visibility:visible;}
+	.show-remote img[src^="cid:"]{display:none;}
 </style></head>
-<body>${html}</body>
+<body class="${showRemote ? "show-remote" : ""}">${prepareHtml(html)}</body>
 </html>`;
+}
+
+// Mark remote (<img src="http(s)://...">) images as .remote so they only
+// render once the user taps "Load remote images". Same-origin/inline stay.
+function prepareHtml(html) {
+	const doc = new DOMParser().parseFromString(html, "text/html");
+	const imgs = doc.querySelectorAll("img");
+	imgs.forEach((img) => {
+		const src = img.getAttribute("src") || "";
+		const isRemote = /^(https?:)?\/\//i.test(src);
+		if (isRemote) img.classList.add("remote");
+	});
+	// Ensure external links open in a new tab (sandbox allows popups to escape).
+	doc.querySelectorAll("a[href]").forEach((a) => {
+		if (/^(https?:|mailto:)/i.test(a.getAttribute("href") || "")) {
+			a.target = "_blank";
+			a.rel = "noopener noreferrer";
+		}
+	});
+	return doc.body.innerHTML;
 }
