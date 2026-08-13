@@ -22,9 +22,11 @@ function buildImapClient({ mailbox, password }) {
 	});
 }
 
-async function withClient(user, fn) {
+async function withClient(user, status, fn) {
 	if (!user?.mailbox || !user?.password) {
-		return { success: false, message: "Unauthorized" };
+		return status
+			? status(401, { success: false, message: "Unauthorized" })
+			: { success: false, message: "Unauthorized" };
 	}
 	const client = buildImapClient(user);
 	try {
@@ -68,9 +70,9 @@ function logImapError(err) {
 
 export const MailService = {
 	// --- folders ---
-	listFolders: async ({ jwt, cookie }) => {
+	listFolders: async ({ jwt, cookie, status }) => {
 		const user = await getUser(jwt, cookie);
-		return withClient(user, async (client) => {
+		return withClient(user, status, async (client) => {
 			const list = await client.list();
 			return list
 				.filter((f) => f.path !== "[Gmail]")
@@ -86,7 +88,7 @@ export const MailService = {
 	},
 
 	// --- message list (envelope only) ---
-	listMessages: async ({ jwt, cookie, params, query }) => {
+	listMessages: async ({ jwt, cookie, params, query, status }) => {
 		const user = await getUser(jwt, cookie);
 		const folder = params?.folder;
 		const page = Number(query?.page) || 1;
@@ -94,7 +96,7 @@ export const MailService = {
 		const size = Math.min(pageSizeRaw, 100);
 		const sort = query?.sort || "desc"; // 'asc' | 'desc' by date
 		const search = (query?.search || "").trim();
-		return withClient(user, async (client) => {
+		return withClient(user, status, async (client) => {
 			const mailbox = await client.mailboxOpen(folder || "INBOX");
 
 			// If a search term is present, run a server-side SEARCH and restrict
@@ -138,10 +140,10 @@ export const MailService = {
 	},
 
 	// --- single message full body + flags ---
-	getMessage: async ({ jwt, cookie, params }) => {
+	getMessage: async ({ jwt, cookie, params, status }) => {
 		const user = await getUser(jwt, cookie);
 		const { folder, uid } = params;
-		return withClient(user, async (client) => {
+		return withClient(user, status, async (client) => {
 			await client.mailboxOpen(folder || "INBOX");
 			const msg = await client.fetchOne(
 				Number(uid),
@@ -219,20 +221,20 @@ export const MailService = {
 	},
 
 	// --- set flags (read/unread/delete) ---
-	setFlags: async ({ jwt, cookie, body }) => {
+	setFlags: async ({ jwt, cookie, body, status }) => {
 		const user = await getUser(jwt, cookie);
 		const { folder, uid, flags } = body;
-		return withClient(user, async (client) => {
+		return withClient(user, status, async (client) => {
 			await client.mailboxOpen(folder || "INBOX");
 			await client.messageFlagsAdd(Number(uid), flags, { uid: true });
 			return { uid: Number(uid), flags };
 		});
 	},
 
-	clearFlags: async ({ jwt, cookie, body }) => {
+	clearFlags: async ({ jwt, cookie, body, status }) => {
 		const user = await getUser(jwt, cookie);
 		const { folder, uid, flags } = body;
-		return withClient(user, async (client) => {
+		return withClient(user, status, async (client) => {
 			await client.mailboxOpen(folder || "INBOX");
 			await client.messageFlagsRemove(Number(uid), flags, { uid: true });
 			return { uid: Number(uid), flags };
@@ -240,10 +242,10 @@ export const MailService = {
 	},
 
 	// --- move message ---
-	moveMessage: async ({ jwt, cookie, body }) => {
+	moveMessage: async ({ jwt, cookie, body, status }) => {
 		const user = await getUser(jwt, cookie);
 		const { uid, from, to } = body;
-		return withClient(user, async (client) => {
+		return withClient(user, status, async (client) => {
 			// Must open the source mailbox BEFORE moving — imapflow's messageMove
 			// operates on the currently-selected mailbox. Without this, no mailbox
 			// is selected on a fresh connection and the MOVE matches nothing.
@@ -255,11 +257,11 @@ export const MailService = {
 
 	// Permanently delete a single message: flag \Deleted then expunge it from the
 	// mailbox. Used when deleting from Trash — the message is removed for good.
-	deleteMessage: async ({ jwt, cookie, body }) => {
+	deleteMessage: async ({ jwt, cookie, body, status }) => {
 		const user = await getUser(jwt, cookie);
 		const { uid, folder } = body;
-		if (!user?.mailbox || !user?.password) return { success: false, message: "Unauthorized" };
-		return withClient(user, async (client) => {
+		if (!user?.mailbox || !user?.password) return status(401, { success: false, message: "Unauthorized" });
+		return withClient(user, status, async (client) => {
 			await client.mailboxOpen(folder || "INBOX");
 			await client.messageFlagsAdd([Number(uid)], ["\\Deleted"], { uid: true });
 			const result = await client.messageExpunge([Number(uid)], { uid: true });
@@ -269,11 +271,11 @@ export const MailService = {
 
 	// Permanently delete every message in a folder (e.g. empty Trash). Flags all
 	// messages as \Deleted and expunges the mailbox.
-	expungeFolder: async ({ jwt, cookie, body }) => {
+	expungeFolder: async ({ jwt, cookie, body, status }) => {
 		const user = await getUser(jwt, cookie);
 		const { folder } = body;
-		if (!user?.mailbox || !user?.password) return { success: false, message: "Unauthorized" };
-		return withClient(user, async (client) => {
+		if (!user?.mailbox || !user?.password) return status(401, { success: false, message: "Unauthorized" });
+		return withClient(user, status, async (client) => {
 			const meta = await client.mailboxOpen(folder || "INBOX");
 			const count = meta.exists || 0;
 			if (count > 0) {
@@ -286,10 +288,10 @@ export const MailService = {
 	},
 
 	// --- send ---
-	sendMessage: async ({ jwt, cookie, body }) => {
+	sendMessage: async ({ jwt, cookie, body, status }) => {
 		const user = await getUser(jwt, cookie);
 		if (!user?.mailbox || !user?.password) {
-			return { success: false, message: "Unauthorized" };
+			return status(401, { success: false, message: "Unauthorized" });
 		}
 
 		const transporter = nodemailer.createTransport({

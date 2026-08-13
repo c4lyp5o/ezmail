@@ -21,7 +21,7 @@ export default function FolderList({ folders, active, onSelect }) {
 					<button
 						key={folder.path}
 						onClick={() => onSelect(folder.path)}
-						className={`relative flex w-full items-center gap-3 rounded-md pl-4 py-1.5 text-sm transition ${
+						className={`relative flex w-full items-center gap-3 rounded-md pl-6 py-1.5 text-sm transition ${
 							isActive
 								? "bg-accent/12 text-ink font-medium"
 								: "text-ink-muted hover:bg-hover hover:text-ink"

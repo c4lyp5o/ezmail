@@ -20,7 +20,6 @@ import {
 	ChevronLeft,
 	ChevronRight,
 	Menu,
-	Settings,
 	KeyRound,
 } from "lucide-react";
 
@@ -352,15 +351,6 @@ export default function MailPage() {
 							<KeyRound className="h-4 w-4" />
 						</button>
 						<ThemeToggle />
-						<button
-							type="button"
-							onClick={() => setSettingsOpen(true)}
-							aria-label="Account settings"
-							title="Settings"
-							className="flex h-8 w-8 items-center justify-center rounded-md text-ink-muted transition hover:bg-hover hover:text-ink-2"
-						>
-							<Settings className="h-4 w-4" />
-						</button>
 					</div>
 					<button
 						onClick={handleLogout}
