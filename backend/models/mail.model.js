@@ -1,5 +1,7 @@
 import { t } from "elysia";
 
+const uidArray = t.Array(t.Union([t.Number(), t.String()]))
+
 const Folder = t.Object({
 	path: t.String(),
 	name: t.String(),
@@ -76,65 +78,86 @@ export const MailModel = {
 	}),
 
 	setFlagsBody: t.Object({
-		folder: t.String(),
-		uid: t.Number(),
-		flags: t.Array(t.String()),
-	}),
+    folder: t.String(),
+    uids: uidArray,
+    flags: t.Array(t.String()),
+  }),
 
-	setFlagsResponse: t.Object({
-		success: t.Boolean(),
-		message: t.Optional(t.String()),
-		data: t.Optional(
-			t.Object({
-				uid: t.Integer(),
-				flags: t.Array(t.String()),
-			}),
-		),
-	}),
+  setFlagsResponse: t.Object({
+    success: t.Boolean(),
+    message: t.Optional(t.String()),
+    data: t.Optional(
+      t.Object({
+        uids: uidArray,
+        flags: t.Array(t.String()),
+      })
+    ),
+  }),
 
-	clearFlagsBody: t.Object({
-		folder: t.String(),
-		uid: t.Number(),
-		flags: t.Array(t.String()),
-	}),
+  clearFlagsBody: t.Object({
+    folder: t.String(),
+    uids: uidArray,
+    flags: t.Array(t.String()),
+  }),
 
-	clearFlagsResponse: t.Object({
-		success: t.Boolean(),
-		message: t.Optional(t.String()),
-		data: t.Optional(
-			t.Object({
-				uid: t.Integer(),
-				flags: t.Array(t.String()),
-			}),
-		),
-	}),
+  clearFlagsResponse: t.Object({
+    success: t.Boolean(),
+    message: t.Optional(t.String()),
+    data: t.Optional(
+      t.Object({
+        uids: uidArray,
+        flags: t.Array(t.String()),
+      })
+    ),
+  }),
 
-	moveMessageBody: t.Object({
-		uid: t.Number(),
-		from: t.String(),
-		to: t.String(),
-	}),
+  moveMessageBody: t.Object({
+    uids: uidArray,
+    from: t.String(),
+    to: t.String(),
+  }),
 
-	deleteMessageBody: t.Object({
-		uid: t.Number(),
-		folder: t.String(),
-	}),
+  moveMessageResponse: t.Object({
+    success: t.Boolean(),
+    message: t.Optional(t.String()),
+    data: t.Optional(
+      t.Object({
+        uids: uidArray,
+        from: t.String(),
+        to: t.String(),
+      })
+    ),
+  }),
 
-	expungeFolderBody: t.Object({
-		folder: t.String(),
-	}),
+  deleteMessageBody: t.Object({
+    uids: uidArray,
+    folder: t.String(),
+  }),
 
-	moveMessageResponse: t.Object({
-		success: t.Boolean(),
-		message: t.Optional(t.String()),
-		data: t.Optional(
-			t.Object({
-				uid: t.Integer(),
-				from: t.String(),
-				to: t.String(),
-			}),
-		),
-	}),
+  deleteMessageResponse: t.Object({
+    success: t.Boolean(),
+    message: t.Optional(t.String()),
+    data: t.Optional(
+      t.Object({
+        uids: uidArray,
+        folder: t.String(),
+      })
+    ),
+  }),
+
+  expungeFolderBody: t.Object({
+    folder: t.String(),
+  }),
+
+  expungeFolderResponse: t.Object({
+    success: t.Boolean(),
+    message: t.Optional(t.String()),
+    data: t.Optional(
+      t.Object({
+        folder: t.String(),
+      })
+    ),
+  }),
 
 	sendMessageBody: t.Object({
 		to: t.String(),

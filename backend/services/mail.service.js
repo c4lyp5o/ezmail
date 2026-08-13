@@ -68,10 +68,49 @@ function logImapError(err) {
 	}
 }
 
+function mapEnvelope(msg) {
+	const from = msg.envelope?.from?.[0];
+	const flags = toFlagsArray(msg.flags);
+	return {
+		uid: msg.uid,
+		subject: msg.envelope?.subject || "(no subject)",
+		from: from?.address || from?.name || "unknown",
+		fromName: from?.name || "",
+		date: msg.envelope?.date || msg.internalDate,
+		flags,
+		seen: flags.includes("\\Seen"),
+		attachments: countAttachments(msg.bodyStructure),
+	};
+}
+
+// imapflow's bodyStructure nests parts in childNodes; attachments carry a
+// disposition of "attachment"/"inline". Count them recursively.
+function countAttachments(bs) {
+	let count = 0;
+	const walk = (n) => {
+		if (!n) return;
+		if (n.disposition && /attachment|inline/i.test(n.disposition)) count++;
+		(n.childNodes || []).forEach(walk);
+	};
+	walk(bs?.childNodes ? { childNodes: bs.childNodes } : null);
+	return count;
+}
+
+// imapflow returns message flags as a Set (not an Array). Normalize to a
+// plain array so Array.isArray checks and .includes() work everywhere.
+function toFlagsArray(flags) {
+	if (Array.isArray(flags)) return flags;
+	if (flags && typeof flags[Symbol.iterator] === "function") {
+		return [...flags];
+	}
+	return [];
+}
+
 export const MailService = {
 	// --- folders ---
 	listFolders: async ({ jwt, cookie, status }) => {
 		const user = await getUser(jwt, cookie);
+		if (!user?.mailbox || !user?.password) return status(401, { success: false, message: "Unauthorized" });
 		return withClient(user, status, async (client) => {
 			const list = await client.list();
 			return list
@@ -88,60 +127,85 @@ export const MailService = {
 	},
 
 	// --- message list (envelope only) ---
-	listMessages: async ({ jwt, cookie, params, query, status }) => {
-		const user = await getUser(jwt, cookie);
-		const folder = params?.folder;
-		const page = Number(query?.page) || 1;
-		const pageSizeRaw = Number(query?.pageSize) || 50;
-		const size = Math.min(pageSizeRaw, 100);
-		const sort = query?.sort || "desc"; // 'asc' | 'desc' by date
-		const search = (query?.search || "").trim();
-		return withClient(user, status, async (client) => {
-			const mailbox = await client.mailboxOpen(folder || "INBOX");
+  listMessages: async ({ jwt, cookie, params, query, status }) => {
+    const user = await getUser(jwt, cookie);
+		if (!user?.mailbox || !user?.password) return status(401, { success: false, message: "Unauthorized" });
+    const folder = params?.folder;
+    const page = Number(query?.page) || 1;
+    const pageSizeRaw = Number(query?.pageSize) || 50;
+    const size = Math.min(pageSizeRaw, 100);
+    const sort = query?.sort || "desc"; // 'asc' | 'desc' by date
+    const search = (query?.search || "").trim();
 
-			// If a search term is present, run a server-side SEARCH and restrict
-			// to those UIDs (matches subject, from, body text).
-			let searchUids = null;
-			if (search) {
-				const uids = await client.search({ text: search }, { uid: true });
-				if (Array.isArray(uids) && uids.length) searchUids = new Set(uids);
-				else return { messages: [], total: 0, page, pageSize: size, sort, search };
-			}
+    return withClient(user, status, async (client) => {
+      const targetFolder = folder || "INBOX";
 
-			// Collect ALL candidate messages (search-filtered or whole folder).
-			// We fetch the envelope+date for the whole (filtered) set so we can
-			// sort by date authoritatively and paginate correctly.
-			const all = [];
-			if (searchUids) {
-				const uidList = [...searchUids].sort((a, b) => a - b);
-				for await (const msg of client.fetch(uidList, { envelope: true, flags: true, internalDate: true, bodyStructure: true, source: false }, { uid: true })) {
-					all.push(msg);
-				}
-			} else {
-				for await (const msg of client.fetch("1:*", { envelope: true, flags: true, internalDate: true, bodyStructure: true, source: false }, { uid: false })) {
-					all.push(msg);
-				}
-			}
+      // 1. Acquire mailbox lock (recommended by imapflow over mailboxOpen)
+      const lock = await client.getMailboxLock(targetFolder);
 
-			// Sort by date (internalDate/date) asc or desc.
-			all.sort((a, b) => {
-				const da = new Date(a.internalDate || a.date || 0).getTime();
-				const db = new Date(b.internalDate || b.date || 0).getTime();
-				return sort === "asc" ? da - db : db - da;
-			});
+      try {
+        // 2. CHECK IF FOLDER IS EMPTY (Fixes the "Invalid messageset" error)
+        if (!client.mailbox || client.mailbox.exists === 0) {
+          return { messages: [], total: 0, page, pageSize: size, sort, search };
+        }
 
-			const total = all.length;
-			const from = (page - 1) * size;
-			const pageItems = all.slice(from, from + size);
-			const messages = pageItems.map((msg) => mapEnvelope(msg));
+        // 3. If search term is present, search UIDs
+        let searchUids = null;
+        if (search) {
+          const uids = await client.search({ text: search }, { uid: true });
+          if (Array.isArray(uids) && uids.length) {
+            searchUids = new Set(uids);
+          } else {
+            return { messages: [], total: 0, page, pageSize: size, sort, search };
+          }
+        }
 
-			return { messages, total, page, pageSize: size, sort, search };
-		});
-	},
+        // 4. Fetch candidate messages
+        const all = [];
+        if (searchUids) {
+          const uidList = [...searchUids].sort((a, b) => a - b);
+          for await (const msg of client.fetch(
+            uidList,
+            { envelope: true, flags: true, internalDate: true, bodyStructure: true, source: false },
+            { uid: true }
+          )) {
+            all.push(msg);
+          }
+        } else {
+          // Safe to call "1:*" because client.mailbox.exists > 0
+          for await (const msg of client.fetch(
+            "1:*",
+            { envelope: true, flags: true, internalDate: true, bodyStructure: true, source: false },
+            { uid: false }
+          )) {
+            all.push(msg);
+          }
+        }
+
+        // 5. Sort by date
+        all.sort((a, b) => {
+          const da = new Date(a.internalDate || a.date || 0).getTime();
+          const db = new Date(b.internalDate || b.date || 0).getTime();
+          return sort === "asc" ? da - db : db - da;
+        });
+
+        const total = all.length;
+        const from = (page - 1) * size;
+        const pageItems = all.slice(from, from + size);
+        const messages = pageItems.map((msg) => mapEnvelope(msg));
+
+        return { messages, total, page, pageSize: size, sort, search };
+      } finally {
+        // 6. Always release the lock
+        lock.release();
+      }
+    });
+  },
 
 	// --- single message full body + flags ---
 	getMessage: async ({ jwt, cookie, params, status }) => {
 		const user = await getUser(jwt, cookie);
+		if (!user?.mailbox || !user?.password) return status(401, { success: false, message: "Unauthorized" });
 		const { folder, uid } = params;
 		return withClient(user, status, async (client) => {
 			await client.mailboxOpen(folder || "INBOX");
@@ -223,35 +287,40 @@ export const MailService = {
 	// --- set flags (read/unread/delete) ---
 	setFlags: async ({ jwt, cookie, body, status }) => {
 		const user = await getUser(jwt, cookie);
-		const { folder, uid, flags } = body;
+		if (!user?.mailbox || !user?.password) return status(401, { success: false, message: "Unauthorized" });
+		const { folder, uids, flags } = body;
 		return withClient(user, status, async (client) => {
-			await client.mailboxOpen(folder || "INBOX");
-			await client.messageFlagsAdd(Number(uid), flags, { uid: true });
-			return { uid: Number(uid), flags };
+      const lock = await client.getMailboxLock(folder);
+			await client.messageFlagsAdd(uids, flags, { uid: true });
+      lock.release();
+			return { uids: uids, flags: flags };
 		});
 	},
 
 	clearFlags: async ({ jwt, cookie, body, status }) => {
 		const user = await getUser(jwt, cookie);
-		const { folder, uid, flags } = body;
+		if (!user?.mailbox || !user?.password) return status(401, { success: false, message: "Unauthorized" });
+		const { folder, uids, flags } = body;
 		return withClient(user, status, async (client) => {
-			await client.mailboxOpen(folder || "INBOX");
-			await client.messageFlagsRemove(Number(uid), flags, { uid: true });
-			return { uid: Number(uid), flags };
+      const lock = await client.getMailboxLock(folder);
+			await client.messageFlagsRemove(uids, flags, { uid: true });
+      lock.release();
+			return { uids: uids, flags: flags };
 		});
 	},
 
 	// --- move message ---
 	moveMessage: async ({ jwt, cookie, body, status }) => {
 		const user = await getUser(jwt, cookie);
-		const { uid, from, to } = body;
+		if (!user?.mailbox || !user?.password) return status(401, { success: false, message: "Unauthorized" });
+		const { uids, from, to } = body;
+    console.log(body)
+    const targetUids = Array.isArray(uids) ? uids.map(Number) : uids;
 		return withClient(user, status, async (client) => {
-			// Must open the source mailbox BEFORE moving — imapflow's messageMove
-			// operates on the currently-selected mailbox. Without this, no mailbox
-			// is selected on a fresh connection and the MOVE matches nothing.
-			await client.mailboxOpen(from || "INBOX");
-			await client.messageMove(Number(uid), to, { uid: true });
-			return { uid: Number(uid), from: from || "INBOX", to };
+      const lock = await client.getMailboxLock(from);
+			await client.messageMove(targetUids, to, { uid: true });
+      lock.release();
+			return { uids: targetUids, from: from, to: to };
 		});
 	},
 
@@ -259,13 +328,18 @@ export const MailService = {
 	// mailbox. Used when deleting from Trash — the message is removed for good.
 	deleteMessage: async ({ jwt, cookie, body, status }) => {
 		const user = await getUser(jwt, cookie);
-		const { uid, folder } = body;
 		if (!user?.mailbox || !user?.password) return status(401, { success: false, message: "Unauthorized" });
+		const { uids, folder } = body;
+    const targetUids = Array.isArray(uids) ? uids.map(Number) : uids;
 		return withClient(user, status, async (client) => {
-			await client.mailboxOpen(folder || "INBOX");
-			await client.messageFlagsAdd([Number(uid)], ["\\Deleted"], { uid: true });
-			const result = await client.messageExpunge([Number(uid)], { uid: true });
-			return { success: true, data: { uid: Number(uid), folder: folder || "INBOX", expunged: result?.expunged ?? 1 } };
+      const lock = await client.getMailboxLock(folder);
+      if (folder !== "Trash") {
+        await client.messageMove(targetUids, "Trash", { uid: true });
+      } else {
+        await client.messageDelete(targetUids, { uid: true });
+      }
+      lock.release();
+      return { success: true, data: { uids: targetUids, folder: folder } };
 		});
 	},
 
@@ -273,26 +347,20 @@ export const MailService = {
 	// messages as \Deleted and expunges the mailbox.
 	expungeFolder: async ({ jwt, cookie, body, status }) => {
 		const user = await getUser(jwt, cookie);
-		const { folder } = body;
 		if (!user?.mailbox || !user?.password) return status(401, { success: false, message: "Unauthorized" });
+		const { folder } = body;
 		return withClient(user, status, async (client) => {
-			const meta = await client.mailboxOpen(folder || "INBOX");
-			const count = meta.exists || 0;
-			if (count > 0) {
-				// Bulk-flag all messages as \Deleted, then expunge.
-				await client.messageFlagsAdd(`1:${count}`, ["\\Deleted"]);
-				await client.messageExpunge();
-			}
-			return { success: true, data: { folder: folder || "INBOX", removed: count } };
+      const lock = await client.getMailboxLock(folder);
+			await client.messageDelete("1:*");
+      lock.release();
+			return { success: true, data: { folder: folder } };
 		});
 	},
 
 	// --- send ---
 	sendMessage: async ({ jwt, cookie, body, status }) => {
 		const user = await getUser(jwt, cookie);
-		if (!user?.mailbox || !user?.password) {
-			return status(401, { success: false, message: "Unauthorized" });
-		}
+    if (!user?.mailbox || !user?.password) return status(401, { success: false, message: "Unauthorized" });
 
 		const transporter = nodemailer.createTransport({
 			host: MAIL_SERVER.smtpHost,
@@ -342,41 +410,3 @@ export const MailService = {
 		}
 	},
 };
-
-function mapEnvelope(msg) {
-	const from = msg.envelope?.from?.[0];
-	const flags = toFlagsArray(msg.flags);
-	return {
-		uid: msg.uid,
-		subject: msg.envelope?.subject || "(no subject)",
-		from: from?.address || from?.name || "unknown",
-		fromName: from?.name || "",
-		date: msg.envelope?.date || msg.internalDate,
-		flags,
-		seen: flags.includes("\\Seen"),
-		attachments: countAttachments(msg.bodyStructure),
-	};
-}
-
-// imapflow's bodyStructure nests parts in childNodes; attachments carry a
-// disposition of "attachment"/"inline". Count them recursively.
-function countAttachments(bs) {
-	let count = 0;
-	const walk = (n) => {
-		if (!n) return;
-		if (n.disposition && /attachment|inline/i.test(n.disposition)) count++;
-		(n.childNodes || []).forEach(walk);
-	};
-	walk(bs?.childNodes ? { childNodes: bs.childNodes } : null);
-	return count;
-}
-
-// imapflow returns message flags as a Set (not an Array). Normalize to a
-// plain array so Array.isArray checks and .includes() work everywhere.
-function toFlagsArray(flags) {
-	if (Array.isArray(flags)) return flags;
-	if (flags && typeof flags[Symbol.iterator] === "function") {
-		return [...flags];
-	}
-	return [];
-}
