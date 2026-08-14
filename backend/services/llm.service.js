@@ -59,7 +59,7 @@ export async function summarizeText(text) {
 	}
 
 	const base = LLM.server.replace(/\/$/, "");
-	const url = `${base}/v1/chat/completions`;
+	const url = `${base}/api/chat`;
 	const body = {
 		model: process.env.LLM_MODEL || "qwen2.5",
 		messages: [
@@ -70,8 +70,7 @@ export async function summarizeText(text) {
 			},
 			{ role: "user", content: clean },
 		],
-		max_tokens: 300,
-		temperature: 0.3,
+		think: false,
 		stream: false,
 	};
 
@@ -90,7 +89,7 @@ export async function summarizeText(text) {
 			return { success: false, message: `LLM returned ${res.status}` };
 		}
 		const data = await res.json();
-		const summary = data?.choices?.[0]?.message?.content;
+		const summary = data?.message?.content;
 		if (!summary) {
 			return { success: false, message: "LLM returned no summary" };
 		}
