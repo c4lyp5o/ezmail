@@ -176,6 +176,21 @@ export default function MailPage() {
 	const clearSelection = useCallback(() => setSelected(new Set()), []);
 	const selectedUids = [...selected];
 
+	// Select/deselect a whole batch of UIDs at once (the "select all" checkbox).
+	// If every listed UID is already selected, clicking clears them; otherwise
+	// it adds any that are missing. One state update, no per-item churn.
+	const toggleAll = useCallback((uids) => {
+		setSelected((prev) => {
+			const next = new Set(prev);
+			const allIn = uids.every((uid) => prev.has(uid));
+			for (const uid of uids) {
+				if (allIn) next.delete(uid);
+				else next.add(uid);
+			}
+			return next;
+		});
+	}, []);
+
 	// ---- bulk actions ----
   const handleBulkFlags = async (flags, action) => {
     if (!selectedUids.length) return;
@@ -477,6 +492,7 @@ export default function MailPage() {
 						activeFolder={activeFolder}
 						selected={selected}
 						onToggleSelect={toggleSelect}
+						onToggleAll={toggleAll}
 						onOpenMessage={(msg) => openMessageWithBody(activeFolder, msg.uid, msg)}
 						alwaysRead={activeFolder === "Sent"}
 						onReady={setListState}

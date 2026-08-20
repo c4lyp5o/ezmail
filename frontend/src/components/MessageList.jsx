@@ -1,4 +1,4 @@
-import { useCallback, useEffect, memo, useState } from "react";
+import { useCallback, useEffect, memo, useRef, useState } from "react";
 import useSWR from "swr";
 import { apiCall } from "../utils/apiCall.js";
 import { Search, ArrowUpDown, ArrowUp, ArrowDown, ChevronLeft, ChevronRight } from "lucide-react";
@@ -66,6 +66,7 @@ export default function MessageList({
 	activeFolder,
 	selected,
 	onToggleSelect,
+	onToggleAll,
 	onOpenMessage,
 	alwaysRead = false,
 	onReady,
@@ -74,6 +75,7 @@ export default function MessageList({
 	const [search, setSearch] = useState("");
 	const [page, setPage] = useState(1);
   const [isReading, setIsReading] = useState("");
+	const selectAllRef = useRef(null);
 
 	const {
 		data,
@@ -89,6 +91,17 @@ export default function MessageList({
 	const messages = data?.messages || [];
 	const total = data?.total || 0;
 	const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+
+	// "Select all" covers every mail currently on the page (the observable
+	// list the user sees). checked is TRUE only when every listed UID is
+	// selected; indeterminate when the selection is partial; the tooltip shows
+	// the count so selecting a large visible list is never a surprise.
+	const visibleUids = messages.map((m) => m.uid);
+	const allSelected = visibleUids.length > 0 && visibleUids.every((uid) => selected.has(uid));
+	const someSelected = !allSelected && visibleUids.some((uid) => selected.has(uid));
+	useEffect(() => {
+		if (selectAllRef.current) selectAllRef.current.indeterminate = someSelected;
+	}, [someSelected]);
 
 	// Reset to page 1 when folder / sort / search changes.
 	useEffect(() => {
@@ -135,6 +148,16 @@ export default function MessageList({
 		<div className="flex h-full flex-col">
 			{/* Search + sort toolbar */}
 			<div className="flex items-center gap-2 border-b border-hair px-3 py-2">
+				{/* Select all mails currently visible in the list (left of search) */}
+				<input
+					ref={selectAllRef}
+					type="checkbox"
+					checked={allSelected}
+					aria-label="Select all visible mail"
+					title={`${someSelected && !allSelected ? "Some" : allSelected ? "All" : "None"} of ${visibleUids.length} visible selected — click to ${allSelected ? "clear" : "select all"}`}
+					onChange={() => onToggleAll(visibleUids)}
+					className="h-4 w-4 shrink-0 cursor-pointer rounded border-hair-strong accent-accent"
+				/>
 				<div className="relative flex-1">
 					<Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink-muted" />
 					<input

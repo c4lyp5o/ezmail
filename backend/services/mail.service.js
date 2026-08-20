@@ -314,8 +314,7 @@ export const MailService = {
 		const user = await getUser(jwt, cookie);
 		if (!user?.mailbox || !user?.password) return status(401, { success: false, message: "Unauthorized" });
 		const { uids, from, to } = body;
-    console.log(body)
-    const targetUids = Array.isArray(uids) ? uids.map(Number) : uids;
+		const targetUids = Array.isArray(uids) ? uids.map(Number) : uids;
 		return withClient(user, status, async (client) => {
       const lock = await client.getMailboxLock(from);
 			await client.messageMove(targetUids, to, { uid: true });
