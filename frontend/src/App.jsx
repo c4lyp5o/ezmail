@@ -3,7 +3,7 @@ import { AuthProvider, useAuth } from "./context/auth.jsx";
 import { ThemeProvider } from "./context/theme.jsx";
 import LoginPage from "./pages/LoginPage.jsx";
 import MailPage from "./pages/MailPage.jsx";
-import RequireAuth from "./RequireAuth.jsx";
+import RequireAuth from "./components/RequireAuth.jsx";
 
 function Gate() {
 	const { user, loading } = useAuth();
