@@ -1,15 +1,26 @@
 import { useCallback, useEffect, memo, useRef, useState } from "react";
 import useSWR from "swr";
 import { apiCall } from "../utils/apiCall.js";
-import { Search, ArrowUpDown, ArrowUp, ArrowDown, ChevronLeft, ChevronRight } from "lucide-react";
+import { ArrowUpDown, ArrowUp, ArrowDown, Search, Star } from "lucide-react";
 
 const PAGE_SIZE = 50;
 
-const MessageRow = memo(function MessageRow({ msg, isReading, selected, onToggle, onClick, alwaysRead }) {
+const MessageRow = memo(function MessageRow({
+	msg,
+	isReading,
+	selected,
+	onToggle,
+	onClick,
+	alwaysRead,
+}) {
 	const isUnread = !alwaysRead && !msg.seen;
+	const isFlagged = msg.flags?.includes("\\Flagged");
+
 	return (
+		// biome-ignore lint/a11y/noStaticElementInteractions: later
+		// biome-ignore lint/a11y/useKeyWithClickEvents: later
 		<div
-      onClick={onClick}
+			onClick={onClick}
 			className={`group flex w-full items-center gap-3 border-b border-hair px-4 py-3 text-left transition hover:bg-hover/40 ${
 				selected ? "bg-accent/10 font-bold" : ""
 			} ${isReading === msg.uid ? "bg-accent/30" : ""}`}
@@ -24,8 +35,17 @@ const MessageRow = memo(function MessageRow({ msg, isReading, selected, onToggle
 				onClick={(e) => e.stopPropagation()}
 				className="h-4 w-4 shrink-0 cursor-pointer rounded border-hair-strong accent-accent"
 			/>
-			<button className="flex min-w-0 flex-1 items-center gap-3 text-left">
-				<div className={`min-w-0 flex-1 ${selected ? 'bg-red' : ""}`}>
+
+			{/* Flagged Star Icon */}
+			{isFlagged && (
+				<Star className="h-4 w-4 shrink-0 fill-amber-400 text-amber-400" />
+			)}
+
+			<button
+				type="button"
+				className="flex min-w-0 flex-1 items-center gap-3 text-left"
+			>
+				<div className={`min-w-0 flex-1 ${selected ? "bg-red" : ""}`}>
 					<div
 						className={`truncate text-sm ${
 							isUnread ? "font-semibold text-ink" : "text-ink-muted"
@@ -54,6 +74,16 @@ const MessageRow = memo(function MessageRow({ msg, isReading, selected, onToggle
 	);
 });
 
+function formatDate(date) {
+	if (!date) return "";
+	const d = new Date(date);
+	const now = new Date();
+	const sameDay = d.toDateString() === now.toDateString();
+	return sameDay
+		? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+		: d.toLocaleDateString([], { month: "short", day: "numeric" });
+}
+
 // Builds the SWR key for a given folder / page / sort / search.
 const listKey = (folder, page, sort, search) =>
 	`/mail/messages/${encodeURIComponent(folder)}?page=${page}&pageSize=${PAGE_SIZE}&sort=${sort}&search=${encodeURIComponent(search || "")}`;
@@ -74,15 +104,10 @@ export default function MessageList({
 	const [sort, setSort] = useState("desc");
 	const [search, setSearch] = useState("");
 	const [page, setPage] = useState(1);
-  const [isReading, setIsReading] = useState("");
+	const [isReading, setIsReading] = useState("");
 	const selectAllRef = useRef(null);
 
-	const {
-		data,
-		isValidating,
-		error,
-		mutate,
-	} = useSWR(
+	const { data, isValidating, error, mutate } = useSWR(
 		activeFolder ? listKey(activeFolder, page, sort, search) : null,
 		fetcher,
 		{ revalidateOnFocus: false, refreshInterval: 10000 },
@@ -97,13 +122,16 @@ export default function MessageList({
 	// selected; indeterminate when the selection is partial; the tooltip shows
 	// the count so selecting a large visible list is never a surprise.
 	const visibleUids = messages.map((m) => m.uid);
-	const allSelected = visibleUids.length > 0 && visibleUids.every((uid) => selected.has(uid));
-	const someSelected = !allSelected && visibleUids.some((uid) => selected.has(uid));
+	const allSelected =
+		visibleUids.length > 0 && visibleUids.every((uid) => selected.has(uid));
+	const someSelected =
+		!allSelected && visibleUids.some((uid) => selected.has(uid));
 	useEffect(() => {
 		if (selectAllRef.current) selectAllRef.current.indeterminate = someSelected;
 	}, [someSelected]);
 
 	// Reset to page 1 when folder / sort / search changes.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: later
 	useEffect(() => {
 		setPage(1);
 	}, [activeFolder, sort, search]);
@@ -113,7 +141,8 @@ export default function MessageList({
 	// Expose mutate() + loading + pagination to the parent (MailPage) so it can
 	// refresh after mutations and render a fixed bottom pagination bar.
 	useEffect(() => {
-		if (onReady) onReady({ refresh, isValidating, page, setPage, total, totalPages });
+		if (onReady)
+			onReady({ refresh, isValidating, page, setPage, total, totalPages });
 	}, [onReady, refresh, isValidating, page, total, totalPages]);
 
 	const openMessage = useCallback(
@@ -133,13 +162,16 @@ export default function MessageList({
 					.post("/mail/flags", {
 						folder: activeFolder,
 						uids: [msg.uid],
-            action: "add",
+						action: "add",
 						flags: ["\\Seen"],
 					})
 					.then(() => mutate())
 					.catch(() => {});
 			}
-			if (onOpenMessage) { onOpenMessage(msg); setIsReading(msg.uid); };
+			if (onOpenMessage) {
+				onOpenMessage(msg);
+				setIsReading(msg.uid);
+			}
 		},
 		[activeFolder, alwaysRead, onOpenMessage, mutate],
 	);
@@ -168,6 +200,7 @@ export default function MessageList({
 					/>
 				</div>
 				<button
+					type="button"
 					onClick={() => setSort(sort === "desc" ? "asc" : "desc")}
 					title={`Sort by date: ${sort === "desc" ? "Newest first" : "Oldest first"}`}
 					className="flex items-center gap-1 rounded-md border border-hair px-2 py-1.5 text-ink-muted transition hover:bg-hover hover:text-ink-2"
@@ -204,7 +237,7 @@ export default function MessageList({
 					<MessageRow
 						key={msg.uid}
 						msg={msg}
-            isReading={isReading}
+						isReading={isReading}
 						selected={selected?.has(msg.uid)}
 						onToggle={() => onToggleSelect(msg.uid)}
 						onClick={() => openMessage(msg)}
@@ -214,14 +247,4 @@ export default function MessageList({
 			</div>
 		</div>
 	);
-}
-
-function formatDate(date) {
-	if (!date) return "";
-	const d = new Date(date);
-	const now = new Date();
-	const sameDay = d.toDateString() === now.toDateString();
-	return sameDay
-		? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-		: d.toLocaleDateString([], { month: "short", day: "numeric" });
 }
