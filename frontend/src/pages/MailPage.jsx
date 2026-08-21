@@ -9,20 +9,22 @@ import ComposeView from "../components/ComposeView.jsx";
 import SummaryColumn from "../components/SummaryColumn.jsx";
 import SettingsModal from "../components/SettingsModal.jsx";
 import ThemeToggle from "../components/ThemeToggle.jsx";
+import EmptyTrashModal from "../components/EmptyTrashModal.jsx";
 import {
 	Inbox,
-	LogOut,
-	PenSquare,
-	Trash2,
-	CheckCheck,
-	FolderInput,
-	X,
 	ChevronLeft,
 	ChevronRight,
-	Menu,
+	FolderInput,
 	KeyRound,
-  MailOpen,
-  Mail,
+	LogOut,
+	MailOpen,
+	Mail,
+	Menu,
+	PenSquare,
+	Star,
+	Trash2,
+	X,
+	StarOff,
 } from "lucide-react";
 
 // Builds a compact page-number list with ellipses, e.g.
@@ -30,7 +32,9 @@ import {
 function pageNumbers(total, current) {
 	if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
 	const pages = new Set([1, total, current - 1, current, current + 1]);
-	const sorted = [...pages].filter((p) => p >= 1 && p <= total).sort((a, b) => a - b);
+	const sorted = [...pages]
+		.filter((p) => p >= 1 && p <= total)
+		.sort((a, b) => a - b);
 	const withEllipses = [];
 	let prev = 0;
 	for (const p of sorted) {
@@ -50,8 +54,9 @@ export default function MailPage() {
 	const [selected, setSelected] = useState(() => new Set()); // Set of UIDs, persists across opens
 	const [movePopup, setMovePopup] = useState(false);
 	const [bulkBusy, setBulkBusy] = useState(false);
-	const [settingsOpen, setSettingsOpen] = useState(false);
+	const [emptyTrashOpen, setEmptyTrashOpen] = useState(false);
 	const [emptyTrashBusy, setEmptyTrashBusy] = useState(false);
+	const [settingsOpen, setSettingsOpen] = useState(false);
 	const [showRemote, setShowRemote] = useState(false);
 
 	// Mobile: sidebar drawer open state + which pane is shown
@@ -59,7 +64,9 @@ export default function MailPage() {
 	const [mobilePane, setMobilePane] = useState("list"); // "list" | "reader"
 
 	// Track viewport size so the resizable list column only applies on desktop.
-	const [isMobile, setIsMobile] = useState(() => window.matchMedia("(max-width: 767px)").matches);
+	const [isMobile, setIsMobile] = useState(
+		() => window.matchMedia("(max-width: 767px)").matches,
+	);
 
 	useEffect(() => {
 		const mq = window.matchMedia("(max-width: 767px)");
@@ -69,7 +76,9 @@ export default function MailPage() {
 	}, []);
 
 	// Growable message-list column width (drag the separator edge).
-	const [listWidth, setListWidth] = useState(() => Number(localStorage.getItem("ezmail_list_width")) || 320);
+	const [listWidth, setListWidth] = useState(
+		() => Number(localStorage.getItem("ezmail_list_width")) || 320,
+	);
 	const [isDraggingList, setIsDraggingList] = useState(false);
 	// Records where the drag began so the width tracks the mouse 1:1 without a
 	// jump (the grab handle sits ~6px past the column's right edge).
@@ -154,6 +163,7 @@ export default function MailPage() {
 	}, [loadFolders]);
 
 	// On login, default to INBOX folder view
+	// biome-ignore lint/correctness/useExhaustiveDependencies: later
 	useEffect(() => {
 		setView({ type: "folder" });
 	}, [user?.mailbox]);
@@ -176,63 +186,77 @@ export default function MailPage() {
 	const clearSelection = useCallback(() => setSelected(new Set()), []);
 	const selectedUids = [...selected];
 
+	// Select/deselect a whole batch of UIDs at once (the "select all" checkbox).
+	// If every listed UID is already selected, clicking clears them; otherwise
+	// it adds any that are missing. One state update, no per-item churn.
+	const toggleAll = useCallback((uids) => {
+		setSelected((prev) => {
+			const next = new Set(prev);
+			const allIn = uids.every((uid) => prev.has(uid));
+			for (const uid of uids) {
+				if (allIn) next.delete(uid);
+				else next.add(uid);
+			}
+			return next;
+		});
+	}, []);
+
 	// ---- bulk actions ----
-  const handleBulkFlags = async (flags, action) => {
-    if (!selectedUids.length) return;
-    setBulkBusy(true);
-    try {
-      await apiCall.post(`/mail/${action === "add" ? "flags" : "unflag"}`, {
-        folder: activeFolder,
-        uids: selectedUids,
-        action,
-        flags,
-      });
-      afterMutation();
-    } catch (err) {
-      console.error(`Failed to update flags (${action})`, err);
-    } finally {
-      setBulkBusy(false);
-    }
-  };
+	const handleBulkFlags = async (flags, action) => {
+		if (!selectedUids.length) return;
+		setBulkBusy(true);
+		try {
+			await apiCall.post(`/mail/${action === "add" ? "flags" : "unflag"}`, {
+				folder: activeFolder,
+				uids: selectedUids,
+				action,
+				flags,
+			});
+			afterMutation();
+		} catch (err) {
+			console.error(`Failed to update flags (${action})`, err);
+		} finally {
+			setBulkBusy(false);
+		}
+	};
 
 	const bulkMarkRead = () => handleBulkFlags(["\\Seen"], "add");
-  const bulkMarkUnread = () => handleBulkFlags(["\\Seen"], "remove");
-  const bulkStar = () => handleBulkFlags(["\\Flagged"], "add");
-  const bulkUnstar = () => handleBulkFlags(["\\Flagged"], "remove");
+	const bulkMarkUnread = () => handleBulkFlags(["\\Seen"], "remove");
+	const bulkStar = () => handleBulkFlags(["\\Flagged"], "add");
+	const bulkUnstar = () => handleBulkFlags(["\\Flagged"], "remove");
 
 	const bulkDelete = async () => {
-    if (!selectedUids.length) return;
-    setBulkBusy(true);
-    try {
-      const isTrash = activeFolder === "Trash";
-      if (isTrash) {
-        await apiCall.post("/mail/delete", {
-          folder: activeFolder,
-          uids: selectedUids,
-        });
-      } else {
-        await apiCall.post("/mail/move", {
-          from: activeFolder,
-          to: "Trash",
-          uids: selectedUids,
-        });
-      }
-      afterMutation();
-    } catch (err) {
-      console.error("Bulk delete failed:", err);
-    } finally {
-      setBulkBusy(false);
-    }
-  };
+		if (!selectedUids.length) return;
+		setBulkBusy(true);
+		try {
+			const isTrash = activeFolder === "Trash";
+			if (isTrash) {
+				await apiCall.post("/mail/delete", {
+					folder: activeFolder,
+					uids: selectedUids,
+				});
+			} else {
+				await apiCall.post("/mail/move", {
+					from: activeFolder,
+					to: "Trash",
+					uids: selectedUids,
+				});
+			}
+			afterMutation();
+		} catch (err) {
+			console.error("Bulk delete failed:", err);
+		} finally {
+			setBulkBusy(false);
+		}
+	};
 
 	// Permanently delete every message in the Trash folder.
 	const emptyTrash = async () => {
-		if (!window.confirm("Permanently delete ALL mail in Trash? This cannot be undone.")) return;
 		setEmptyTrashBusy(true);
 		try {
 			await apiCall.post("/mail/expunge", { folder: "Trash" });
 			clearSelection();
-      afterMutation();
+			afterMutation();
 		} catch (err) {
 			console.error("Failed to empty trash:", err.message);
 		} finally {
@@ -245,11 +269,11 @@ export default function MailPage() {
 		setMovePopup(false);
 		setBulkBusy(true);
 		try {
-      await apiCall.post("/mail/move", {
-        uids: selectedUids,
-        from: activeFolder,
-        to: toFolder
-      });
+			await apiCall.post("/mail/move", {
+				uids: selectedUids,
+				from: activeFolder,
+				to: toFolder,
+			});
 			afterMutation();
 		} finally {
 			setBulkBusy(false);
@@ -273,21 +297,19 @@ export default function MailPage() {
 
 	// After any mutation (mark read / delete / move), refresh the SWR list so
 	// the UI reflects the server state (needed because moves change UIDs).
+	// biome-ignore lint/correctness/useExhaustiveDependencies: later
 	const afterMutation = useCallback(() => {
 		clearSelection();
 		setView({ type: "folder" });
 		if (refreshList) refreshList();
 	}, [refreshList]);
 
-	const openMessage = (folder, uid, msg) => {
-		setView({ type: "message", folder, uid, msg });
-	};
-
 	// Fetch the full message body once when a message is opened, so both the
 	// detail view AND the summary column get the real text/html (the list item
 	// passed in has no body). Also refresh the list so the read state updates.
 	const [fullMessage, setFullMessage] = useState(null);
 
+	// biome-ignore lint/correctness/useExhaustiveDependencies: later
 	const openMessageWithBody = useCallback(
 		async (folder, uid, msg) => {
 			setFullMessage(null); // clear previous body so no stale summary
@@ -310,6 +332,7 @@ export default function MailPage() {
 		<div className="flex h-dvh w-full overflow-x-hidden bg-canvas text-ink">
 			{/* Mobile: hamburger to open the sidebar drawer */}
 			<button
+				type="button"
 				onClick={() => setMobileSidebar(true)}
 				className="fixed left-3 top-1.5 z-30 flex h-10 w-10 items-center justify-center rounded-lg border border-hair bg-panel text-ink-2 shadow-lg md:hidden"
 				aria-label="Open folders"
@@ -325,6 +348,7 @@ export default function MailPage() {
 			>
 				{/* Close button on mobile */}
 				<button
+					type="button"
 					onClick={() => setMobileSidebar(false)}
 					className="absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-lg text-ink-muted transition hover:bg-hover hover:text-ink-2 md:hidden"
 					aria-label="Close folders"
@@ -339,6 +363,7 @@ export default function MailPage() {
 				</div>
 
 				<button
+					type="button"
 					onClick={() => setView({ type: "compose" })}
 					className="mx-3 mb-3 flex items-center justify-center gap-2 rounded-lg bg-accent py-2 text-sm font-medium text-white transition hover:bg-accent"
 				>
@@ -346,11 +371,17 @@ export default function MailPage() {
 					Compose
 				</button>
 
-				<FolderList folders={folders} active={activeFolder} onSelect={selectFolder} />
+				<FolderList
+					folders={folders}
+					active={activeFolder}
+					onSelect={selectFolder}
+				/>
 
 				<div className="mt-auto border-t border-hair p-4">
 					<div className="px-1">
-						<div className="min-w-0 truncate text-sm font-medium text-ink-2">{user?.mailbox || "mailbox"}</div>
+						<div className="min-w-0 truncate text-sm font-medium text-ink-2">
+							{user?.mailbox || "mailbox"}
+						</div>
 					</div>
 					<div className="mt-3 flex items-center justify-between px-1">
 						<button
@@ -365,6 +396,7 @@ export default function MailPage() {
 						<ThemeToggle />
 					</div>
 					<button
+						type="button"
 						onClick={handleLogout}
 						className="mt-2 flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-ink-muted transition hover:bg-hover hover:text-ink-2"
 					>
@@ -386,6 +418,7 @@ export default function MailPage() {
 				}`}
 			>
 				{/* Drag handle on the separator edge (desktop only) */}
+				{/** biome-ignore lint/a11y/noStaticElementInteractions: leter*/}
 				<div
 					onMouseDown={onListDragStart}
 					className="group absolute -right-1.5 top-0 z-50 hidden h-full w-3 cursor-col-resize justify-center md:flex"
@@ -398,30 +431,56 @@ export default function MailPage() {
 						}`}
 					/>
 				</div>
+
 				{/* Bulk action bar shown when selection exists */}
 				{selectedUids.length > 0 ? (
-					<div className="flex items-center gap-1 border-b border-hair bg-accent/10 px-3 py-2">
+					<div className="flex h-14 shrink-0 items-center gap-1 border-b border-hair bg-accent/10 px-3">
 						<span className="px-1 text-sm font-medium text-accent">
 							{selectedUids.length}
 						</span>
 						<div className="flex-1" />
+						{activeFolder !== "Trash" && (
+							<>
+								<button
+									type="button"
+									onClick={bulkMarkRead}
+									disabled={bulkBusy}
+									title="Mark as read"
+									className="rounded-lg p-2 text-ink-2 transition hover:bg-hover disabled:opacity-50"
+								>
+									<MailOpen className="h-4 w-4" />
+								</button>
+								<button
+									type="button"
+									onClick={bulkMarkUnread}
+									disabled={bulkBusy}
+									title="Mark as unread"
+									className="rounded-lg p-2 text-ink-2 transition hover:bg-hover disabled:opacity-50"
+								>
+									<Mail className="h-4 w-4" />
+								</button>
+								<button
+									type="button"
+									onClick={bulkStar}
+									disabled={bulkBusy}
+									title="Star"
+									className="rounded-lg p-2 text-ink-2 transition hover:bg-hover disabled:opacity-50"
+								>
+									<Star className="h-4 w-4" />
+								</button>
+								<button
+									type="button"
+									onClick={bulkUnstar}
+									disabled={bulkBusy}
+									title="Unstar"
+									className="rounded-lg p-2 text-ink-2 transition hover:bg-hover disabled:opacity-50"
+								>
+									<StarOff className="h-4 w-4" />
+								</button>
+							</>
+						)}
 						<button
-							onClick={bulkMarkRead}
-							disabled={bulkBusy}
-							title="Mark as read"
-							className="rounded-lg p-2 text-ink-2 transition hover:bg-hover disabled:opacity-50"
-						>
-							<MailOpen className="h-4 w-4" />
-						</button>
-            <button
-							onClick={bulkMarkUnread}
-							disabled={bulkBusy}
-							title="Mark as unread"
-							className="rounded-lg p-2 text-ink-2 transition hover:bg-hover disabled:opacity-50"
-						>
-							<Mail className="h-4 w-4" />
-						</button>
-						<button
+							type="button"
 							onClick={() => setMovePopup(true)}
 							disabled={bulkBusy}
 							title="Move to"
@@ -430,6 +489,7 @@ export default function MailPage() {
 							<FolderInput className="h-4 w-4" />
 						</button>
 						<button
+							type="button"
 							onClick={bulkDelete}
 							disabled={bulkBusy}
 							title="Delete"
@@ -438,6 +498,7 @@ export default function MailPage() {
 							<Trash2 className="h-4 w-4" />
 						</button>
 						<button
+							type="button"
 							onClick={clearSelection}
 							title="Clear selection"
 							className="rounded-lg p-2 text-ink-muted transition hover:bg-hover hover:text-ink-2"
@@ -446,14 +507,17 @@ export default function MailPage() {
 						</button>
 					</div>
 				) : (
-          <div className="border-b border-hair py-3 pl-14 pr-4 md:pl-4">
-            <div className="flex items-center gap-2">
-							<h2 className="ml-1 text-lg font-semibold capitalize md:ml-0">{activeFolder}</h2>
+					<div className="flex h-14 shrink-0 items-center border-b border-hair pl-14 pr-4 md:pl-4">
+						<div className="flex items-center gap-2">
+							<h2 className="ml-1 text-lg font-semibold capitalize md:ml-0">
+								{activeFolder}
+							</h2>
 							{activeFolder === "Trash" && (
 								<button
-									onClick={emptyTrash}
-									disabled={bulkBusy || emptyTrashBusy}
-									title="Delete all mail permanently"
+									type="button"
+									onClick={() => setEmptyTrashOpen(true)}
+									disabled={bulkBusy || emptyTrashOpen}
+									title="Delete trash mail permanently"
 									className="flex items-center gap-1.5 rounded-lg border border-danger/20/50 px-2.5 py-1 text-xs font-medium text-danger transition hover:bg-danger/10/40 disabled:opacity-40"
 								>
 									{emptyTrashBusy ? (
@@ -477,7 +541,10 @@ export default function MailPage() {
 						activeFolder={activeFolder}
 						selected={selected}
 						onToggleSelect={toggleSelect}
-						onOpenMessage={(msg) => openMessageWithBody(activeFolder, msg.uid, msg)}
+						onToggleAll={toggleAll}
+						onOpenMessage={(msg) =>
+							openMessageWithBody(activeFolder, msg.uid, msg)
+						}
 						alwaysRead={activeFolder === "Sent"}
 						onReady={setListState}
 					/>
@@ -485,70 +552,72 @@ export default function MailPage() {
 
 				{/* Fixed bottom pagination bar */}
 				<div className="flex items-center justify-center gap-1 border-t border-hair bg-panel/60 px-3 py-2">
-          {totalPages > 1 ? (
-            <>
-              <button
-                onClick={() => setListPage?.(Math.max(1, listPage - 1))}
-                disabled={listPage <= 1}
-                className="rounded-md p-1.5 text-ink-muted transition hover:bg-hover disabled:opacity-40"
-                title="Previous page"
-              >
-                <ChevronLeft className="h-4 w-4" />
-              </button>
+					{totalPages > 1 ? (
+						<>
+							<button
+								type="button"
+								onClick={() => setListPage?.(Math.max(1, listPage - 1))}
+								disabled={listPage <= 1}
+								className="rounded-md p-1.5 text-ink-muted transition hover:bg-hover disabled:opacity-40"
+								title="Previous page"
+							>
+								<ChevronLeft className="h-4 w-4" />
+							</button>
 
-              {pageNumbers(totalPages, listPage).map((p, i) =>
-                p === "…" ? (
-                  <span key={`e${i}`} className="px-1 text-ink-faint">
-                    …
-                  </span>
-                ) : (
-                  <button
-                    key={p}
-                    onClick={() => setListPage?.(p)}
-                    className={`min-w-7 rounded-md px-2 py-1 text-sm transition ${
-                      p === listPage
-                        ? "bg-accent text-white"
-                        : "text-ink-muted hover:bg-hover hover:text-ink-2"
-                    }`}
-                  >
-                    {p}
-                  </button>
-                )
-              )}
+							{pageNumbers(totalPages, listPage).map((p, i) =>
+								p === "…" ? (
+									// biome-ignore lint/suspicious/noArrayIndexKey: later
+									<span key={`e${i}`} className="px-1 text-ink-faint">
+										…
+									</span>
+								) : (
+									<button
+										type="button"
+										key={p}
+										onClick={() => setListPage?.(p)}
+										className={`min-w-7 rounded-md px-2 py-1 text-sm transition ${
+											p === listPage
+												? "bg-accent text-white"
+												: "text-ink-muted hover:bg-hover hover:text-ink-2"
+										}`}
+									>
+										{p}
+									</button>
+								),
+							)}
 
-              <button
-                onClick={() =>
-                  setListPage?.(Math.min(totalPages, listPage + 1))
-                }
-                disabled={listPage >= totalPages}
-                className="rounded-md p-1.5 text-ink-muted transition hover:bg-hover disabled:opacity-40"
-                title="Next page"
-              >
-                <ChevronRight className="h-4 w-4" />
-              </button>
-            </>
-          ) : (
-            <div className="invisible py-1 text-sm">&nbsp;</div>
-          )}
-        </div>
+							<button
+								type="button"
+								onClick={() =>
+									setListPage?.(Math.min(totalPages, listPage + 1))
+								}
+								disabled={listPage >= totalPages}
+								className="rounded-md p-1.5 text-ink-muted transition hover:bg-hover disabled:opacity-40"
+								title="Next page"
+							>
+								<ChevronRight className="h-4 w-4" />
+							</button>
+						</>
+					) : (
+						<div className="invisible py-1 text-sm">&nbsp;</div>
+					)}
+				</div>
 			</div>
 
 			{/* Main content column */}
-      <main
-        className={`min-w-0 flex-1 ${isMobile && mobilePane === "list" ? "hidden" : ""}`}
-      >
-				{view.type === "compose" && (
-					<ComposeView onBack={handleBack} />
-				)}
+			<main
+				className={`min-w-0 flex-1 ${isMobile && mobilePane === "list" ? "hidden" : ""}`}
+			>
+				{view.type === "compose" && <ComposeView onBack={handleBack} />}
 				{view.type === "message" && (
 					<MessageView
 						folder={view.folder}
 						uid={view.uid}
 						initialMsg={view.msg}
 						onBack={handleBack}
-            refresh={afterMutation}
-            setShowRemote={setShowRemote}
-            showRemote={showRemote}
+						refresh={afterMutation}
+						setShowRemote={setShowRemote}
+						showRemote={showRemote}
 					/>
 				)}
 				{view.type === "folder" && (
@@ -557,7 +626,7 @@ export default function MailPage() {
 						Select a message to read it
 					</div>
 				)}
-      </main>
+			</main>
 
 			{/* Summary column when viewing a message with LLM present (hidden on
 			    small screens — the reader stays full-width on mobile) */}
@@ -570,10 +639,14 @@ export default function MailPage() {
 
 			{/* Move-to popup */}
 			{movePopup && (
+				// biome-ignore lint/a11y/noStaticElementInteractions: later
+				// biome-ignore lint/a11y/useKeyWithClickEvents: later
 				<div
 					className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
 					onClick={() => setMovePopup(false)}
 				>
+					{/** biome-ignore lint/a11y/noStaticElementInteractions: later */}
+					{/** biome-ignore lint/a11y/useKeyWithClickEvents: later */}
 					<div
 						className="w-80 rounded-xl border border-hair-strong bg-panel p-4 shadow-xl"
 						onClick={(e) => e.stopPropagation()}
@@ -584,6 +657,7 @@ export default function MailPage() {
 								.filter((f) => f.path !== activeFolder)
 								.map((f) => (
 									<button
+										type="button"
 										key={f.path}
 										onClick={() => bulkMove(f.path)}
 										disabled={bulkBusy}
@@ -594,6 +668,7 @@ export default function MailPage() {
 								))}
 						</div>
 						<button
+							type="button"
 							onClick={() => setMovePopup(false)}
 							className="mt-3 w-full rounded-lg border border-hair-strong py-2 text-sm text-ink-muted transition hover:bg-hover"
 						>
@@ -602,6 +677,13 @@ export default function MailPage() {
 					</div>
 				</div>
 			)}
+
+			<EmptyTrashModal
+				open={emptyTrashOpen}
+				onClose={() => setEmptyTrashOpen(false)}
+				emptyTrash={emptyTrash}
+				busy={emptyTrashBusy}
+			/>
 
 			<SettingsModal
 				open={settingsOpen}

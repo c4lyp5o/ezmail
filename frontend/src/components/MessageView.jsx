@@ -2,7 +2,17 @@ import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
 import { apiCall } from "../utils/apiCall.js";
-import { ArrowLeft, Mail as MailIcon, Trash2, ChevronDown, ChevronRight, Paperclip, Download, FileWarning, Image as ImageIcon } from "lucide-react";
+import {
+	ArrowLeft,
+	Mail as MailIcon,
+	Trash2,
+	ChevronDown,
+	ChevronRight,
+	Paperclip,
+	Download,
+	FileWarning,
+	Image as ImageIcon,
+} from "lucide-react";
 
 function DetailRow({ label, value }) {
 	return (
@@ -18,17 +28,26 @@ function formatDate(date) {
 	const d = new Date(date);
 	const diffMs = Date.now() - d.getTime();
 	if (diffMs >= 0 && diffMs < 60 * 1000) return "just now";
-	if (diffMs >= 0 && diffMs < 3600 * 1000) return `${Math.max(1, Math.floor(diffMs / 60000))}m ago`;
-	if (diffMs >= 0 && diffMs < 24 * 3600 * 1000) return `${Math.floor(diffMs / 3600000)}h ago`;
-	if (diffMs >= 0 && diffMs < 7 * 24 * 3600 * 1000) return `${Math.floor(diffMs / 86400000)}d ago`;
-	return d.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" });
+	if (diffMs >= 0 && diffMs < 3600 * 1000)
+		return `${Math.max(1, Math.floor(diffMs / 60000))}m ago`;
+	if (diffMs >= 0 && diffMs < 24 * 3600 * 1000)
+		return `${Math.floor(diffMs / 3600000)}h ago`;
+	if (diffMs >= 0 && diffMs < 7 * 24 * 3600 * 1000)
+		return `${Math.floor(diffMs / 86400000)}d ago`;
+	return d.toLocaleDateString([], {
+		month: "short",
+		day: "numeric",
+		year: "numeric",
+	});
 }
 
 // Heuristic: a plain-text body is treated as markdown when it contains common
 // markdown signals (headings, lists, bold/italic, code fences, links).
 function looksLikeMarkdown(text) {
 	if (!text) return false;
-	return /(?:^|\n)\s{0,3}#{1,6}\s|(?:^|\n)\s*[-*+]\s+|(?:^|\n)\s*\d+\.\s+|```|(\*\*|__).+?(\*\*|__)|\[[^\]]+\]\([^)]+\)/.test(text);
+	return /(?:^|\n)\s{0,3}#{1,6}\s|(?:^|\n)\s*[-*+]\s+|(?:^|\n)\s*\d+\.\s+|```|(\*\*|__).+?(\*\*|__)|\[[^\]]+\]\([^)]+\)/.test(
+		text,
+	);
 }
 
 // Triggers a browser download for a base64 attachment.
@@ -37,7 +56,9 @@ function downloadAttachment(a) {
 	const bytes = atob(a.content);
 	const arr = new Uint8Array(bytes.length);
 	for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
-	const blob = new Blob([arr], { type: a.contentType || "application/octet-stream" });
+	const blob = new Blob([arr], {
+		type: a.contentType || "application/octet-stream",
+	});
 	const url = URL.createObjectURL(blob);
 	const link = document.createElement("a");
 	link.href = url;
@@ -51,7 +72,10 @@ function downloadAttachment(a) {
 function formatBytes(bytes) {
 	if (!bytes || bytes <= 0) return "0 B";
 	const units = ["B", "KB", "MB", "GB"];
-	const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+	const i = Math.min(
+		Math.floor(Math.log(bytes) / Math.log(1024)),
+		units.length - 1,
+	);
 	return `${(bytes / 1024 ** i).toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
 }
 
@@ -93,7 +117,15 @@ function prepareHtml(html) {
 	return doc.body.innerHTML;
 }
 
-export default function MessageView({ folder, uid, initialMsg, onBack, refresh, setShowRemote, showRemote }) {
+export default function MessageView({
+	folder,
+	uid,
+	initialMsg,
+	onBack,
+	refresh,
+	setShowRemote,
+	showRemote,
+}) {
 	const [msg, setMsg] = useState(initialMsg || null);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState("");
@@ -109,11 +141,13 @@ export default function MessageView({ folder, uid, initialMsg, onBack, refresh, 
 	const thisFolder = decodeURIComponent(folder || "INBOX");
 
 	// Reset per-message UI (details panel, scroll) whenever a new message opens.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: later
 	useEffect(() => {
 		setShowDetails(false);
 		setError("");
 	}, [uid, thisFolder]);
 
+	// biome-ignore lint/correctness/useExhaustiveDependencies: later
 	const load = useCallback(async () => {
 		setLoading(true);
 		setError("");
@@ -121,7 +155,7 @@ export default function MessageView({ folder, uid, initialMsg, onBack, refresh, 
 			const res = await apiCall.get(
 				`/mail/message/${encodeURIComponent(thisFolder)}/${uid}`,
 			);
-      setShowRemote(false);
+			setShowRemote(false);
 			setMsg(res.data || null);
 		} catch (err) {
 			setError(err.message || "Failed to load message");
@@ -169,7 +203,7 @@ export default function MessageView({ folder, uid, initialMsg, onBack, refresh, 
 					to: "Trash",
 				});
 			}
-      refresh();
+			refresh();
 			onBack?.();
 		} catch (err) {
 			setError(err.message || "Failed to delete");
@@ -192,6 +226,7 @@ export default function MessageView({ folder, uid, initialMsg, onBack, refresh, 
 					{error}
 				</div>
 				<button
+					type="button"
 					onClick={onBack}
 					className="flex items-center gap-2 text-sm text-ink-muted hover:text-ink-2"
 				>
@@ -207,6 +242,7 @@ export default function MessageView({ folder, uid, initialMsg, onBack, refresh, 
 				<MailIcon className="h-10 w-10" />
 				<p>No message</p>
 				<button
+					type="button"
 					onClick={onBack}
 					className="flex items-center gap-2 text-sm text-ink-muted hover:text-ink-2"
 				>
@@ -217,17 +253,19 @@ export default function MessageView({ folder, uid, initialMsg, onBack, refresh, 
 	}
 
 	return (
-    <div className="flex h-full w-full flex-col overflow-y-auto overflow-x-hidden">
+		<div className="flex h-full w-full flex-col overflow-y-auto overflow-x-hidden">
 			{/* Toolbar */}
-			<div className="flex items-center gap-2 border-b border-hair py-3 pl-14 pr-4 md:pl-4">
+			<div className="flex h-14 shrink-0 items-center gap-2 border-b border-hair pl-14 pr-4 md:pl-4">
 				<button
+					type="button"
 					onClick={onBack}
-					className="flex items-center gap-1 rounded-lg px-2 py-1 text-sm text-ink-muted transition hover:bg-hover hover:text-ink-2"
+					className="flex items-center gap-1 rounded-lg px-2 py-1.5 text-sm text-ink-muted transition hover:bg-hover hover:text-ink-2"
 				>
 					<ArrowLeft className="h-4 w-4" /> Back
 				</button>
 				<div className="flex-1" />
 				<button
+					type="button"
 					onClick={remove}
 					title="Move to Trash"
 					className="flex items-center gap-1 rounded-lg px-2 py-1.5 text-sm text-ink-muted transition hover:bg-danger/10 hover:text-danger"
@@ -263,6 +301,7 @@ export default function MessageView({ folder, uid, initialMsg, onBack, refresh, 
 							</span>
 						)}
 						<button
+							type="button"
 							onClick={() => setShowDetails((v) => !v)}
 							className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-ink-muted transition hover:bg-hover hover:text-ink-2"
 						>
@@ -274,13 +313,13 @@ export default function MessageView({ folder, uid, initialMsg, onBack, refresh, 
 							Details
 						</button>
 						<div className="text-right">
-              <div className="text-xs text-ink-muted">
-                {msg.date ? formatDate(msg.date) : ""}
-              </div>
-              <div className="text-[10px] text-ink-faint">
-                {msg.date ? new Date(msg.date).toLocaleString() : ""}
-              </div>
-            </div>
+							<div className="text-xs text-ink-muted">
+								{msg.date ? formatDate(msg.date) : ""}
+							</div>
+							<div className="text-[10px] text-ink-faint">
+								{msg.date ? new Date(msg.date).toLocaleString() : ""}
+							</div>
+						</div>
 					</div>
 				</div>
 
@@ -290,7 +329,10 @@ export default function MessageView({ folder, uid, initialMsg, onBack, refresh, 
 						<DetailRow label="From" value={msg.from || "—"} />
 						<DetailRow label="Reply-to" value={msg.replyTo || "—"} />
 						<DetailRow label="To" value={msg.to || "—"} />
-						<DetailRow label="Date" value={msg.date ? new Date(msg.date).toLocaleString() : "—"} />
+						<DetailRow
+							label="Date"
+							value={msg.date ? new Date(msg.date).toLocaleString() : "—"}
+						/>
 						<DetailRow label="Subject" value={msg.subject || "(no subject)"} />
 					</div>
 				)}
@@ -300,10 +342,16 @@ export default function MessageView({ folder, uid, initialMsg, onBack, refresh, 
 					<div className="mt-4 space-y-2">
 						{msg.attachments.map((a, i) => (
 							<button
+								type="button"
+								// biome-ignore lint/suspicious/noArrayIndexKey: later
 								key={`${a.filename}-${i}`}
 								onClick={() => downloadAttachment(a)}
 								disabled={!a.content}
-								title={a.content ? `Download ${a.filename}` : "Attachment unavailable"}
+								title={
+									a.content
+										? `Download ${a.filename}`
+										: "Attachment unavailable"
+								}
 								className="flex w-full items-center gap-3 rounded-lg border border-hair bg-panel/40 p-3 text-left transition hover:border-indigo-700 hover:bg-panel disabled:opacity-50"
 							>
 								<div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-accent/15 text-accent">
@@ -331,6 +379,7 @@ export default function MessageView({ folder, uid, initialMsg, onBack, refresh, 
 				{showRemoteButton && (
 					<div className="mb-3 flex justify-end">
 						<button
+							type="button"
 							onClick={() => setShowRemote(true)}
 							title="Load images sent from external servers"
 							className="flex items-center gap-1.5 rounded-lg border border-hair bg-panel px-3 py-1.5 text-xs text-ink-2 transition hover:bg-hover"
@@ -352,6 +401,7 @@ export default function MessageView({ folder, uid, initialMsg, onBack, refresh, 
 					looksLikeMarkdown(msg.text) ? (
 						<div
 							className="mail-markdown prose prose-invert max-w-none text-sm leading-relaxed text-ink-2"
+							// biome-ignore lint/security/noDangerouslySetInnerHtml: later
 							dangerouslySetInnerHTML={{
 								// Incoming mail is untrusted — sanitize the rendered
 								// markdown so embedded HTML/script can not run.

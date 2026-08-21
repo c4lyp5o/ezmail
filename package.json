@@ -18,6 +18,7 @@
     "logs": "pm2 monit"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.5.9",
     "@types/bun": "latest",
     "concurrently": "^9.2.1"
   }

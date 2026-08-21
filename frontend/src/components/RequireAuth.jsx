@@ -1,5 +1,5 @@
 import { Navigate } from "react-router-dom";
-import { useAuth } from "./context/auth.jsx";
+import { useAuth } from "../context/auth.jsx";
 
 // Protects a route: shows a loader while auth is being checked, then redirects
 // to /login if unauthenticated (covers the "poke /mail with no session →

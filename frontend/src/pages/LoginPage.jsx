@@ -79,15 +79,14 @@ export default function LoginPage() {
 						ezmail
 					</h1>
 					<p className="text-sm text-ink-muted">
-						{needsCode
-							? "Enter your 6-digit code"
-							: "Sign in to your mailbox"}
+						{needsCode ? "Enter your 6-digit code" : "Sign in to your mailbox"}
 					</p>
 				</div>
 
 				{needsCode ? (
 					<form onSubmit={submitCode} className="space-y-4">
 						<div>
+							{/** biome-ignore lint/a11y/noLabelWithoutControl: later */}
 							<label className="mb-1.5 block text-sm font-medium text-ink-2">
 								Authenticator code
 							</label>
@@ -100,6 +99,7 @@ export default function LoginPage() {
 								maxLength={6}
 								inputMode="numeric"
 								autoComplete="one-time-code"
+								// biome-ignore lint/a11y/noAutofocus: later
 								autoFocus
 								required
 							/>
@@ -140,6 +140,7 @@ export default function LoginPage() {
 				) : (
 					<form onSubmit={submit} className="space-y-4">
 						<div>
+							{/** biome-ignore lint/a11y/noLabelWithoutControl: later */}
 							<label className="mb-1.5 block text-sm font-medium text-ink-2">
 								Email address
 							</label>
@@ -149,12 +150,14 @@ export default function LoginPage() {
 								onChange={(e) => setMailbox(e.target.value)}
 								className={inputCls}
 								placeholder="you@example.com"
+								// biome-ignore lint/a11y/noAutofocus: later
 								autoFocus
 								required
 							/>
 						</div>
 
 						<div>
+							{/** biome-ignore lint/a11y/noLabelWithoutControl: later */}
 							<label className="mb-1.5 block text-sm font-medium text-ink-2">
 								Password
 							</label>
