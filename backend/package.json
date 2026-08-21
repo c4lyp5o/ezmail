@@ -1,29 +1,29 @@
 {
-  "name": "ezmail-backend",
-  "private": true,
-  "type": "module",
-  "version": "1.5.0",
-  "scripts": {
-    "dev": "bun --watch index.js",
-    "start": "bun index.js",
-    "test": "bun test"
-  },
-  "dependencies": {
-    "@elysiajs/cookie": "^0.8.0",
-    "@elysiajs/jwt": "^1.4.2",
-    "@elysiajs/openapi": "^1.4.15",
-    "@elysiajs/static": "^1.4.10",
-    "deadslog": "^1.3.1",
-    "elysia": "^1.4.29",
-    "imapflow": "^1.7.0",
-    "mailparser": "^3.9.15",
-    "marked": "^18.0.9",
-    "nodemailer": "^9.0.5",
-    "otpauth": "^9.5.1",
-    "qr": "^0.6.0",
-    "sanitize-html": "^2.17.6"
-  },
-  "devDependencies": {
-    "@types/bun": "latest"
-  }
+	"name": "ezmail-backend",
+	"private": true,
+	"type": "module",
+	"version": "1.6.0",
+	"scripts": {
+		"dev": "bun --watch index.js",
+		"start": "bun index.js",
+		"test": "bun test"
+	},
+	"dependencies": {
+		"@elysiajs/cookie": "^0.8.0",
+		"@elysiajs/jwt": "^1.4.2",
+		"@elysiajs/openapi": "^1.4.15",
+		"@elysiajs/static": "^1.4.10",
+		"deadslog": "^1.3.1",
+		"elysia": "^1.4.29",
+		"imapflow": "^1.7.0",
+		"mailparser": "^3.9.15",
+		"marked": "^18.0.9",
+		"nodemailer": "^9.0.5",
+		"otpauth": "^9.5.1",
+		"qr": "^0.6.0",
+		"sanitize-html": "^2.17.6"
+	},
+	"devDependencies": {
+		"@types/bun": "latest"
+	}
 }
