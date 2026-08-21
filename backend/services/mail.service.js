@@ -63,7 +63,9 @@ function logImapError(err) {
 			`[MAIL] 💥[imap] ${detail.message} | cmd: ${detail.command || "n/a"} | resp: ${detail.responseText || "n/a"} | status: ${detail.responseStatus || "n/a"}`,
 		);
 		if (err.response) {
-			logger.error(`[MAIL] 💥[imap] full response: ${JSON.stringify(err.response)}`);
+			logger.error(
+				`[MAIL] 💥[imap] full response: ${JSON.stringify(err.response)}`,
+			);
 		}
 	}
 }
@@ -110,7 +112,8 @@ export const MailService = {
 	// --- folders ---
 	listFolders: async ({ jwt, cookie, status }) => {
 		const user = await getUser(jwt, cookie);
-		if (!user?.mailbox || !user?.password) return status(401, { success: false, message: "Unauthorized" });
+		if (!user?.mailbox || !user?.password)
+			return status(401, { success: false, message: "Unauthorized" });
 		return withClient(user, status, async (client) => {
 			const list = await client.list();
 			return list
@@ -127,85 +130,106 @@ export const MailService = {
 	},
 
 	// --- message list (envelope only) ---
-  listMessages: async ({ jwt, cookie, params, query, status }) => {
-    const user = await getUser(jwt, cookie);
-		if (!user?.mailbox || !user?.password) return status(401, { success: false, message: "Unauthorized" });
-    const folder = params?.folder;
-    const page = Number(query?.page) || 1;
-    const pageSizeRaw = Number(query?.pageSize) || 50;
-    const size = Math.min(pageSizeRaw, 100);
-    const sort = query?.sort || "desc"; // 'asc' | 'desc' by date
-    const search = (query?.search || "").trim();
+	listMessages: async ({ jwt, cookie, params, query, status }) => {
+		const user = await getUser(jwt, cookie);
+		if (!user?.mailbox || !user?.password)
+			return status(401, { success: false, message: "Unauthorized" });
+		const folder = params?.folder;
+		const page = Number(query?.page) || 1;
+		const pageSizeRaw = Number(query?.pageSize) || 50;
+		const size = Math.min(pageSizeRaw, 100);
+		const sort = query?.sort || "desc"; // 'asc' | 'desc' by date
+		const search = (query?.search || "").trim();
 
-    return withClient(user, status, async (client) => {
-      const targetFolder = folder || "INBOX";
+		return withClient(user, status, async (client) => {
+			const targetFolder = folder || "INBOX";
 
-      // 1. Acquire mailbox lock (recommended by imapflow over mailboxOpen)
-      const lock = await client.getMailboxLock(targetFolder);
+			// 1. Acquire mailbox lock (recommended by imapflow over mailboxOpen)
+			const lock = await client.getMailboxLock(targetFolder);
 
-      try {
-        // 2. CHECK IF FOLDER IS EMPTY (Fixes the "Invalid messageset" error)
-        if (!client.mailbox || client.mailbox.exists === 0) {
-          return { messages: [], total: 0, page, pageSize: size, sort, search };
-        }
+			try {
+				// 2. CHECK IF FOLDER IS EMPTY (Fixes the "Invalid messageset" error)
+				if (!client.mailbox || client.mailbox.exists === 0) {
+					return { messages: [], total: 0, page, pageSize: size, sort, search };
+				}
 
-        // 3. If search term is present, search UIDs
-        let searchUids = null;
-        if (search) {
-          const uids = await client.search({ text: search }, { uid: true });
-          if (Array.isArray(uids) && uids.length) {
-            searchUids = new Set(uids);
-          } else {
-            return { messages: [], total: 0, page, pageSize: size, sort, search };
-          }
-        }
+				// 3. If search term is present, search UIDs
+				let searchUids = null;
+				if (search) {
+					const uids = await client.search({ text: search }, { uid: true });
+					if (Array.isArray(uids) && uids.length) {
+						searchUids = new Set(uids);
+					} else {
+						return {
+							messages: [],
+							total: 0,
+							page,
+							pageSize: size,
+							sort,
+							search,
+						};
+					}
+				}
 
-        // 4. Fetch candidate messages
-        const all = [];
-        if (searchUids) {
-          const uidList = [...searchUids].sort((a, b) => a - b);
-          for await (const msg of client.fetch(
-            uidList,
-            { envelope: true, flags: true, internalDate: true, bodyStructure: true, source: false },
-            { uid: true }
-          )) {
-            all.push(msg);
-          }
-        } else {
-          // Safe to call "1:*" because client.mailbox.exists > 0
-          for await (const msg of client.fetch(
-            "1:*",
-            { envelope: true, flags: true, internalDate: true, bodyStructure: true, source: false },
-            { uid: false }
-          )) {
-            all.push(msg);
-          }
-        }
+				// 4. Fetch candidate messages
+				const all = [];
+				if (searchUids) {
+					const uidList = [...searchUids].sort((a, b) => a - b);
+					for await (const msg of client.fetch(
+						uidList,
+						{
+							envelope: true,
+							flags: true,
+							internalDate: true,
+							bodyStructure: true,
+							source: false,
+						},
+						{ uid: true },
+					)) {
+						all.push(msg);
+					}
+				} else {
+					// Safe to call "1:*" because client.mailbox.exists > 0
+					for await (const msg of client.fetch(
+						"1:*",
+						{
+							envelope: true,
+							flags: true,
+							internalDate: true,
+							bodyStructure: true,
+							source: false,
+						},
+						{ uid: false },
+					)) {
+						all.push(msg);
+					}
+				}
 
-        // 5. Sort by date
-        all.sort((a, b) => {
-          const da = new Date(a.internalDate || a.date || 0).getTime();
-          const db = new Date(b.internalDate || b.date || 0).getTime();
-          return sort === "asc" ? da - db : db - da;
-        });
+				// 5. Sort by date
+				all.sort((a, b) => {
+					const da = new Date(a.internalDate || a.date || 0).getTime();
+					const db = new Date(b.internalDate || b.date || 0).getTime();
+					return sort === "asc" ? da - db : db - da;
+				});
 
-        const total = all.length;
-        const from = (page - 1) * size;
-        const pageItems = all.slice(from, from + size);
-        const messages = pageItems.map((msg) => mapEnvelope(msg));
+				const total = all.length;
+				const from = (page - 1) * size;
+				const pageItems = all.slice(from, from + size);
+				const messages = pageItems.map((msg) => mapEnvelope(msg));
 
-        return { messages, total, page, pageSize: size, sort, search };
-      } finally {
-        // 6. Always release the lock
-        lock.release();
-      }
-    });
-  },
+				return { messages, total, page, pageSize: size, sort, search };
+			} finally {
+				// 6. Always release the lock
+				lock.release();
+			}
+		});
+	},
 
 	// --- single message full body + flags ---
 	getMessage: async ({ jwt, cookie, params, status }) => {
 		const user = await getUser(jwt, cookie);
-		if (!user?.mailbox || !user?.password) return status(401, { success: false, message: "Unauthorized" });
+		if (!user?.mailbox || !user?.password)
+			return status(401, { success: false, message: "Unauthorized" });
 		const { folder, uid } = params;
 		return withClient(user, status, async (client) => {
 			await client.mailboxOpen(folder || "INBOX");
@@ -221,7 +245,9 @@ export const MailService = {
 			);
 
 			if (!msg) {
-				logger.warn(`[MAIL] fetchOne returned null for uid=${uid} folder=${folder}`);
+				logger.warn(
+					`[MAIL] fetchOne returned null for uid=${uid} folder=${folder}`,
+				);
 				return null;
 			}
 
@@ -235,22 +261,22 @@ export const MailService = {
 				parsed = null;
 			}
 
-			const attachments = (parsed?.attachments || [])
-				.map((a) => {
-					const buf = a.content ? Buffer.from(a.content) : null;
-					return {
-						filename: a.filename || "attachment",
-						contentType: a.contentType || "application/octet-stream",
-						size: a.size || buf?.length || 0,
-						content: buf ? buf.toString("base64") : "",
-						contentId: a.contentId || undefined,
-					};
-				});
+			const attachments = (parsed?.attachments || []).map((a) => {
+				const buf = a.content ? Buffer.from(a.content) : null;
+				return {
+					filename: a.filename || "attachment",
+					contentType: a.contentType || "application/octet-stream",
+					size: a.size || buf?.length || 0,
+					content: buf ? buf.toString("base64") : "",
+					contentId: a.contentId || undefined,
+				};
+			});
 
 			// Extra display headers for the toggleable detail panel.
 			const hdrs = parsed?.headers || {};
 			const replyTo =
-				(parsed?.replyTo?.text || "") ||
+				parsed?.replyTo?.text ||
+				"" ||
 				(hdrs.get?.("reply-to")?.[0]?.value ?? "");
 			const mailedBy =
 				(hdrs.get?.("x-mailer")?.[0]?.value ?? "") ||
@@ -260,7 +286,7 @@ export const MailService = {
 						const raw = hdrs.get("x-dkim-signature")?.[0]?.value || "";
 						const m = raw.match(/d=([^\s;]+)/i);
 						return m ? m[1] : "";
-				  })()
+					})()
 				: "";
 
 			return {
@@ -270,7 +296,8 @@ export const MailService = {
 				flags: toFlagsArray(msg.flags),
 				internalDate: msg.internalDate,
 				subject: parsed?.subject || msg.envelope?.subject || "(no subject)",
-				from: parsed?.from?.text || msg.envelope?.from?.[0]?.address || "unknown",
+				from:
+					parsed?.from?.text || msg.envelope?.from?.[0]?.address || "unknown",
 				fromName: parsed?.from?.value?.[0]?.name || "",
 				to: parsed?.to?.text || "",
 				replyTo: replyTo || "",
@@ -287,24 +314,26 @@ export const MailService = {
 	// --- set flags (read/unread/delete) ---
 	setFlags: async ({ jwt, cookie, body, status }) => {
 		const user = await getUser(jwt, cookie);
-		if (!user?.mailbox || !user?.password) return status(401, { success: false, message: "Unauthorized" });
+		if (!user?.mailbox || !user?.password)
+			return status(401, { success: false, message: "Unauthorized" });
 		const { folder, uids, flags } = body;
 		return withClient(user, status, async (client) => {
-      const lock = await client.getMailboxLock(folder);
+			const lock = await client.getMailboxLock(folder);
 			await client.messageFlagsAdd(uids, flags, { uid: true });
-      lock.release();
+			lock.release();
 			return { uids: uids, flags: flags };
 		});
 	},
 
 	clearFlags: async ({ jwt, cookie, body, status }) => {
 		const user = await getUser(jwt, cookie);
-		if (!user?.mailbox || !user?.password) return status(401, { success: false, message: "Unauthorized" });
+		if (!user?.mailbox || !user?.password)
+			return status(401, { success: false, message: "Unauthorized" });
 		const { folder, uids, flags } = body;
 		return withClient(user, status, async (client) => {
-      const lock = await client.getMailboxLock(folder);
+			const lock = await client.getMailboxLock(folder);
 			await client.messageFlagsRemove(uids, flags, { uid: true });
-      lock.release();
+			lock.release();
 			return { uids: uids, flags: flags };
 		});
 	},
@@ -312,13 +341,14 @@ export const MailService = {
 	// --- move message ---
 	moveMessage: async ({ jwt, cookie, body, status }) => {
 		const user = await getUser(jwt, cookie);
-		if (!user?.mailbox || !user?.password) return status(401, { success: false, message: "Unauthorized" });
+		if (!user?.mailbox || !user?.password)
+			return status(401, { success: false, message: "Unauthorized" });
 		const { uids, from, to } = body;
 		const targetUids = Array.isArray(uids) ? uids.map(Number) : uids;
 		return withClient(user, status, async (client) => {
-      const lock = await client.getMailboxLock(from);
+			const lock = await client.getMailboxLock(from);
 			await client.messageMove(targetUids, to, { uid: true });
-      lock.release();
+			lock.release();
 			return { uids: targetUids, from: from, to: to };
 		});
 	},
@@ -327,18 +357,19 @@ export const MailService = {
 	// mailbox. Used when deleting from Trash — the message is removed for good.
 	deleteMessage: async ({ jwt, cookie, body, status }) => {
 		const user = await getUser(jwt, cookie);
-		if (!user?.mailbox || !user?.password) return status(401, { success: false, message: "Unauthorized" });
+		if (!user?.mailbox || !user?.password)
+			return status(401, { success: false, message: "Unauthorized" });
 		const { uids, folder } = body;
-    const targetUids = Array.isArray(uids) ? uids.map(Number) : uids;
+		const targetUids = Array.isArray(uids) ? uids.map(Number) : uids;
 		return withClient(user, status, async (client) => {
-      const lock = await client.getMailboxLock(folder);
-      if (folder !== "Trash") {
-        await client.messageMove(targetUids, "Trash", { uid: true });
-      } else {
-        await client.messageDelete(targetUids, { uid: true });
-      }
-      lock.release();
-      return { success: true, data: { uids: targetUids, folder: folder } };
+			const lock = await client.getMailboxLock(folder);
+			if (folder !== "Trash") {
+				await client.messageMove(targetUids, "Trash", { uid: true });
+			} else {
+				await client.messageDelete(targetUids, { uid: true });
+			}
+			lock.release();
+			return { success: true, data: { uids: targetUids, folder: folder } };
 		});
 	},
 
@@ -346,12 +377,13 @@ export const MailService = {
 	// messages as \Deleted and expunges the mailbox.
 	expungeFolder: async ({ jwt, cookie, body, status }) => {
 		const user = await getUser(jwt, cookie);
-		if (!user?.mailbox || !user?.password) return status(401, { success: false, message: "Unauthorized" });
+		if (!user?.mailbox || !user?.password)
+			return status(401, { success: false, message: "Unauthorized" });
 		const { folder } = body;
 		return withClient(user, status, async (client) => {
-      const lock = await client.getMailboxLock(folder);
+			const lock = await client.getMailboxLock(folder);
 			await client.messageDelete("1:*");
-      lock.release();
+			lock.release();
 			return { success: true, data: { folder: folder } };
 		});
 	},
@@ -359,7 +391,8 @@ export const MailService = {
 	// --- send ---
 	sendMessage: async ({ jwt, cookie, body, status }) => {
 		const user = await getUser(jwt, cookie);
-    if (!user?.mailbox || !user?.password) return status(401, { success: false, message: "Unauthorized" });
+		if (!user?.mailbox || !user?.password)
+			return status(401, { success: false, message: "Unauthorized" });
 
 		const transporter = nodemailer.createTransport({
 			host: MAIL_SERVER.smtpHost,

@@ -95,11 +95,14 @@ export const AuthService = {
 			});
 		}
 
-		const accessToken = await jwt.sign({
-			...cookiePayload(mailbox, password),
-		}, {
-			expiresIn: rememberMe ? "7d" : "1d",
-		});
+		const accessToken = await jwt.sign(
+			{
+				...cookiePayload(mailbox, password),
+			},
+			{
+				expiresIn: rememberMe ? "7d" : "1d",
+			},
+		);
 		setAuthCookies({ cookie, accessToken, rememberMe: !!rememberMe });
 
 		const user = await getUser(jwt, cookie);
@@ -213,7 +216,8 @@ export const AuthService = {
 	// Disable TOTP from settings (falls back to password login).
 	disableTotp: async ({ body, jwt, cookie, status }) => {
 		const { mailbox } = body || {};
-		if (!mailbox) return status(400, { success: false, message: "Mailbox is required" });
+		if (!mailbox)
+			return status(400, { success: false, message: "Mailbox is required" });
 		const usr = await getUser(jwt, cookie);
 		if (!usr || usr.mailbox !== mailbox) {
 			return status(401, {
