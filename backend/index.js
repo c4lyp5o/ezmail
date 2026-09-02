@@ -1,19 +1,19 @@
-import path from "node:path";
 import crypto from "node:crypto";
-import { Elysia, file } from "elysia";
+import path from "node:path";
 import { cookie } from "@elysiajs/cookie";
 import { jwt } from "@elysiajs/jwt";
 import { openapi } from "@elysiajs/openapi";
 import staticPlugin from "@elysiajs/static";
+import { Elysia, file } from "elysia";
+import { CLIENT_DIR, MAIL_SERVER } from "./config.js";
 import { getSetting, setSetting } from "./db.js";
 import { generalLogger as logger } from "./logger.js";
-import { CLIENT_DIR, MAIL_SERVER } from "./config.js";
 
 import { AuthPlugin } from "./plugins/auth.plugin.js";
 import { ProtectorPlugin } from "./plugins/protector.plugin.js";
-
-import { HealthRoute } from "./routes/health.route.js";
 import { AuthRoutes } from "./routes/auth.route.js";
+import { FilterRoutes } from "./routes/filter.route.js";
+import { HealthRoute } from "./routes/health.route.js";
 import { MailRoutes } from "./routes/mail.route.js";
 import { probeAndRecordLLM } from "./services/llm.service.js";
 
@@ -64,9 +64,8 @@ export const app = new Elysia()
 		set.headers["Permissions-Policy"] =
 			"camera=(), microphone=(), geolocation=(), payment=(), usb=()";
 		set.headers["X-XSS-Protection"] = "1; mode=block";
-		set.headers[
-			"Content-Security-Policy"
-		] = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'";
+		set.headers["Content-Security-Policy"] =
+			"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'";
 	})
 
 	.use(HealthRoute)
@@ -77,7 +76,8 @@ export const app = new Elysia()
 		protectedApi
 			.use(AuthPlugin)
 			.use(ProtectorPlugin)
-			.use(MailRoutes),
+			.use(MailRoutes)
+			.use(FilterRoutes),
 	)
 
 	.use(
@@ -96,19 +96,23 @@ export const app = new Elysia()
 		},
 	})
 
-	.get("/*urlPath", ({ set, path: urlPath }) => {
-		// SPA fallback: serve index.html for any client-side route refresh (React Router).
-		// Never intercept API/asset requests — unmatched /api/* and file paths return a real 404.
-		if (urlPath.startsWith("/api") || urlPath.includes(".")) {
-			set.status = 404;
-			return { success: false, message: "Not Found" };
-		}
-		return file(path.join(CLIENT_DIR, "index.html"));
-	}, {
-		detail: {
-			hide: true,
+	.get(
+		"/*urlPath",
+		({ set, path: urlPath }) => {
+			// SPA fallback: serve index.html for any client-side route refresh (React Router).
+			// Never intercept API/asset requests — unmatched /api/* and file paths return a real 404.
+			if (urlPath.startsWith("/api") || urlPath.includes(".")) {
+				set.status = 404;
+				return { success: false, message: "Not Found" };
+			}
+			return file(path.join(CLIENT_DIR, "index.html"));
 		},
-	});
+		{
+			detail: {
+				hide: true,
+			},
+		},
+	);
 
 if (process.env.NODE_ENV === "development") {
 	app.use(

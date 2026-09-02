@@ -1,31 +1,34 @@
-import { useEffect, useState, useCallback, useRef } from "react";
+import {
+	ChevronLeft,
+	ChevronRight,
+	Filter,
+	FolderInput,
+	Inbox,
+	KeyRound,
+	LogOut,
+	Mail,
+	MailOpen,
+	Menu,
+	PenSquare,
+	RefreshCw,
+	Star,
+	StarOff,
+	Trash2,
+	X,
+} from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { apiCall } from "../utils/apiCall.js";
-import { useAuth } from "../context/auth.jsx";
+import ComposeView from "../components/ComposeView.jsx";
+import EmptyTrashModal from "../components/EmptyTrashModal.jsx";
+import FiltersModal from "../components/FiltersModal.jsx";
 import FolderList from "../components/FolderList.jsx";
 import MessageList from "../components/MessageList.jsx";
 import MessageView from "../components/MessageView.jsx";
-import ComposeView from "../components/ComposeView.jsx";
-import SummaryColumn from "../components/SummaryColumn.jsx";
 import SettingsModal from "../components/SettingsModal.jsx";
+import SummaryColumn from "../components/SummaryColumn.jsx";
 import ThemeToggle from "../components/ThemeToggle.jsx";
-import EmptyTrashModal from "../components/EmptyTrashModal.jsx";
-import {
-	Inbox,
-	ChevronLeft,
-	ChevronRight,
-	FolderInput,
-	KeyRound,
-	LogOut,
-	MailOpen,
-	Mail,
-	Menu,
-	PenSquare,
-	Star,
-	Trash2,
-	X,
-	StarOff,
-} from "lucide-react";
+import { useAuth } from "../context/auth.jsx";
+import { apiCall } from "../utils/apiCall.js";
 
 // Builds a compact page-number list with ellipses, e.g.
 // [1, 2, 3, "…", 50] for page 2 of 50; [1, "…", 5, 6, 7, "…", 50] for middle pages.
@@ -57,6 +60,7 @@ export default function MailPage() {
 	const [emptyTrashOpen, setEmptyTrashOpen] = useState(false);
 	const [emptyTrashBusy, setEmptyTrashBusy] = useState(false);
 	const [settingsOpen, setSettingsOpen] = useState(false);
+	const [filtersOpen, setFiltersOpen] = useState(false);
 	const [showRemote, setShowRemote] = useState(false);
 
 	// Mobile: sidebar drawer open state + which pane is shown
@@ -143,7 +147,6 @@ export default function MailPage() {
 		isValidating: listIsValidating,
 		page: listPage,
 		setPage: setListPage,
-		total: listTotal,
 		totalPages,
 	} = listState;
 
@@ -386,6 +389,15 @@ export default function MailPage() {
 					<div className="mt-3 flex items-center justify-between px-1">
 						<button
 							type="button"
+							onClick={() => setFiltersOpen(true)}
+							aria-label="Mail filters"
+							title="Mail filters (server-side sorting)"
+							className="flex h-8 w-8 items-center justify-center rounded-md text-ink-muted transition hover:bg-hover hover:text-ink-2"
+						>
+							<Filter className="h-4 w-4" />
+						</button>
+						<button
+							type="button"
 							onClick={() => setSettingsOpen(true)}
 							aria-label="Account security (TOTP)"
 							title="Account & security"
@@ -531,6 +543,18 @@ export default function MailPage() {
 							{listIsValidating && (
 								<div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-hair-strong border-t-indigo-500" />
 							)}
+							<button
+								type="button"
+								onClick={() => refreshList?.()}
+								disabled={listIsValidating}
+								title="Refresh mail list"
+								aria-label="Refresh mail list"
+								className="rounded-lg p-1.5 text-ink-muted transition hover:bg-hover hover:text-ink-2 disabled:opacity-50"
+							>
+								<RefreshCw
+									className={`h-4 w-4 ${listIsValidating ? "animate-spin" : ""}`}
+								/>
+							</button>
 						</div>
 					</div>
 				)}
@@ -689,6 +713,13 @@ export default function MailPage() {
 				open={settingsOpen}
 				onClose={() => setSettingsOpen(false)}
 				mailbox={user?.mailbox}
+			/>
+
+			<FiltersModal
+				open={filtersOpen}
+				onClose={() => setFiltersOpen(false)}
+				mailbox={user?.mailbox}
+				folders={folders}
 			/>
 		</div>
 	);
