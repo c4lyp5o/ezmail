@@ -1,4 +1,4 @@
-import { Inbox, Send, Star, Archive, Trash2, Folder } from "lucide-react";
+import { Archive, Folder, Inbox, Send, Star, Trash2 } from "lucide-react";
 
 const SPECIAL_ICONS = {
 	Inbox,
@@ -17,8 +17,10 @@ export default function FolderList({ folders, active, onSelect }) {
 			{folders.map((folder) => {
 				const Icon = SPECIAL_ICONS[folder.name] || Folder;
 				const isActive = folder.path === active;
+				const unread = folder.path === "INBOX" ? folder.unread || 0 : 0;
 				return (
 					<button
+						type="button"
 						key={folder.path}
 						onClick={() => onSelect(folder.path)}
 						className={`relative flex w-full items-center gap-3 rounded-md pl-6 py-1.5 text-sm transition ${
@@ -36,6 +38,14 @@ export default function FolderList({ folders, active, onSelect }) {
 							}`}
 						/>
 						<span className="truncate">{folder.name}</span>
+						{unread > 0 && (
+							<span
+								className="ml-auto rounded-full bg-accent px-1.5 py-0.5 text-[10px] font-semibold leading-none text-white"
+								title={`${unread} unread`}
+							>
+								{unread > 99 ? "99+" : unread}
+							</span>
+						)}
 					</button>
 				);
 			})}

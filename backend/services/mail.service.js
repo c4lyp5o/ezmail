@@ -1,11 +1,11 @@
 import { ImapFlow } from "imapflow";
-import nodemailer from "nodemailer";
 import { simpleParser } from "mailparser";
 import { marked } from "marked";
+import nodemailer from "nodemailer";
 import sanitizeHtml from "sanitize-html";
 import { MAIL_SERVER } from "../config.js";
-import { getUser } from "../plugins/auth.plugin.js";
 import { generalLogger as logger } from "../logger.js";
+import { getUser } from "../plugins/auth.plugin.js";
 
 // Builds an IMAP client bound to the authenticated user's mailbox. No global
 // account — the credentials come from the JWT (issued only after IMAP auth).
@@ -116,7 +116,7 @@ export const MailService = {
 			return status(401, { success: false, message: "Unauthorized" });
 		return withClient(user, status, async (client) => {
 			const list = await client.list();
-			return list
+			const folders = list
 				.filter((f) => f.path !== "[Gmail]")
 				.map((f) => ({
 					path: f.path,
@@ -126,6 +126,23 @@ export const MailService = {
 					flags: toFlagsArray(f.flags),
 					hasChildren: !!f.hasChildren,
 				}));
+
+			// Unread indicator: INBOX only (STATUS UNSEEN is cheap; scanning
+			// every folder would add N STATUS round-trips per request).
+			let inboxUnseen = 0;
+			if (folders.some((f) => f.path === "INBOX")) {
+				try {
+					const inboxStatus = await client.status("INBOX", { unseen: true });
+					inboxUnseen = Number(inboxStatus?.unseen) || 0;
+				} catch {
+					// STATUS failed; badge simply won't render
+				}
+			}
+			for (const f of folders) {
+				if (f.path === "INBOX") f.unread = inboxUnseen;
+			}
+
+			return folders;
 		});
 	},
 
