@@ -1,16 +1,15 @@
 import {
 	ChevronLeft,
 	ChevronRight,
-	Filter,
 	FolderInput,
 	Inbox,
-	KeyRound,
 	LogOut,
 	Mail,
 	MailOpen,
 	Menu,
 	PenSquare,
 	RefreshCw,
+	Settings,
 	Star,
 	StarOff,
 	Trash2,
@@ -20,7 +19,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import ComposeView from "../components/ComposeView.jsx";
 import EmptyTrashModal from "../components/EmptyTrashModal.jsx";
-import FiltersModal from "../components/FiltersModal.jsx";
 import FolderList from "../components/FolderList.jsx";
 import MessageList from "../components/MessageList.jsx";
 import MessageView from "../components/MessageView.jsx";
@@ -60,7 +58,6 @@ export default function MailPage() {
 	const [emptyTrashOpen, setEmptyTrashOpen] = useState(false);
 	const [emptyTrashBusy, setEmptyTrashBusy] = useState(false);
 	const [settingsOpen, setSettingsOpen] = useState(false);
-	const [filtersOpen, setFiltersOpen] = useState(false);
 	const [showRemote, setShowRemote] = useState(false);
 
 	// Mobile: sidebar drawer open state + which pane is shown
@@ -305,7 +302,8 @@ export default function MailPage() {
 		clearSelection();
 		setView({ type: "folder" });
 		if (refreshList) refreshList();
-	}, [refreshList]);
+		loadFolders();
+	}, [refreshList, loadFolders]);
 
 	// Fetch the full message body once when a message is opened, so both the
 	// detail view AND the summary column get the real text/html (the list item
@@ -389,21 +387,12 @@ export default function MailPage() {
 					<div className="mt-3 flex items-center justify-between px-1">
 						<button
 							type="button"
-							onClick={() => setFiltersOpen(true)}
-							aria-label="Mail filters"
-							title="Mail filters (server-side sorting)"
-							className="flex h-8 w-8 items-center justify-center rounded-md text-ink-muted transition hover:bg-hover hover:text-ink-2"
-						>
-							<Filter className="h-4 w-4" />
-						</button>
-						<button
-							type="button"
 							onClick={() => setSettingsOpen(true)}
-							aria-label="Account security (TOTP)"
-							title="Account & security"
+							aria-label="Settings"
+							title="Settings — security & mail filters"
 							className="flex h-8 w-8 items-center justify-center rounded-md text-ink-muted transition hover:bg-hover hover:text-ink-2"
 						>
-							<KeyRound className="h-4 w-4" />
+							<Settings className="h-4 w-4" />
 						</button>
 						<ThemeToggle />
 					</div>
@@ -540,12 +529,12 @@ export default function MailPage() {
 									Delete all
 								</button>
 							)}
-							{listIsValidating && (
-								<div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-hair-strong border-t-indigo-500" />
-							)}
 							<button
 								type="button"
-								onClick={() => refreshList?.()}
+								onClick={() => {
+									refreshList?.();
+									loadFolders();
+								}}
 								disabled={listIsValidating}
 								title="Refresh mail list"
 								aria-label="Refresh mail list"
@@ -713,13 +702,8 @@ export default function MailPage() {
 				open={settingsOpen}
 				onClose={() => setSettingsOpen(false)}
 				mailbox={user?.mailbox}
-			/>
-
-			<FiltersModal
-				open={filtersOpen}
-				onClose={() => setFiltersOpen(false)}
-				mailbox={user?.mailbox}
 				folders={folders}
+				initialTab="security"
 			/>
 		</div>
 	);
