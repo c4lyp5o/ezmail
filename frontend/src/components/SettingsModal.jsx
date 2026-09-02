@@ -1,4 +1,4 @@
-import { Settings, ShieldCheck, X } from "lucide-react";
+import { Filter, Settings, ShieldCheck, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import FiltersTab from "./FiltersTab.jsx";
 import SecurityTab from "./SecurityTab.jsx";

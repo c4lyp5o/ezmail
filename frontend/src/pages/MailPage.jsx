@@ -158,6 +158,15 @@ export default function MailPage() {
 		}
 	}, []);
 
+	// Apply a piggybacked unread count from a mutation response without a
+	// refetch — one state update, no extra request.
+	const applyInboxUnseen = useCallback((count) => {
+		if (typeof count !== "number") return;
+		setFolders((prev) =>
+			prev.map((f) => (f.path === "INBOX" ? { ...f, unread: count } : f)),
+		);
+	}, []);
+
 	useEffect(() => {
 		loadFolders();
 	}, [loadFolders]);
@@ -206,12 +215,14 @@ export default function MailPage() {
 		if (!selectedUids.length) return;
 		setBulkBusy(true);
 		try {
-			await apiCall.post(`/mail/${action === "add" ? "flags" : "unflag"}`, {
-				folder: activeFolder,
-				uids: selectedUids,
-				action,
-				flags,
-			});
+			await apiCall
+				.post(`/mail/${action === "add" ? "flags" : "unflag"}`, {
+					folder: activeFolder,
+					uids: selectedUids,
+					action,
+					flags,
+				})
+				.then((res) => applyInboxUnseen(res.data?.inboxUnseen));
 			afterMutation();
 		} catch (err) {
 			console.error(`Failed to update flags (${action})`, err);
@@ -231,16 +242,22 @@ export default function MailPage() {
 		try {
 			const isTrash = activeFolder === "Trash";
 			if (isTrash) {
-				await apiCall.post("/mail/delete", {
-					folder: activeFolder,
-					uids: selectedUids,
-				});
+				await apiCall
+					.post("/mail/delete", {
+						folder: activeFolder,
+						uids: selectedUids,
+					})
+					.then((res) =>
+						applyInboxUnseen(res.data?.data?.inboxUnseen),
+					);
 			} else {
-				await apiCall.post("/mail/move", {
-					from: activeFolder,
-					to: "Trash",
-					uids: selectedUids,
-				});
+				await apiCall
+					.post("/mail/move", {
+						from: activeFolder,
+						to: "Trash",
+						uids: selectedUids,
+					})
+					.then((res) => applyInboxUnseen(res.data?.inboxUnseen));
 			}
 			afterMutation();
 		} catch (err) {
@@ -560,6 +577,7 @@ export default function MailPage() {
 						}
 						alwaysRead={activeFolder === "Sent"}
 						onReady={setListState}
+						onMarkedRead={applyInboxUnseen}
 					/>
 				</div>
 
@@ -631,6 +649,7 @@ export default function MailPage() {
 						refresh={afterMutation}
 						setShowRemote={setShowRemote}
 						showRemote={showRemote}
+						onMarkedRead={applyInboxUnseen}
 					/>
 				)}
 				{view.type === "folder" && (

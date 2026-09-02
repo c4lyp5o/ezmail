@@ -125,6 +125,7 @@ export default function MessageView({
 	refresh,
 	setShowRemote,
 	showRemote,
+	onMarkedRead,
 }) {
 	const [msg, setMsg] = useState(initialMsg || null);
 	const [loading, setLoading] = useState(true);
@@ -175,15 +176,18 @@ export default function MessageView({
 	const markRead = useCallback(async () => {
 		if (!msg || msg.flags?.includes("\\Seen")) return;
 		try {
-			await apiCall.post("/mail/flags", {
+			const res = await apiCall.post("/mail/flags", {
 				folder: thisFolder,
 				uid: Number(uid),
 				flags: ["\\Seen"],
 			});
+			// Response carries the fresh INBOX unseen count — update the badge
+			// in place, no refetch needed.
+			if (onMarkedRead) onMarkedRead(res.data?.inboxUnseen);
 		} catch {
 			// non-fatal
 		}
-	}, [msg, thisFolder, uid]);
+	}, [msg, thisFolder, uid, onMarkedRead]);
 
 	useEffect(() => {
 		if (msg && !msg.flags?.includes("\\Seen")) markRead();
