@@ -2,7 +2,7 @@
 	"name": "ezmail-frontend",
 	"private": true,
 	"type": "module",
-	"version": "1.7.0",
+	"version": "1.7.1",
 	"scripts": {
 		"dev": "vite --host",
 		"build": "vite build",
