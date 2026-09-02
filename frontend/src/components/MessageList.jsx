@@ -100,6 +100,7 @@ export default function MessageList({
 	onOpenMessage,
 	alwaysRead = false,
 	onReady,
+	onMarkedRead,
 }) {
 	const [sort, setSort] = useState("desc");
 	const [search, setSearch] = useState("");
@@ -165,7 +166,10 @@ export default function MessageList({
 						action: "add",
 						flags: ["\\Seen"],
 					})
-					.then(() => mutate())
+					.then((res) => {
+						if (onMarkedRead) onMarkedRead(res.data?.inboxUnseen);
+						mutate();
+					})
 					.catch(() => {});
 			}
 			if (onOpenMessage) {
@@ -173,7 +177,7 @@ export default function MessageList({
 				setIsReading(msg.uid);
 			}
 		},
-		[activeFolder, alwaysRead, onOpenMessage, mutate],
+		[activeFolder, alwaysRead, onOpenMessage, onMarkedRead, mutate],
 	);
 
 	return (

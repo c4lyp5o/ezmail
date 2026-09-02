@@ -338,7 +338,16 @@ export const MailService = {
 			const lock = await client.getMailboxLock(folder);
 			await client.messageFlagsAdd(uids, flags, { uid: true });
 			lock.release();
-			return { uids: uids, flags: flags };
+			// Piggyback fresh INBOX unseen on the same connection (no extra
+			// request from the client).
+			let inboxUnseen;
+			try {
+				const s = await client.status("INBOX", { unseen: true });
+				inboxUnseen = Number(s?.unseen) || 0;
+			} catch {
+				// leave undefined — client keeps its current badge
+			}
+			return { uids: uids, flags: flags, inboxUnseen };
 		});
 	},
 
@@ -351,7 +360,15 @@ export const MailService = {
 			const lock = await client.getMailboxLock(folder);
 			await client.messageFlagsRemove(uids, flags, { uid: true });
 			lock.release();
-			return { uids: uids, flags: flags };
+			// Piggyback fresh INBOX unseen on the same connection.
+			let inboxUnseen;
+			try {
+				const s = await client.status("INBOX", { unseen: true });
+				inboxUnseen = Number(s?.unseen) || 0;
+			} catch {
+				// leave undefined — client keeps its current badge
+			}
+			return { uids: uids, flags: flags, inboxUnseen };
 		});
 	},
 
@@ -366,7 +383,15 @@ export const MailService = {
 			const lock = await client.getMailboxLock(from);
 			await client.messageMove(targetUids, to, { uid: true });
 			lock.release();
-			return { uids: targetUids, from: from, to: to };
+			// Piggyback fresh INBOX unseen on the same connection.
+			let inboxUnseen;
+			try {
+				const s = await client.status("INBOX", { unseen: true });
+				inboxUnseen = Number(s?.unseen) || 0;
+			} catch {
+				// leave undefined — client keeps its current badge
+			}
+			return { uids: targetUids, from: from, to: to, inboxUnseen };
 		});
 	},
 
@@ -386,7 +411,15 @@ export const MailService = {
 				await client.messageDelete(targetUids, { uid: true });
 			}
 			lock.release();
-			return { success: true, data: { uids: targetUids, folder: folder } };
+			// Piggyback fresh INBOX unseen on the same connection.
+			let inboxUnseen;
+			try {
+				const s = await client.status("INBOX", { unseen: true });
+				inboxUnseen = Number(s?.unseen) || 0;
+			} catch {
+				// leave undefined — client keeps its current badge
+			}
+			return { success: true, data: { uids: targetUids, folder: folder, inboxUnseen } };
 		});
 	},
 
