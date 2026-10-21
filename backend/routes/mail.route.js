@@ -2,8 +2,17 @@ import { Elysia, t } from "elysia";
 import { MailModel } from "../models/mail.model.js";
 import { MailService } from "../services/mail.service.js";
 import { summarizeText } from "../services/llm.service.js";
+import { PushService } from "../services/push.service.js";
 
 export const MailRoutes = new Elysia({ prefix: "/api/v1/mail" })
+	.get("/events", PushService.events, {
+		detail: {
+			summary: "Live mailbox events (SSE)",
+			description:
+				"Server-Sent Events fed by IMAP IDLE on INBOX: {type: ready|new|changed|closed|error}. Hints only — clients refetch.",
+			tags: ["Mail"],
+		},
+	})
 	.get("/folders", MailService.listFolders, {
 		response: MailModel.listFoldersResponse,
 		detail: {

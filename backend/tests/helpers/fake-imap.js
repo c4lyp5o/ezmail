@@ -1,3 +1,5 @@
+import { EventEmitter } from "node:events";
+
 // Minimal in-memory IMAP server implementing the slice of the imapflow API
 // ezmail uses. Sequence numbers are positions in a mailbox's message array;
 // UIDs are per-mailbox and monotonically increasing, like a real server.
@@ -8,10 +10,12 @@ export const imap = {
 	boxes: new Map(),
 	calls: [],
 	uidplus: true,
+	clients: [], // every FakeImapFlow created, for pushing IDLE events
 	reset() {
 		this.boxes = new Map();
 		this.calls = [];
 		this.uidplus = true;
+		this.clients = [];
 	},
 	addBox(path, specialUse) {
 		const box = { path, specialUse, nextUid: 1, messages: [] };
@@ -44,10 +48,13 @@ function parseSeqRange(range, count) {
 	return [lo, hi ?? lo];
 }
 
-export class FakeImapFlow {
+export class FakeImapFlow extends EventEmitter {
 	constructor(options) {
+		super();
 		this.options = options;
 		this.mailbox = false;
+		this.loggedOut = false;
+		imap.clients.push(this);
 	}
 
 	async connect() {
@@ -58,7 +65,9 @@ export class FakeImapFlow {
 		}
 	}
 
-	async logout() {}
+	async logout() {
+		this.loggedOut = true;
+	}
 
 	box(path) {
 		const b = imap.boxes.get(path);

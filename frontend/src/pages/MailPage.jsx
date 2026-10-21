@@ -1,4 +1,6 @@
 import {
+	Bell,
+	BellOff,
 	ChevronLeft,
 	ChevronRight,
 	FolderInput,
@@ -51,6 +53,22 @@ const SHORTCUTS = [
 
 const plural = (n) => `${n} message${n === 1 ? "" : "s"}`;
 
+const NOTIFY_KEY = "ezmail_notify";
+function readNotifyPref() {
+	try {
+		return localStorage.getItem(NOTIFY_KEY) === "on";
+	} catch {
+		return false;
+	}
+}
+function writeNotifyPref(on) {
+	try {
+		localStorage.setItem(NOTIFY_KEY, on ? "on" : "off");
+	} catch {
+		// preference just isn't remembered
+	}
+}
+
 // Builds a compact page-number list with ellipses, e.g.
 // [1, 2, 3, "…", 50] for page 2 of 50; [1, "…", 5, 6, 7, "…", 50] for middle pages.
 function pageNumbers(total, current) {
@@ -85,6 +103,8 @@ export default function MailPage() {
 	const [helpOpen, setHelpOpen] = useState(false);
 	const [toast, setToast] = useState(null); // { text, undo?: fn }
 	const toastTimer = useRef(null);
+	const [live, setLive] = useState(false); // SSE stream connected
+	const [notifyOn, setNotifyOn] = useState(readNotifyPref);
 
 	// Mobile: sidebar drawer open state + which pane is shown
 	const [mobileSidebar, setMobileSidebar] = useState(false);
@@ -209,6 +229,34 @@ export default function MailPage() {
 		toastTimer.current = setTimeout(() => setToast(null), 6000);
 	}, []);
 	useEffect(() => () => clearTimeout(toastTimer.current), []);
+
+	// Unread INBOX count in the tab title.
+	const inboxUnread = folders.find((f) => f.path === "INBOX")?.unread || 0;
+	useEffect(() => {
+		document.title = inboxUnread ? `(${inboxUnread}) ezmail` : "ezmail";
+	}, [inboxUnread]);
+
+	const toggleNotify = async () => {
+		if (notifyOn) {
+			setNotifyOn(false);
+			writeNotifyPref(false);
+			return;
+		}
+		if (typeof Notification === "undefined") {
+			showToast({ text: "This browser doesn't support notifications" });
+			return;
+		}
+		const permission =
+			Notification.permission === "default"
+				? await Notification.requestPermission()
+				: Notification.permission;
+		if (permission !== "granted") {
+			showToast({ text: "Notifications are blocked for this site" });
+			return;
+		}
+		setNotifyOn(true);
+		writeNotifyPref(true);
+	};
 
 	// On login, default to INBOX folder view
 	// biome-ignore lint/correctness/useExhaustiveDependencies: later
@@ -472,6 +520,49 @@ export default function MailPage() {
 		return () => window.removeEventListener("keydown", onKey);
 	}, []);
 
+	// ---- live updates: SSE fed by IMAP IDLE on INBOX ----
+	// Events are hints; we refetch. While live, list polling backs off. The
+	// browser's EventSource reconnects on its own after drops.
+	const mailEvent = useRef(null);
+	mailEvent.current = (ev) => {
+		if (ev.type === "ready") setLive(true);
+		else if (ev.type === "closed" || ev.type === "error") setLive(false);
+		else if (ev.type === "new" || ev.type === "changed") {
+			if (activeFolder === "INBOX") refreshList?.();
+			loadFolders();
+			if (
+				ev.type === "new" &&
+				notifyOn &&
+				document.hidden &&
+				typeof Notification !== "undefined" &&
+				Notification.permission === "granted"
+			) {
+				const n = new Notification("ezmail", {
+					body: ev.count > 1 ? `${ev.count} new messages` : "New message",
+					tag: "ezmail-new",
+					icon: "/favicon.ico",
+				});
+				n.onclick = () => {
+					window.focus();
+					n.close();
+				};
+			}
+		}
+	};
+	useEffect(() => {
+		if (typeof EventSource === "undefined") return;
+		const es = new EventSource("/api/v1/mail/events");
+		es.onmessage = (e) => {
+			try {
+				mailEvent.current(JSON.parse(e.data));
+			} catch {
+				// malformed frame; ignore
+			}
+		};
+		es.onerror = () => setLive(false);
+		return () => es.close();
+	}, []);
+
 	return (
 		<div className="flex h-dvh w-full overflow-x-hidden bg-canvas text-ink">
 			{/* Mobile: hamburger to open the sidebar drawer */}
@@ -537,6 +628,24 @@ export default function MailPage() {
 							className="flex h-8 w-8 items-center justify-center rounded-md text-ink-muted transition hover:bg-hover hover:text-ink-2"
 						>
 							<Settings className="h-4 w-4" />
+						</button>
+						<button
+							type="button"
+							onClick={toggleNotify}
+							aria-label="Desktop notifications"
+							aria-pressed={notifyOn}
+							title={
+								notifyOn
+									? "New-mail notifications on"
+									: "Turn on new-mail notifications"
+							}
+							className="flex h-8 w-8 items-center justify-center rounded-md text-ink-muted transition hover:bg-hover hover:text-ink-2"
+						>
+							{notifyOn ? (
+								<Bell className="h-4 w-4 text-accent" />
+							) : (
+								<BellOff className="h-4 w-4" />
+							)}
 						</button>
 						<button
 							type="button"
@@ -689,7 +798,11 @@ export default function MailPage() {
 									loadFolders();
 								}}
 								disabled={listIsValidating}
-								title="Refresh mail list"
+								title={
+									live && activeFolder === "INBOX"
+										? "Refresh mail list (live updates on)"
+										: "Refresh mail list"
+								}
 								aria-label="Refresh mail list"
 								className="rounded-lg p-1.5 text-ink-muted transition hover:bg-hover hover:text-ink-2 disabled:opacity-50"
 							>
@@ -715,6 +828,7 @@ export default function MailPage() {
 						onReady={setListState}
 						onMarkedRead={applyInboxUnseen}
 						onSelectionChange={setSelected}
+						refreshInterval={live && activeFolder === "INBOX" ? 60000 : 10000}
 						keyboardEnabled={!modalOpen && view.type !== "compose"}
 					/>
 				</div>

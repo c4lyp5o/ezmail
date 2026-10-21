@@ -108,6 +108,7 @@ export default function MessageList({
 	onMarkedRead,
 	onSelectionChange,
 	keyboardEnabled = true,
+	refreshInterval = 10000,
 }) {
 	const [sort, setSort] = useState("desc");
 	const [search, setSearch] = useState("");
@@ -123,7 +124,7 @@ export default function MessageList({
 	const { data, isValidating, error, mutate } = useSWR(
 		activeFolder ? listKey(activeFolder, page, sort, search) : null,
 		fetcher,
-		{ revalidateOnFocus: false, refreshInterval: 10000 },
+		{ revalidateOnFocus: false, refreshInterval },
 	);
 
 	const messages = data?.messages || [];

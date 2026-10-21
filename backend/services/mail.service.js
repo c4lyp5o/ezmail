@@ -13,7 +13,7 @@ import { getDisplayName } from "./profile.service.js";
 // Builds an IMAP client bound to the authenticated user's mailbox. No global
 // account — the credentials come from the server-side session (created only
 // after IMAP auth).
-function buildImapClient({ mailbox, password }) {
+export function buildImapClient({ mailbox, password }) {
 	return new ImapFlow({
 		host: MAIL_SERVER.imapHost,
 		port: MAIL_SERVER.imapPort,
