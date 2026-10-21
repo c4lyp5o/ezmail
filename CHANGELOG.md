@@ -2,7 +2,7 @@
 
 All notable changes to ezmail are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [2.0.0] - 2026-10-21
 
 ### Breaking
 - **Server-side sessions replace the password-carrying JWT.** Everyone must sign in again once. The `@elysiajs/jwt` dependency is removed, and the old `ezmail_access` cookie is cleared automatically.
