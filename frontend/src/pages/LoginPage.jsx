@@ -166,8 +166,7 @@ export default function LoginPage() {
 								value={password}
 								onChange={(e) => setPassword(e.target.value)}
 								className={inputCls}
-								placeholder="Enter your mail password"
-								required
+								placeholder="Mail password (blank if you use an authenticator)"
 							/>
 						</div>
 

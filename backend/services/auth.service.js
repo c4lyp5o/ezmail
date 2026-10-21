@@ -93,18 +93,22 @@ export const AuthService = {
 	// client to proceed to the code screen), otherwise logs straight in.
 	login: async ({ body, cookie, status, set }) => {
 		const { mailbox, password, rememberMe } = body;
-		if (!mailbox || !password) {
-			return status(400, {
-				success: false,
-				message: "Mailbox and password are required",
-			});
+		if (!mailbox) {
+			return status(400, { success: false, message: "Mailbox is required" });
 		}
 
 		const st = totpStatus(mailbox);
 		if (st.enabled) {
 			// Passwordless mailbox: the client should prompt for a code instead and
-			// hit /login/code. We do NOT verify the (expect-empty) password here.
+			// hit /login/code. Any password sent is ignored (may be empty).
 			return { success: true, totp: true };
+		}
+
+		if (!password) {
+			return status(400, {
+				success: false,
+				message: "Mailbox and password are required",
+			});
 		}
 
 		const key = limitKey(mailbox);
@@ -231,9 +235,17 @@ export const AuthService = {
 		return { success: true };
 	},
 
-	// Status (used by the settings modal + login screen to know which flow).
-	totpStatus: async ({ body }) => {
+	// Status for the signed-in mailbox (settings modal). Session-only, so it
+	// can't be used to probe which mailboxes have TOTP.
+	totpStatus: async ({ body, cookie, status }) => {
 		const { mailbox } = body || {};
+		const usr = await getUser(cookie);
+		if (!usr || usr.mailbox !== mailbox) {
+			return status(401, {
+				success: false,
+				message: "Not authorized to manage this mailbox",
+			});
+		}
 		return { success: true, data: totpStatus(mailbox) };
 	},
 

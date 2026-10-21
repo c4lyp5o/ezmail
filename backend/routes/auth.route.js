@@ -63,7 +63,8 @@ export const AuthRoutes = new Elysia({ prefix: "/api/v1" })
 			body: AuthModel.totpStatusBody,
 			detail: {
 				summary: "TOTP status",
-				description: "Returns whether the mailbox has TOTP enrolled/enabled.",
+				description:
+					"Returns whether the signed-in mailbox has TOTP enrolled/enabled (session required).",
 				tags: ["Auth"],
 			},
 		},

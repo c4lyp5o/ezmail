@@ -37,6 +37,11 @@ describe("password login", () => {
 		expect(me.json.data.mailbox).toBe(mailbox);
 	});
 
+	test("missing password is a 400 for a non-TOTP mailbox", async () => {
+		const res = await call("POST", "/api/v1/login", { body: { mailbox: fresh() } });
+		expect(res.status).toBe(400);
+	});
+
 	test("wrong password gets the generic 401", async () => {
 		const res = await call("POST", "/api/v1/login", {
 			body: { mailbox: fresh(), password: "nope" },
@@ -107,11 +112,8 @@ describe("TOTP login", () => {
 		const mailbox = fresh();
 		const { secret } = await enroll(mailbox);
 
-		// Step 1 still requires a non-empty password field, but for a TOTP
-		// mailbox it is not checked against IMAP.
-		const step1 = await call("POST", "/api/v1/login", {
-			body: { mailbox, password: "ignored" },
-		});
+		// No password needed for a TOTP mailbox.
+		const step1 = await call("POST", "/api/v1/login", { body: { mailbox } });
 		expect(step1.json).toEqual({ success: true, totp: true });
 
 		const step2 = await call("POST", "/api/v1/login/code", {
@@ -147,10 +149,25 @@ describe("TOTP login", () => {
 			cookie,
 		});
 		expect(off.status).toBe(200);
-		const st = await call("POST", "/api/v1/totp/status", { body: { mailbox } });
+		const st = await call("POST", "/api/v1/totp/status", {
+			body: { mailbox },
+			cookie,
+		});
 		expect(st.json.data).toEqual({ enabled: false, enrolled: false });
 		await login(mailbox);
 	});
+});
+
+test("TOTP status can't be probed for other mailboxes", async () => {
+	const victim = fresh();
+	const anon = await call("POST", "/api/v1/totp/status", { body: { mailbox: victim } });
+	expect(anon.status).toBe(401);
+	const cookie = await login(fresh());
+	const other = await call("POST", "/api/v1/totp/status", {
+		body: { mailbox: victim },
+		cookie,
+	});
+	expect(other.status).toBe(401);
 });
 
 test("protected routes reject requests without a session", async () => {

@@ -3,7 +3,8 @@ import { t } from "elysia";
 export const AuthModel = {
 	loginBody: t.Object({
 		mailbox: t.String(),
-		password: t.String(),
+		// may be empty for a TOTP (passwordless) mailbox
+		password: t.Optional(t.String()),
 		rememberMe: t.Optional(t.Boolean()),
 	}),
 
