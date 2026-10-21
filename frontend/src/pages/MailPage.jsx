@@ -29,6 +29,7 @@ import ThemeToggle from "../components/ThemeToggle.jsx";
 import { useAuth } from "../context/auth.jsx";
 import { apiCall } from "../utils/apiCall.js";
 import { isTypingTarget } from "../utils/keyboard.js";
+import { specialFolder } from "../utils/folders.js";
 import { buildDraft } from "../utils/reply.js";
 
 const SHORTCUTS = [
@@ -220,6 +221,11 @@ export default function MailPage() {
 		navigate("/login", { replace: true });
 	};
 
+	// Special folders by role; "Trash"/"Sent" only until the list loads.
+	const trashFolder = specialFolder(folders, "Trash", "Trash") || "Trash";
+	const sentFolder = specialFolder(folders, "Sent", "Sent") || "Sent";
+	const isTrash = activeFolder === trashFolder;
+
 	// ---- selection helpers ----
 	const toggleSelect = useCallback((uid) => {
 		setSelected((prev) => {
@@ -304,7 +310,7 @@ export default function MailPage() {
 
 	// Outside Trash a delete is an undoable move; inside Trash it's permanent.
 	const deleteMessages = async (uids, folder) => {
-		if (folder !== "Trash") return moveMessages(uids, folder, "Trash");
+		if (folder !== trashFolder) return moveMessages(uids, folder, trashFolder);
 		const res = await apiCall.post("/mail/delete", { folder, uids });
 		applyInboxUnseen(res.data?.inboxUnseen);
 		afterMutation();
@@ -330,7 +336,7 @@ export default function MailPage() {
 	const emptyTrash = async () => {
 		setEmptyTrashBusy(true);
 		try {
-			await apiCall.post("/mail/expunge", { folder: "Trash" });
+			await apiCall.post("/mail/expunge", { folder: trashFolder });
 			clearSelection();
 			afterMutation();
 		} catch (err) {
@@ -373,9 +379,7 @@ export default function MailPage() {
 		setMobileSidebar(false);
 	};
 
-	const archiveFolder =
-		folders.find((f) => f.specialUse === "\\Archive")?.path ||
-		folders.find((f) => f.name === "Archive")?.path;
+	const archiveFolder = specialFolder(folders, "Archive", "Archive");
 
 	// After any mutation (mark read / delete / move), refresh the SWR list so
 	// the UI reflects the server state (needed because moves change UIDs).
@@ -589,7 +593,7 @@ export default function MailPage() {
 							{selectedUids.length}
 						</span>
 						<div className="flex-1" />
-						{activeFolder !== "Trash" && (
+						{!isTrash && (
 							<>
 								<button
 									type="button"
@@ -662,7 +666,7 @@ export default function MailPage() {
 							<h2 className="ml-1 text-lg font-semibold capitalize md:ml-0">
 								{activeFolder}
 							</h2>
-							{activeFolder === "Trash" && (
+							{isTrash && (
 								<button
 									type="button"
 									onClick={() => setEmptyTrashOpen(true)}
@@ -707,7 +711,7 @@ export default function MailPage() {
 						onOpenMessage={(msg) =>
 							openMessageWithBody(activeFolder, msg.uid, msg)
 						}
-						alwaysRead={activeFolder === "Sent"}
+						alwaysRead={activeFolder === sentFolder}
 						onReady={setListState}
 						onMarkedRead={applyInboxUnseen}
 						onSelectionChange={setSelected}

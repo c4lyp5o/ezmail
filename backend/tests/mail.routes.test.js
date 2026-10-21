@@ -163,6 +163,27 @@ describe("flags, move, delete", () => {
 		expect(imap.boxes.get("Trash").messages).toHaveLength(0);
 	});
 
+	test("Trash is found by its \\Trash role, whatever it's called", async () => {
+		imap.reset();
+		imap.addBox("INBOX", "\\Inbox");
+		imap.addBox("Deleted Items", "\\Trash");
+		const a = imap.addMessage("INBOX");
+		await post("/delete", { folder: "INBOX", uids: [a] });
+		expect(imap.boxes.get("Deleted Items").messages).toHaveLength(1);
+
+		const [moved] = imap.boxes.get("Deleted Items").messages;
+		await post("/delete", { folder: "Deleted Items", uids: [moved.uid] });
+		expect(imap.boxes.get("Deleted Items").messages).toHaveLength(0);
+	});
+
+	test("Sent copy goes to the \\Sent folder by role", async () => {
+		imap.reset();
+		imap.addBox("INBOX", "\\Inbox");
+		imap.addBox("Sent Mail", "\\Sent");
+		await post("/send", { to: "bob@x.io", subject: "s", text: "t" });
+		expect(imap.boxes.get("Sent Mail").messages).toHaveLength(1);
+	});
+
 	test("emptying an already empty Trash succeeds", async () => {
 		const res = await post("/expunge", { folder: "Trash" });
 		expect(res.status).toBe(200);

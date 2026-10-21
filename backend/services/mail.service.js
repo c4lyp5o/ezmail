@@ -89,6 +89,18 @@ function destinationUids(res) {
 	return res?.uidMap ? [...res.uidMap.values()].map(Number) : undefined;
 }
 
+// Finds a special-use folder (RFC 6154), falling back to common names —
+// servers call Trash "Deleted Items", "Bin", etc.
+async function findSpecialFolder(client, use, namePattern) {
+	const list = await client.list();
+	return (
+		list.find((f) => f.specialUse === use) ||
+		list.find((f) => namePattern.test(f.name))
+	)?.path;
+}
+const TRASH_NAMES = /^(trash|bin|deleted( items| messages)?)$/i;
+const SENT_NAMES = /^sent( items| mail| messages)?$/i;
+
 // Saves a copy of a sent message to the account's Sent folder. Most IMAP
 // servers (docker-mailserver/Dovecot included) don't do this on SMTP submit.
 // Set SAVE_SENT=false for servers that already do (e.g. Gmail) to avoid dupes.
@@ -97,12 +109,9 @@ async function saveToSent(user, raw) {
 	const client = buildImapClient(user);
 	try {
 		await client.connect();
-		const list = await client.list();
-		const sent =
-			list.find((f) => f.specialUse === "\\Sent") ||
-			list.find((f) => /^sent( items| mail)?$/i.test(f.name));
+		const sent = await findSpecialFolder(client, "\\Sent", SENT_NAMES);
 		if (!sent) return false;
-		await client.append(sent.path, raw, ["\\Seen"]);
+		await client.append(sent, raw, ["\\Seen"]);
 		return true;
 	} catch (err) {
 		logImapError(err);
@@ -448,13 +457,19 @@ export const MailService = {
 		const { uids, folder } = body;
 		const targetUids = Array.isArray(uids) ? uids.map(Number) : uids;
 		return withClient(user, status, async (client) => {
+			// Outside Trash a delete is a move to Trash; inside it, permanent.
+			const trash =
+				(await findSpecialFolder(client, "\\Trash", TRASH_NAMES)) || "Trash";
 			const lock = await client.getMailboxLock(folder);
-			if (folder !== "Trash") {
-				await client.messageMove(targetUids, "Trash", { uid: true });
-			} else {
-				await client.messageDelete(targetUids, { uid: true });
+			try {
+				if (folder !== trash) {
+					await client.messageMove(targetUids, trash, { uid: true });
+				} else {
+					await client.messageDelete(targetUids, { uid: true });
+				}
+			} finally {
+				lock.release();
 			}
-			lock.release();
 			// Piggyback fresh INBOX unseen on the same connection.
 			let inboxUnseen;
 			try {

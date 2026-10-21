@@ -121,6 +121,27 @@ describe("mail page", () => {
 		expect(screen.getByPlaceholderText("Subject").value).toBe("Re: Quarterly report");
 	});
 
+	test("Trash is recognised by role: 'Bin' gets Delete all and permanent delete", async () => {
+		const bin = { ...FOLDERS[1], path: "Bin", name: "Bin" };
+		const calls = signedIn({
+			"GET /mail/folders": [FOLDERS[0], bin],
+			"GET /mail/messages/Bin": { messages: [MSG], total: 1, page: 1, pageSize: 50 },
+			"POST /mail/delete": { uids: [42], folder: "Bin" },
+		});
+		renderAt("/mail");
+		fireEvent.click(await screen.findByText("Bin"));
+		expect(await screen.findByText("Delete all")).toBeTruthy();
+		await screen.findByText("Quarterly report");
+		fireEvent.click(screen.getByRole("checkbox", { name: "" }));
+		fireEvent.click(screen.getByTitle("Delete"));
+		await waitFor(() =>
+			expect(calls.find((c) => c.path === "/mail/delete")?.body).toEqual({
+				folder: "Bin",
+				uids: [42],
+			}),
+		);
+	});
+
 	test("? opens the shortcut help, Esc closes it", async () => {
 		signedIn();
 		renderAt("/mail");

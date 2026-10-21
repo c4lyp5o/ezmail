@@ -1,11 +1,34 @@
-import { Archive, Folder, Inbox, Send, Star, Trash2 } from "lucide-react";
+import {
+	Archive,
+	FileText,
+	Folder,
+	Inbox,
+	OctagonAlert,
+	Send,
+	Star,
+	Trash2,
+} from "lucide-react";
 
-const SPECIAL_ICONS = {
+// Icons by RFC 6154 special-use flag; names are only a fallback.
+const SPECIAL_USE_ICONS = {
+	"\\Inbox": Inbox,
+	"\\Sent": Send,
+	"\\Flagged": Star,
+	"\\Archive": Archive,
+	"\\Trash": Trash2,
+	"\\Drafts": FileText,
+	"\\Junk": OctagonAlert,
+};
+const NAME_ICONS = {
+	INBOX: Inbox,
 	Inbox,
 	Sent: Send,
 	Starred: Star,
 	Archive,
 	Trash: Trash2,
+	Drafts: FileText,
+	Junk: OctagonAlert,
+	Spam: OctagonAlert,
 };
 
 export default function FolderList({ folders, active, onSelect }) {
@@ -15,7 +38,8 @@ export default function FolderList({ folders, active, onSelect }) {
 				<div className="px-3 py-2 text-sm text-ink-faint">No folders</div>
 			)}
 			{folders.map((folder) => {
-				const Icon = SPECIAL_ICONS[folder.name] || Folder;
+				const Icon =
+					SPECIAL_USE_ICONS[folder.specialUse] || NAME_ICONS[folder.name] || Folder;
 				const isActive = folder.path === active;
 				// Unread counts are noise for Sent/Drafts/Trash.
 				const unread = /\\(Sent|Drafts|Trash)/.test(folder.specialUse || "")
