@@ -59,7 +59,19 @@ export const MailModel = {
 				from: t.String(),
 				fromName: t.String(),
 				to: t.String(),
+				cc: t.Optional(t.String()),
 				replyTo: t.Optional(t.String()),
+				messageId: t.Optional(t.String()),
+				references: t.Optional(t.String()),
+				// Bare addresses for building reply / reply-all recipients.
+				addresses: t.Optional(
+					t.Object({
+						from: t.Array(t.String()),
+						replyTo: t.Array(t.String()),
+						to: t.Array(t.String()),
+						cc: t.Array(t.String()),
+					}),
+				),
 				date: t.Any(),
 				mailedBy: t.Optional(t.String()),
 				signedBy: t.Optional(t.String()),
@@ -91,6 +103,7 @@ export const MailModel = {
 			t.Object({
 				uids: uidArray,
 				flags: t.Array(t.String()),
+				inboxUnseen: t.Optional(t.Integer()),
 			}),
 		),
 	}),
@@ -108,6 +121,7 @@ export const MailModel = {
 			t.Object({
 				uids: uidArray,
 				flags: t.Array(t.String()),
+				inboxUnseen: t.Optional(t.Integer()),
 			}),
 		),
 	}),
@@ -126,6 +140,9 @@ export const MailModel = {
 				uids: uidArray,
 				from: t.String(),
 				to: t.String(),
+				inboxUnseen: t.Optional(t.Integer()),
+				// Destination UIDs (UIDPLUS) — lets the client undo the move.
+				movedUids: t.Optional(t.Array(t.Integer())),
 			}),
 		),
 	}),
@@ -167,6 +184,8 @@ export const MailModel = {
 		text: t.Optional(t.String()),
 		html: t.Optional(t.String()),
 		markdown: t.Optional(t.Boolean()),
+		inReplyTo: t.Optional(t.String()),
+		references: t.Optional(t.String()),
 		attachments: t.Optional(
 			t.Array(
 				t.Object({
@@ -181,6 +200,7 @@ export const MailModel = {
 	sendMessageResponse: t.Object({
 		success: t.Boolean(),
 		message: t.String(),
+		data: t.Optional(t.Object({ savedToSent: t.Boolean() })),
 	}),
 
 	summarizeBody: t.Object({

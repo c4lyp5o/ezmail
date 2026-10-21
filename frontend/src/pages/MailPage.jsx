@@ -3,6 +3,7 @@ import {
 	ChevronRight,
 	FolderInput,
 	Inbox,
+	Keyboard,
 	LogOut,
 	Mail,
 	MailOpen,
@@ -27,6 +28,27 @@ import SummaryColumn from "../components/SummaryColumn.jsx";
 import ThemeToggle from "../components/ThemeToggle.jsx";
 import { useAuth } from "../context/auth.jsx";
 import { apiCall } from "../utils/apiCall.js";
+import { isTypingTarget } from "../utils/keyboard.js";
+import { buildDraft } from "../utils/reply.js";
+
+const SHORTCUTS = [
+	["j / k, ↑ / ↓", "Next / previous message"],
+	["PgUp / PgDn, Home / End", "Jump a page / to the ends"],
+	["Shift + any of the above", "Extend selection"],
+	["x", "Select / deselect message"],
+	["Enter / o", "Open message"],
+	["c", "Compose"],
+	["r / a / f", "Reply / reply all / forward"],
+	["e", "Archive"],
+	["# / Delete", "Delete"],
+	["z", "Undo last move"],
+	["/", "Search"],
+	["Esc", "Clear selection / close message"],
+	["Ctrl + Enter", "Send (in compose)"],
+	["?", "This help"],
+];
+
+const plural = (n) => `${n} message${n === 1 ? "" : "s"}`;
 
 // Builds a compact page-number list with ellipses, e.g.
 // [1, 2, 3, "…", 50] for page 2 of 50; [1, "…", 5, 6, 7, "…", 50] for middle pages.
@@ -59,6 +81,9 @@ export default function MailPage() {
 	const [emptyTrashBusy, setEmptyTrashBusy] = useState(false);
 	const [settingsOpen, setSettingsOpen] = useState(false);
 	const [showRemote, setShowRemote] = useState(false);
+	const [helpOpen, setHelpOpen] = useState(false);
+	const [toast, setToast] = useState(null); // { text, undo?: fn }
+	const toastTimer = useRef(null);
 
 	// Mobile: sidebar drawer open state + which pane is shown
 	const [mobileSidebar, setMobileSidebar] = useState(false);
@@ -167,9 +192,22 @@ export default function MailPage() {
 		);
 	}, []);
 
+	// Unread badges for every folder: refresh on mount and every 30s while the
+	// tab is visible (one LIST-STATUS round-trip server-side).
 	useEffect(() => {
 		loadFolders();
+		const id = setInterval(() => {
+			if (!document.hidden) loadFolders();
+		}, 30000);
+		return () => clearInterval(id);
 	}, [loadFolders]);
+
+	const showToast = useCallback((next) => {
+		clearTimeout(toastTimer.current);
+		setToast(next);
+		toastTimer.current = setTimeout(() => setToast(null), 6000);
+	}, []);
+	useEffect(() => () => clearTimeout(toastTimer.current), []);
 
 	// On login, default to INBOX folder view
 	// biome-ignore lint/correctness/useExhaustiveDependencies: later
@@ -236,36 +274,57 @@ export default function MailPage() {
 	const bulkStar = () => handleBulkFlags(["\\Flagged"], "add");
 	const bulkUnstar = () => handleBulkFlags(["\\Flagged"], "remove");
 
-	const bulkDelete = async () => {
+	// Moves messages and offers Undo (when the server reports destination
+	// UIDs via UIDPLUS — UIDs change on move, so we need the new ones).
+	const moveMessages = async (uids, from, to) => {
+		const res = await apiCall.post("/mail/move", { uids, from, to });
+		applyInboxUnseen(res.data?.inboxUnseen);
+		afterMutation();
+		const moved = res.data?.movedUids;
+		showToast({
+			text: `${plural(uids.length)} moved to ${to}`,
+			undo: moved?.length
+				? async () => {
+						setToast(null);
+						try {
+							const r = await apiCall.post("/mail/move", {
+								uids: moved,
+								from: to,
+								to: from,
+							});
+							applyInboxUnseen(r.data?.inboxUnseen);
+							afterMutation();
+						} catch (err) {
+							showToast({ text: err.message || "Undo failed" });
+						}
+					}
+				: null,
+		});
+	};
+
+	// Outside Trash a delete is an undoable move; inside Trash it's permanent.
+	const deleteMessages = async (uids, folder) => {
+		if (folder !== "Trash") return moveMessages(uids, folder, "Trash");
+		const res = await apiCall.post("/mail/delete", { folder, uids });
+		applyInboxUnseen(res.data?.inboxUnseen);
+		afterMutation();
+		showToast({ text: `${plural(uids.length)} deleted permanently` });
+	};
+
+	const runBulk = async (fn) => {
 		if (!selectedUids.length) return;
 		setBulkBusy(true);
 		try {
-			const isTrash = activeFolder === "Trash";
-			if (isTrash) {
-				await apiCall
-					.post("/mail/delete", {
-						folder: activeFolder,
-						uids: selectedUids,
-					})
-					.then((res) =>
-						applyInboxUnseen(res.data?.data?.inboxUnseen),
-					);
-			} else {
-				await apiCall
-					.post("/mail/move", {
-						from: activeFolder,
-						to: "Trash",
-						uids: selectedUids,
-					})
-					.then((res) => applyInboxUnseen(res.data?.inboxUnseen));
-			}
-			afterMutation();
+			await fn(selectedUids);
 		} catch (err) {
-			console.error("Bulk delete failed:", err);
+			showToast({ text: err.message || "Action failed" });
 		} finally {
 			setBulkBusy(false);
 		}
 	};
+
+	const bulkDelete = () =>
+		runBulk((uids) => deleteMessages(uids, activeFolder));
 
 	// Permanently delete every message in the Trash folder.
 	const emptyTrash = async () => {
@@ -281,24 +340,14 @@ export default function MailPage() {
 		}
 	};
 
-	const bulkMove = async (toFolder) => {
-		if (!selectedUids.length) return;
+	const bulkMove = (toFolder) => {
 		setMovePopup(false);
-		setBulkBusy(true);
-		try {
-			await apiCall.post("/mail/move", {
-				uids: selectedUids,
-				from: activeFolder,
-				to: toFolder,
-			});
-			afterMutation();
-		} finally {
-			setBulkBusy(false);
-		}
+		return runBulk((uids) => moveMessages(uids, activeFolder, toFolder));
 	};
 
 	// ---- folder / message selection ----
 	const selectFolder = (f) => {
+		if (f !== activeFolder) clearSelection();
 		setActiveFolder(f);
 		setView({ type: "folder" });
 		setMobileSidebar(false);
@@ -312,6 +361,22 @@ export default function MailPage() {
 		setMobilePane("list");
 	};
 
+	// New message, or reply / replyAll / forward of a loaded message. The key
+	// remounts ComposeView so each open starts from its own initial state.
+	const openCompose = (mode, msg) => {
+		setView({
+			type: "compose",
+			key: Date.now(),
+			initial: mode && msg ? buildDraft(mode, msg, user?.mailbox) : null,
+		});
+		setMobilePane("reader");
+		setMobileSidebar(false);
+	};
+
+	const archiveFolder =
+		folders.find((f) => f.specialUse === "\\Archive")?.path ||
+		folders.find((f) => f.name === "Archive")?.path;
+
 	// After any mutation (mark read / delete / move), refresh the SWR list so
 	// the UI reflects the server state (needed because moves change UIDs).
 	// biome-ignore lint/correctness/useExhaustiveDependencies: later
@@ -322,29 +387,86 @@ export default function MailPage() {
 		loadFolders();
 	}, [refreshList, loadFolders]);
 
-	// Fetch the full message body once when a message is opened, so both the
-	// detail view AND the summary column get the real text/html (the list item
-	// passed in has no body). Also refresh the list so the read state updates.
+	// MessageView fetches the full body once and hands it up here, so the
+	// summary column reuses it instead of downloading the message (and its
+	// base64 attachments) a second time.
 	const [fullMessage, setFullMessage] = useState(null);
 
-	// biome-ignore lint/correctness/useExhaustiveDependencies: later
-	const openMessageWithBody = useCallback(
-		async (folder, uid, msg) => {
-			setFullMessage(null); // clear previous body so no stale summary
-			setView({ type: "message", folder, uid, msg });
-			setMobilePane("reader");
-			setMobileSidebar(false);
-			try {
-				const res = await apiCall.get(
-					`/mail/message/${encodeURIComponent(folder)}/${uid}`,
+	const openMessageWithBody = useCallback((folder, uid, msg) => {
+		setFullMessage(null); // clear previous body so no stale summary
+		setView({ type: "message", folder, uid, msg });
+		setMobilePane("reader");
+		setMobileSidebar(false);
+	}, []);
+
+	// ---- global shortcuts (list navigation lives in MessageList) ----
+	const modalOpen = settingsOpen || movePopup || emptyTrashOpen || helpOpen;
+	const keyHandler = useRef(null);
+	keyHandler.current = (e) => {
+		if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey) return;
+		if (isTypingTarget(e.target) || view.type === "compose") return;
+		if (e.key === "Escape") {
+			if (helpOpen) setHelpOpen(false);
+			else if (movePopup) setMovePopup(false);
+			else if (modalOpen) return;
+			else if (selected.size) clearSelection();
+			else if (view.type === "message") handleBack();
+			return;
+		}
+		if (e.key === "?") {
+			setHelpOpen((v) => !v);
+			return;
+		}
+		if (modalOpen) return;
+
+		const openUid = view.type === "message" ? Number(view.uid) : null;
+		const targets = selectedUids.length
+			? selectedUids
+			: openUid && view.folder === activeFolder
+				? [openUid]
+				: [];
+		const fail = (err) => showToast({ text: err.message || "Action failed" });
+
+		switch (e.key) {
+			case "c":
+				openCompose();
+				break;
+			case "r":
+			case "a":
+			case "f":
+				if (view.type !== "message" || !fullMessage) return;
+				openCompose(
+					{ r: "reply", a: "replyAll", f: "forward" }[e.key],
+					fullMessage,
 				);
-				setFullMessage({ ...(res.data || {}), folder });
-			} catch {
-				setFullMessage(null);
-			}
-		},
-		[setView],
-	);
+				break;
+			case "e":
+				if (!targets.length || !archiveFolder || activeFolder === archiveFolder)
+					return;
+				moveMessages(targets, activeFolder, archiveFolder).catch(fail);
+				break;
+			case "#":
+			case "Delete":
+				if (!targets.length) return;
+				deleteMessages(targets, activeFolder).catch(fail);
+				break;
+			case "z":
+				if (!toast?.undo) return;
+				toast.undo();
+				break;
+			case "/":
+				document.getElementById("mail-search")?.focus();
+				break;
+			default:
+				return;
+		}
+		e.preventDefault();
+	};
+	useEffect(() => {
+		const onKey = (e) => keyHandler.current(e);
+		window.addEventListener("keydown", onKey);
+		return () => window.removeEventListener("keydown", onKey);
+	}, []);
 
 	return (
 		<div className="flex h-dvh w-full overflow-x-hidden bg-canvas text-ink">
@@ -382,7 +504,8 @@ export default function MailPage() {
 
 				<button
 					type="button"
-					onClick={() => setView({ type: "compose" })}
+					onClick={() => openCompose()}
+					title="Compose (c)"
 					className="mx-3 mb-3 flex items-center justify-center gap-2 rounded-lg bg-accent py-2 text-sm font-medium text-white transition hover:bg-accent"
 				>
 					<PenSquare className="h-4 w-4" />
@@ -410,6 +533,15 @@ export default function MailPage() {
 							className="flex h-8 w-8 items-center justify-center rounded-md text-ink-muted transition hover:bg-hover hover:text-ink-2"
 						>
 							<Settings className="h-4 w-4" />
+						</button>
+						<button
+							type="button"
+							onClick={() => setHelpOpen(true)}
+							aria-label="Keyboard shortcuts"
+							title="Keyboard shortcuts (?)"
+							className="flex h-8 w-8 items-center justify-center rounded-md text-ink-muted transition hover:bg-hover hover:text-ink-2"
+						>
+							<Keyboard className="h-4 w-4" />
 						</button>
 						<ThemeToggle />
 					</div>
@@ -578,6 +710,8 @@ export default function MailPage() {
 						alwaysRead={activeFolder === "Sent"}
 						onReady={setListState}
 						onMarkedRead={applyInboxUnseen}
+						onSelectionChange={setSelected}
+						keyboardEnabled={!modalOpen && view.type !== "compose"}
 					/>
 				</div>
 
@@ -639,17 +773,25 @@ export default function MailPage() {
 			<main
 				className={`min-w-0 flex-1 ${isMobile && mobilePane === "list" ? "hidden" : ""}`}
 			>
-				{view.type === "compose" && <ComposeView onBack={handleBack} />}
+				{view.type === "compose" && (
+					<ComposeView
+						key={view.key}
+						initial={view.initial}
+						onBack={handleBack}
+						onSent={() => loadFolders()}
+					/>
+				)}
 				{view.type === "message" && (
 					<MessageView
 						folder={view.folder}
 						uid={view.uid}
 						initialMsg={view.msg}
 						onBack={handleBack}
-						refresh={afterMutation}
+						onDelete={() => deleteMessages([Number(view.uid)], view.folder)}
+						onCompose={openCompose}
 						setShowRemote={setShowRemote}
 						showRemote={showRemote}
-						onMarkedRead={applyInboxUnseen}
+						onLoaded={setFullMessage}
 					/>
 				)}
 				{view.type === "folder" && (
@@ -662,7 +804,11 @@ export default function MailPage() {
 
 			{/* Summary column when viewing a message with LLM present (hidden on
 			    small screens — the reader stays full-width on mobile) */}
-			{llmPresent && view.type === "message" && !isMobile && fullMessage && (
+			{llmPresent &&
+				view.type === "message" &&
+				!view.summaryClosed &&
+				!isMobile &&
+				fullMessage && (
 				<SummaryColumn
 					message={fullMessage}
 					onClose={() => setView((v) => ({ ...v, summaryClosed: true }))}
@@ -706,6 +852,62 @@ export default function MailPage() {
 						>
 							Cancel
 						</button>
+					</div>
+				</div>
+			)}
+
+			{/* Undo / status toast */}
+			{toast && (
+				<div
+					role="status"
+					className="fixed bottom-16 left-1/2 z-50 flex -translate-x-1/2 items-center gap-4 rounded-lg border border-hair-strong bg-panel px-4 py-2.5 text-sm text-ink-2 shadow-xl"
+				>
+					<span>{toast.text}</span>
+					{toast.undo && (
+						<button
+							type="button"
+							onClick={toast.undo}
+							className="font-medium text-accent hover:underline"
+						>
+							Undo
+						</button>
+					)}
+					<button
+						type="button"
+						onClick={() => setToast(null)}
+						aria-label="Dismiss"
+						className="text-ink-muted hover:text-ink-2"
+					>
+						<X className="h-3.5 w-3.5" />
+					</button>
+				</div>
+			)}
+
+			{/* Keyboard shortcut help */}
+			{helpOpen && (
+				// biome-ignore lint/a11y/noStaticElementInteractions: backdrop click closes
+				// biome-ignore lint/a11y/useKeyWithClickEvents: Esc handled globally
+				<div
+					className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+					onClick={() => setHelpOpen(false)}
+				>
+					{/** biome-ignore lint/a11y/noStaticElementInteractions: stop backdrop close */}
+					{/** biome-ignore lint/a11y/useKeyWithClickEvents: no keyboard action */}
+					<div
+						className="w-[26rem] max-w-[calc(100vw-2rem)] rounded-xl border border-hair-strong bg-panel p-5 shadow-xl"
+						onClick={(e) => e.stopPropagation()}
+					>
+						<h3 className="mb-3 text-sm font-semibold text-ink-2">
+							Keyboard shortcuts
+						</h3>
+						<dl className="space-y-1.5 text-sm">
+							{SHORTCUTS.map(([keys, what]) => (
+								<div key={keys} className="flex justify-between gap-4">
+									<dt className="font-mono text-xs text-ink-2">{keys}</dt>
+									<dd className="text-right text-ink-muted">{what}</dd>
+								</div>
+							))}
+						</dl>
 					</div>
 				</div>
 			)}

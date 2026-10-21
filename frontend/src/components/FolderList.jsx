@@ -17,7 +17,10 @@ export default function FolderList({ folders, active, onSelect }) {
 			{folders.map((folder) => {
 				const Icon = SPECIAL_ICONS[folder.name] || Folder;
 				const isActive = folder.path === active;
-				const unread = folder.path === "INBOX" ? folder.unread || 0 : 0;
+				// Unread counts are noise for Sent/Drafts/Trash.
+				const unread = /\\(Sent|Drafts|Trash)/.test(folder.specialUse || "")
+					? 0
+					: folder.unread || 0;
 				return (
 					<button
 						type="button"

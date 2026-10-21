@@ -1,6 +1,7 @@
 import { useCallback, useEffect, memo, useRef, useState } from "react";
 import useSWR from "swr";
 import { apiCall } from "../utils/apiCall.js";
+import { isTypingTarget } from "../utils/keyboard.js";
 import { ArrowUpDown, ArrowUp, ArrowDown, Search, Star } from "lucide-react";
 
 const PAGE_SIZE = 50;
@@ -8,6 +9,7 @@ const PAGE_SIZE = 50;
 const MessageRow = memo(function MessageRow({
 	msg,
 	isReading,
+	isCursor,
 	selected,
 	onToggle,
 	onClick,
@@ -21,9 +23,12 @@ const MessageRow = memo(function MessageRow({
 		// biome-ignore lint/a11y/useKeyWithClickEvents: later
 		<div
 			onClick={onClick}
+			data-uid={msg.uid}
 			className={`group flex w-full items-center gap-3 border-b border-hair px-4 py-3 text-left transition hover:bg-hover/40 ${
 				selected ? "bg-accent/10 font-bold" : ""
-			} ${isReading === msg.uid ? "bg-accent/30" : ""}`}
+			} ${isReading === msg.uid ? "bg-accent/30" : ""} ${
+				isCursor ? "shadow-[inset_3px_0_0_var(--color-accent)]" : ""
+			}`}
 		>
 			<input
 				type="checkbox"
@@ -101,12 +106,19 @@ export default function MessageList({
 	alwaysRead = false,
 	onReady,
 	onMarkedRead,
+	onSelectionChange,
+	keyboardEnabled = true,
 }) {
 	const [sort, setSort] = useState("desc");
 	const [search, setSearch] = useState("");
 	const [page, setPage] = useState(1);
 	const [isReading, setIsReading] = useState("");
 	const selectAllRef = useRef(null);
+	const listRef = useRef(null);
+	// Keyboard cursor row (follows clicks). anchorRef holds the Shift-range
+	// origin and the selection that existed before the range started.
+	const [cursor, setCursor] = useState(null);
+	const anchorRef = useRef(null);
 
 	const { data, isValidating, error, mutate } = useSWR(
 		activeFolder ? listKey(activeFolder, page, sort, search) : null,
@@ -172,6 +184,8 @@ export default function MessageList({
 					})
 					.catch(() => {});
 			}
+			setCursor(msg.uid);
+			anchorRef.current = null;
 			if (onOpenMessage) {
 				onOpenMessage(msg);
 				setIsReading(msg.uid);
@@ -179,6 +193,110 @@ export default function MessageList({
 		},
 		[activeFolder, alwaysRead, onOpenMessage, onMarkedRead, mutate],
 	);
+
+	// ---- keyboard navigation ----
+	// ↑/↓ j/k PgUp/PgDn Home/End move the cursor and open that message.
+	// With Shift they extend a range selection instead (no open).
+	// biome-ignore lint/correctness/useExhaustiveDependencies: reset on view change
+	useEffect(() => {
+		setCursor(null);
+		anchorRef.current = null;
+	}, [activeFolder, page, sort, search]);
+
+	useEffect(() => {
+		if (!selected?.size) anchorRef.current = null;
+	}, [selected]);
+
+	useEffect(() => {
+		if (cursor == null) return;
+		listRef.current
+			?.querySelector(`[data-uid="${cursor}"]`)
+			?.scrollIntoView({ block: "nearest" });
+	}, [cursor]);
+
+	useEffect(() => {
+		if (!keyboardEnabled) return;
+		// Rows that fit in the viewport, minus one for overlap.
+		const pageStep = () => {
+			const box = listRef.current;
+			const rowH = box?.querySelector("[data-uid]")?.offsetHeight;
+			return rowH ? Math.max(1, Math.floor(box.clientHeight / rowH) - 1) : 10;
+		};
+		const onKey = (e) => {
+			if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey) return;
+			if (isTypingTarget(e.target) || !messages.length) return;
+			const idx = messages.findIndex((m) => m.uid === cursor);
+			const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+			let next;
+			switch (key) {
+				case "ArrowDown":
+				case "j":
+					next = idx + 1;
+					break;
+				case "ArrowUp":
+				case "k":
+					next = idx < 0 ? 0 : idx - 1;
+					break;
+				case "PageDown":
+					next = idx + pageStep();
+					break;
+				case "PageUp":
+					next = idx - pageStep();
+					break;
+				case "Home":
+					next = 0;
+					break;
+				case "End":
+					next = messages.length - 1;
+					break;
+				case "Enter":
+				case "o":
+					if (idx < 0 || e.target.closest?.("button, a")) return;
+					e.preventDefault();
+					openMessage(messages[idx]);
+					return;
+				case "x":
+					if (idx < 0) return;
+					e.preventDefault();
+					onToggleSelect(messages[idx].uid);
+					return;
+				default:
+					return;
+			}
+			e.preventDefault();
+			next = Math.max(0, Math.min(messages.length - 1, next));
+			const target = messages[next];
+			if (!e.shiftKey) {
+				openMessage(target);
+				return;
+			}
+			setCursor(target.uid);
+			if (!anchorRef.current) {
+				anchorRef.current = {
+					uid: idx < 0 ? target.uid : messages[idx].uid,
+					base: new Set(selected),
+				};
+			}
+			const a = Math.max(
+				0,
+				messages.findIndex((m) => m.uid === anchorRef.current.uid),
+			);
+			const range = messages
+				.slice(Math.min(a, next), Math.max(a, next) + 1)
+				.map((m) => m.uid);
+			onSelectionChange?.(new Set([...anchorRef.current.base, ...range]));
+		};
+		window.addEventListener("keydown", onKey);
+		return () => window.removeEventListener("keydown", onKey);
+	}, [
+		keyboardEnabled,
+		messages,
+		cursor,
+		selected,
+		openMessage,
+		onToggleSelect,
+		onSelectionChange,
+	]);
 
 	return (
 		<div className="flex h-full flex-col">
@@ -197,8 +315,10 @@ export default function MessageList({
 				<div className="relative flex-1">
 					<Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink-muted" />
 					<input
+						id="mail-search"
 						value={search}
 						onChange={(e) => setSearch(e.target.value)}
+						onKeyDown={(e) => e.key === "Escape" && e.currentTarget.blur()}
 						placeholder="Search mail…"
 						className="w-full rounded-md border border-hair bg-panel/60 py-1.5 pl-8 pr-3 text-sm text-ink-2 outline-none transition placeholder:text-ink-faint focus:border-indigo-600"
 					/>
@@ -219,7 +339,7 @@ export default function MessageList({
 			</div>
 
 			{/* Message list */}
-			<div className="flex-1 overflow-y-auto">
+			<div ref={listRef} className="flex-1 overflow-y-auto">
 				{isValidating && !messages.length && (
 					<div className="flex flex-col items-center gap-3 p-12 text-ink-muted">
 						<div className="h-6 w-6 animate-spin rounded-full border-2 border-hair-strong border-t-indigo-500" />
@@ -242,6 +362,7 @@ export default function MessageList({
 						key={msg.uid}
 						msg={msg}
 						isReading={isReading}
+						isCursor={cursor === msg.uid}
 						selected={selected?.has(msg.uid)}
 						onToggle={() => onToggleSelect(msg.uid)}
 						onClick={() => openMessage(msg)}

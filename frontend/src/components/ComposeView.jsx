@@ -1,37 +1,89 @@
-import { useState, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useAuth } from "../context/auth.jsx";
 import { apiCall } from "../utils/apiCall.js";
-import { ArrowLeft, Send, Paperclip, X, FileText } from "lucide-react";
+import { ArrowLeft, Send, Paperclip, X, FileText, Trash2 } from "lucide-react";
 
-export default function ComposeView({ onBack }) {
-	const [form, setForm] = useState({
-		to: "",
-		cc: "",
-		subject: "",
-		text: "",
-		markdown: false,
+const EMPTY_FORM = { to: "", cc: "", subject: "", text: "", markdown: false };
+
+// One auto-saved draft per mailbox, kept in localStorage (attachments are not
+// saved — they can blow the storage quota).
+function loadDraft(key) {
+	try {
+		return JSON.parse(localStorage.getItem(key)) || null;
+	} catch {
+		return null;
+	}
+}
+
+function clearDraft(key) {
+	try {
+		localStorage.removeItem(key);
+	} catch {
+		// storage unavailable; nothing to clear
+	}
+}
+
+const readBase64 = (file) =>
+	new Promise((resolve, reject) => {
+		const reader = new FileReader();
+		reader.onload = () => resolve(String(reader.result).split(",")[1] || "");
+		reader.onerror = () => reject(reader.error);
+		reader.readAsDataURL(file);
 	});
-	const [attachments, setAttachments] = useState([]); // {filename, contentType, content(base64)}
+
+// `initial` (from utils/reply.js) prefills a reply/forward; without it a saved
+// draft is restored.
+export default function ComposeView({ onBack, initial, onSent }) {
+	const { user } = useAuth();
+	const draftKey = `ezmail_draft:${user?.mailbox || ""}`;
+	const [start] = useState(() => initial || loadDraft(draftKey) || {});
+	const [form, setForm] = useState({ ...EMPTY_FORM, ...start.form });
+	const [meta] = useState(start.meta || {}); // inReplyTo / references
+	const [attachments, setAttachments] = useState(start.attachments || []); // {filename, contentType, content(base64)}
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState("");
 	const [sent, setSent] = useState(false);
+	const [draftSaved, setDraftSaved] = useState(false);
 	const fileRef = useRef(null);
+
+	// Debounced auto-save while typing.
+	useEffect(() => {
+		if (sent) return;
+		setDraftSaved(false);
+		const hasContent = ["to", "cc", "subject", "text"].some((k) =>
+			form[k]?.trim(),
+		);
+		if (!hasContent) return;
+		const id = setTimeout(() => {
+			try {
+				localStorage.setItem(
+					draftKey,
+					JSON.stringify({ title: start.title, form, meta }),
+				);
+				setDraftSaved(true);
+			} catch {
+				// storage full/unavailable; draft just isn't kept
+			}
+		}, 800);
+		return () => clearTimeout(id);
+	}, [form, meta, draftKey, sent, start.title]);
+
+	const discard = () => {
+		clearDraft(draftKey);
+		onBack?.();
+	};
 
 	const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
 	const onFiles = async (e) => {
 		const files = Array.from(e.target.files || []);
-		const added = [];
-		for (const file of files) {
-			const buf = await file.arrayBuffer();
-			const bytes = new Uint8Array(buf);
-			let binary = "";
-			for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-			added.push({
+		const added = await Promise.all(
+			files.map(async (file) => ({
 				filename: file.name,
 				contentType: file.type || "application/octet-stream",
-				content: btoa(binary),
-			});
-		}
+				content: await readBase64(file),
+			})),
+		);
 		setAttachments((prev) => [...prev, ...added]);
 		e.target.value = ""; // allow re-selecting the same file
 	};
@@ -41,11 +93,18 @@ export default function ComposeView({ onBack }) {
 
 	const submit = async (e) => {
 		e.preventDefault();
+		if (busy) return;
+		if (!form.to.trim()) {
+			setError("Add at least one recipient.");
+			return;
+		}
 		setBusy(true);
 		setError("");
 		try {
-			await apiCall.post("/mail/send", { ...form, attachments });
+			await apiCall.post("/mail/send", { ...form, ...meta, attachments });
+			clearDraft(draftKey);
 			setSent(true);
+			onSent?.();
 		} catch (err) {
 			setError(err.message || "Failed to send");
 		} finally {
@@ -78,8 +137,21 @@ export default function ComposeView({ onBack }) {
 					<ArrowLeft className="h-4 w-4" />
 					Back
 				</button>
-				<h2 className="ml-2 text-lg font-semibold">New message</h2>
+				<h2 className="ml-2 text-lg font-semibold">
+					{start.title || "New message"}
+				</h2>
 				<div className="flex-1" />
+				{draftSaved && (
+					<span className="text-xs text-ink-faint">Draft saved</span>
+				)}
+				<button
+					type="button"
+					onClick={discard}
+					title="Discard draft"
+					className="rounded-lg p-2 text-ink-muted transition hover:bg-danger/10 hover:text-danger"
+				>
+					<Trash2 className="h-4 w-4" />
+				</button>
 				<button
 					onClick={submit}
 					disabled={busy}
@@ -96,7 +168,14 @@ export default function ComposeView({ onBack }) {
 				</div>
 			)}
 
-			<form onSubmit={submit} className="flex flex-1 flex-col">
+			{/* Ctrl/⌘+Enter sends */}
+			<form
+				onSubmit={submit}
+				onKeyDown={(e) => {
+					if ((e.ctrlKey || e.metaKey) && e.key === "Enter") submit(e);
+				}}
+				className="flex flex-1 flex-col"
+			>
 				<div className="space-y-0">
 					<Field
 						label="To"
@@ -104,6 +183,7 @@ export default function ComposeView({ onBack }) {
 						onChange={set("to")}
 						placeholder="recipient@example.com"
 						type="email"
+						multiple
 						required
 					/>
 					<Field
@@ -112,6 +192,7 @@ export default function ComposeView({ onBack }) {
 						onChange={set("cc")}
 						placeholder="cc@example.com"
 						type="email"
+						multiple
 					/>
 					<Field
 						label="Subject"
@@ -185,7 +266,7 @@ export default function ComposeView({ onBack }) {
 	);
 }
 
-function Field({ label, value, onChange, placeholder, type, required }) {
+function Field({ label, value, onChange, placeholder, type, required, multiple }) {
 	return (
 		<div className="flex items-center gap-3 border-b border-hair px-4 py-2">
 			<label className="w-16 shrink-0 text-sm font-medium text-ink-muted">
@@ -197,6 +278,7 @@ function Field({ label, value, onChange, placeholder, type, required }) {
 				onChange={onChange}
 				placeholder={placeholder}
 				required={required}
+				multiple={multiple}
 				className="flex-1 bg-transparent text-sm text-ink outline-none placeholder:text-ink-faint"
 			/>
 		</div>

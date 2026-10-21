@@ -1,7 +1,9 @@
+import crypto from "node:crypto";
 import { ImapFlow } from "imapflow";
 import { simpleParser } from "mailparser";
 import { marked } from "marked";
 import nodemailer from "nodemailer";
+import MailComposer from "nodemailer/lib/mail-composer/index.js";
 import sanitizeHtml from "sanitize-html";
 import { MAIL_SERVER } from "../config.js";
 import { generalLogger as logger } from "../logger.js";
@@ -35,7 +37,8 @@ async function withClient(user, status, fn) {
 		return { success: true, data: result };
 	} catch (err) {
 		logImapError(err);
-		return { success: false, message: "Mail command failed" };
+		const body = { success: false, message: "Mail command failed" };
+		return status ? status(502, body) : body;
 	} finally {
 		await client.logout().catch(() => {});
 	}
@@ -67,6 +70,44 @@ function logImapError(err) {
 				`[MAIL] 💥[imap] full response: ${JSON.stringify(err.response)}`,
 			);
 		}
+	}
+}
+
+// Bare addresses from a mailparser address field (object or array of them).
+function addressList(field) {
+	const groups = Array.isArray(field) ? field : field ? [field] : [];
+	return groups
+		.flatMap((g) => g.value || [])
+		.flatMap((a) => (a.group ? a.group : [a]))
+		.map((a) => a.address)
+		.filter(Boolean);
+}
+
+// Destination UIDs from a MOVE/COPY result (only when the server has UIDPLUS).
+function destinationUids(res) {
+	return res?.uidMap ? [...res.uidMap.values()].map(Number) : undefined;
+}
+
+// Saves a copy of a sent message to the account's Sent folder. Most IMAP
+// servers (docker-mailserver/Dovecot included) don't do this on SMTP submit.
+// Set SAVE_SENT=false for servers that already do (e.g. Gmail) to avoid dupes.
+async function saveToSent(user, raw) {
+	if (process.env.SAVE_SENT === "false") return false;
+	const client = buildImapClient(user);
+	try {
+		await client.connect();
+		const list = await client.list();
+		const sent =
+			list.find((f) => f.specialUse === "\\Sent") ||
+			list.find((f) => /^sent( items| mail)?$/i.test(f.name));
+		if (!sent) return false;
+		await client.append(sent.path, raw, ["\\Seen"]);
+		return true;
+	} catch (err) {
+		logImapError(err);
+		return false;
+	} finally {
+		await client.logout().catch(() => {});
 	}
 }
 
@@ -115,7 +156,7 @@ export const MailService = {
 		if (!user?.mailbox || !user?.password)
 			return status(401, { success: false, message: "Unauthorized" });
 		return withClient(user, status, async (client) => {
-			const list = await client.list();
+			const list = await client.list({ statusQuery: { unseen: true } });
 			const folders = list
 				.filter((f) => f.path !== "[Gmail]")
 				.map((f) => ({
@@ -125,22 +166,8 @@ export const MailService = {
 					specialUse: f.specialUse || null,
 					flags: toFlagsArray(f.flags),
 					hasChildren: !!f.hasChildren,
+					unread: Number(f.status?.unseen) || 0,
 				}));
-
-			// Unread indicator: INBOX only (STATUS UNSEEN is cheap; scanning
-			// every folder would add N STATUS round-trips per request).
-			let inboxUnseen = 0;
-			if (folders.some((f) => f.path === "INBOX")) {
-				try {
-					const inboxStatus = await client.status("INBOX", { unseen: true });
-					inboxUnseen = Number(inboxStatus?.unseen) || 0;
-				} catch {
-					// STATUS failed; badge simply won't render
-				}
-			}
-			for (const f of folders) {
-				if (f.path === "INBOX") f.unread = inboxUnseen;
-			}
 
 			return folders;
 		});
@@ -188,50 +215,51 @@ export const MailService = {
 					}
 				}
 
-				// 4. Fetch candidate messages
-				const all = [];
+				// 4. Fetch only the requested page. Arrival order (sequence/UID)
+				// stands in for date order, so a page never costs a full-folder
+				// FETCH — that ran on every 10s poll and grew with the mailbox.
+				const fetchOpts = {
+					envelope: true,
+					flags: true,
+					internalDate: true,
+					bodyStructure: true,
+					source: false,
+				};
+				const from = (page - 1) * size;
+				let total;
+				let range;
+				let byUid;
 				if (searchUids) {
-					const uidList = [...searchUids].sort((a, b) => a - b);
-					for await (const msg of client.fetch(
-						uidList,
-						{
-							envelope: true,
-							flags: true,
-							internalDate: true,
-							bodyStructure: true,
-							source: false,
-						},
-						{ uid: true },
-					)) {
-						all.push(msg);
-					}
+					const ordered = [...searchUids].sort((a, b) =>
+						sort === "asc" ? a - b : b - a,
+					);
+					total = ordered.length;
+					range = ordered.slice(from, from + size);
+					byUid = true;
 				} else {
-					// Safe to call "1:*" because client.mailbox.exists > 0
-					for await (const msg of client.fetch(
-						"1:*",
-						{
-							envelope: true,
-							flags: true,
-							internalDate: true,
-							bodyStructure: true,
-							source: false,
-						},
-						{ uid: false },
-					)) {
-						all.push(msg);
+					total = client.mailbox.exists;
+					const lo =
+						sort === "asc" ? from + 1 : Math.max(1, total - from - size + 1);
+					const hi = sort === "asc" ? Math.min(total, from + size) : total - from;
+					range = hi >= lo ? `${lo}:${hi}` : null;
+					byUid = false;
+				}
+
+				const pageItems = [];
+				if (range?.length) {
+					for await (const msg of client.fetch(range, fetchOpts, {
+						uid: byUid,
+					})) {
+						pageItems.push(msg);
 					}
 				}
 
-				// 5. Sort by date
-				all.sort((a, b) => {
+				// 5. Sort the page by date
+				pageItems.sort((a, b) => {
 					const da = new Date(a.internalDate || a.date || 0).getTime();
 					const db = new Date(b.internalDate || b.date || 0).getTime();
 					return sort === "asc" ? da - db : db - da;
 				});
-
-				const total = all.length;
-				const from = (page - 1) * size;
-				const pageItems = all.slice(from, from + size);
 				const messages = pageItems.map((msg) => mapEnvelope(msg));
 
 				return { messages, total, page, pageSize: size, sort, search };
@@ -317,7 +345,16 @@ export const MailService = {
 					parsed?.from?.text || msg.envelope?.from?.[0]?.address || "unknown",
 				fromName: parsed?.from?.value?.[0]?.name || "",
 				to: parsed?.to?.text || "",
+				cc: parsed?.cc?.text || "",
 				replyTo: replyTo || "",
+				messageId: parsed?.messageId || undefined,
+				references: [parsed?.references || []].flat().join(" ") || undefined,
+				addresses: {
+					from: addressList(parsed?.from),
+					replyTo: addressList(parsed?.replyTo),
+					to: addressList(parsed?.to),
+					cc: addressList(parsed?.cc),
+				},
 				date: parsed?.date || msg.internalDate,
 				mailedBy,
 				signedBy,
@@ -381,8 +418,14 @@ export const MailService = {
 		const targetUids = Array.isArray(uids) ? uids.map(Number) : uids;
 		return withClient(user, status, async (client) => {
 			const lock = await client.getMailboxLock(from);
-			await client.messageMove(targetUids, to, { uid: true });
-			lock.release();
+			let movedUids;
+			try {
+				movedUids = destinationUids(
+					await client.messageMove(targetUids, to, { uid: true }),
+				);
+			} finally {
+				lock.release();
+			}
 			// Piggyback fresh INBOX unseen on the same connection.
 			let inboxUnseen;
 			try {
@@ -391,7 +434,7 @@ export const MailService = {
 			} catch {
 				// leave undefined — client keeps its current badge
 			}
-			return { uids: targetUids, from: from, to: to, inboxUnseen };
+			return { uids: targetUids, from: from, to: to, inboxUnseen, movedUids };
 		});
 	},
 
@@ -419,7 +462,7 @@ export const MailService = {
 			} catch {
 				// leave undefined — client keeps its current badge
 			}
-			return { success: true, data: { uids: targetUids, folder: folder, inboxUnseen } };
+			return { uids: targetUids, folder: folder, inboxUnseen };
 		});
 	},
 
@@ -432,9 +475,12 @@ export const MailService = {
 		const { folder } = body;
 		return withClient(user, status, async (client) => {
 			const lock = await client.getMailboxLock(folder);
-			await client.messageDelete("1:*");
-			lock.release();
-			return { success: true, data: { folder: folder } };
+			try {
+				if (client.mailbox?.exists) await client.messageDelete("1:*");
+			} finally {
+				lock.release();
+			}
+			return { folder: folder };
 		});
 	},
 
@@ -475,20 +521,31 @@ export const MailService = {
 				content: Buffer.from(a.content || "", "base64"),
 			}));
 
-			await transporter.sendMail({
-				from: `"${body.fromName || user.mailbox}" <${user.mailbox}>`,
+			const domain = user.mailbox.split("@")[1] || "localhost";
+			const mail = {
+				from: { name: body.fromName || user.mailbox, address: user.mailbox },
 				to: body.to,
 				cc: body.cc || undefined,
 				subject: body.subject || "",
 				text: body.text || "",
 				html: html || undefined,
 				attachments: attachments.length ? attachments : undefined,
-			});
+				inReplyTo: body.inReplyTo || undefined,
+				references: body.references || undefined,
+				// Fixed id + date so the Sent copy is the same message as the one
+				// delivered (threading in other clients matches it up).
+				messageId: `<${crypto.randomUUID()}@${domain}>`,
+				date: new Date(),
+			};
+			await transporter.sendMail(mail);
 			logger.info(`[MAIL] ${user.mailbox} sent message to ${body.to}`);
-			return { success: true, message: "Sent" };
+
+			const raw = await new MailComposer(mail).compile().build();
+			const savedToSent = await saveToSent(user, raw);
+			return { success: true, message: "Sent", data: { savedToSent } };
 		} catch (err) {
 			logger.error(`[MAIL] 💥[smtp] ${err.message}`);
-			return { success: false, message: err.message };
+			return status(502, { success: false, message: err.message });
 		}
 	},
 };

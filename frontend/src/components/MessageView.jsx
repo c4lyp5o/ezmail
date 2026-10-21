@@ -11,7 +11,10 @@ import {
 	Paperclip,
 	Download,
 	FileWarning,
+	Forward,
 	Image as ImageIcon,
+	Reply,
+	ReplyAll,
 } from "lucide-react";
 
 function DetailRow({ label, value }) {
@@ -84,29 +87,32 @@ function emailDoc(html, showRemote) {
 	return `<!doctype html>
 <html>
 <head><meta charset="utf-8"><style>
-	body{margin:0;padding:0;font-family:Helvetica,Arial,sans-serif;font-size:14px;line-height:1.5;color:#18181b;}
+	body{margin:0;padding:0;display:flow-root;font-family:Helvetica,Arial,sans-serif;font-size:14px;line-height:1.5;color:#18181b;}
 	img{max-width:100%;height:auto;}
 	table{max-width:100%;border-collapse:collapse;}
 	a{color:#3451b1;}
 	/* Remote images stay hidden until the user opts in (privacy / tracking-safe). */
-	img.remote{visibility:hidden;}
-	.show-remote img.remote{visibility:visible;}
 	.show-remote img[src^="cid:"]{display:none;}
 </style></head>
-<body class="${showRemote ? "show-remote" : ""}">${prepareHtml(html)}</body>
+<body class="${showRemote ? "show-remote" : ""}">${prepareHtml(html, showRemote)}</body>
 </html>`;
 }
 
-// Mark remote (<img src="http(s)://...">) images as .remote so they only
-// render once the user taps "Load remote images". Same-origin/inline stay.
-function prepareHtml(html) {
+// Strip remote (<img src="http(s)://...">) image URLs until the user taps
+// "Load remote images" — merely hiding them would still fetch them (tracking
+// pixels). Same-origin/inline stay.
+function prepareHtml(html, showRemote) {
 	const doc = new DOMParser().parseFromString(html, "text/html");
-	const imgs = doc.querySelectorAll("img");
-	imgs.forEach((img) => {
-		const src = img.getAttribute("src") || "";
-		const isRemote = /^(https?:)?\/\//i.test(src);
-		if (isRemote) img.classList.add("remote");
-	});
+	if (!showRemote) {
+		doc.querySelectorAll("img").forEach((img) => {
+			const src = img.getAttribute("src") || "";
+			if (/^(https?:)?\/\//i.test(src)) {
+				img.setAttribute("data-remote-src", src);
+				img.removeAttribute("src");
+				img.removeAttribute("srcset");
+			}
+		});
+	}
 	// Ensure external links open in a new tab (sandbox allows popups to escape).
 	doc.querySelectorAll("a[href]").forEach((a) => {
 		if (/^(https?:|mailto:)/i.test(a.getAttribute("href") || "")) {
@@ -122,10 +128,11 @@ export default function MessageView({
 	uid,
 	initialMsg,
 	onBack,
-	refresh,
+	onDelete,
+	onCompose,
 	setShowRemote,
 	showRemote,
-	onMarkedRead,
+	onLoaded,
 }) {
 	const [msg, setMsg] = useState(initialMsg || null);
 	const [loading, setLoading] = useState(true);
@@ -158,13 +165,14 @@ export default function MessageView({
 			);
 			setShowRemote(false);
 			setMsg(res.data || null);
+			onLoaded?.(res.data ? { ...res.data, folder: thisFolder } : null);
 		} catch (err) {
 			setError(err.message || "Failed to load message");
 			if (!initialMsg) setMsg(null);
 		} finally {
 			setLoading(false);
 		}
-	}, [thisFolder, uid, initialMsg]);
+	}, [thisFolder, uid, initialMsg, onLoaded]);
 
 	// Always fetch the full message (the list item is only an optimistic
 	// placeholder — it lacks the body/html/text). Without this, the detail
@@ -173,46 +181,31 @@ export default function MessageView({
 		load();
 	}, [load]);
 
-	const markRead = useCallback(async () => {
-		if (!msg || msg.flags?.includes("\\Seen")) return;
-		try {
-			const res = await apiCall.post("/mail/flags", {
-				folder: thisFolder,
-				uid: Number(uid),
-				flags: ["\\Seen"],
-			});
-			// Response carries the fresh INBOX unseen count — update the badge
-			// in place, no refetch needed.
-			if (onMarkedRead) onMarkedRead(res.data?.inboxUnseen);
-		} catch {
-			// non-fatal
-		}
-	}, [msg, thisFolder, uid, onMarkedRead]);
-
-	useEffect(() => {
-		if (msg && !msg.flags?.includes("\\Seen")) markRead();
-	}, [msg, markRead]);
-
 	const remove = async () => {
 		try {
-			if (thisFolder === "Trash") {
-				await apiCall.post("/mail/delete", {
-					uids: [Number(uid)],
-					folder: thisFolder,
-				});
-			} else {
-				await apiCall.post("/mail/move", {
-					uids: [Number(uid)],
-					from: thisFolder,
-					to: "Trash",
-				});
-			}
-			refresh();
+			await onDelete();
 			onBack?.();
 		} catch (err) {
 			setError(err.message || "Failed to delete");
 		}
 	};
+
+	// Size the body frame to its content (and keep it fitted as images load)
+	// so the reader scrolls as one page instead of a fixed-height box.
+	const frameObserver = useRef(null);
+	useEffect(() => () => frameObserver.current?.disconnect(), []);
+	const fitFrame = useCallback((e) => {
+		const frame = e.currentTarget;
+		const body = frame.contentDocument?.body;
+		frameObserver.current?.disconnect();
+		if (!body) return;
+		const fit = () => {
+			frame.style.height = `${Math.max(120, body.scrollHeight)}px`;
+		};
+		fit();
+		frameObserver.current = new ResizeObserver(fit);
+		frameObserver.current.observe(body);
+	}, []);
 
 	if (loading) {
 		return (
@@ -268,10 +261,26 @@ export default function MessageView({
 					<ArrowLeft className="h-4 w-4" /> Back
 				</button>
 				<div className="flex-1" />
+				{[
+					["reply", Reply, "Reply", "r"],
+					["replyAll", ReplyAll, "Reply all", "a"],
+					["forward", Forward, "Forward", "f"],
+				].map(([mode, Icon, label, key]) => (
+					<button
+						key={mode}
+						type="button"
+						onClick={() => onCompose?.(mode, msg)}
+						title={`${label} (${key})`}
+						className="flex items-center gap-1 rounded-lg px-2 py-1.5 text-sm text-ink-muted transition hover:bg-hover hover:text-ink-2"
+					>
+						<Icon className="h-4 w-4" />
+						<span className="hidden lg:inline">{label}</span>
+					</button>
+				))}
 				<button
 					type="button"
 					onClick={remove}
-					title="Move to Trash"
+					title="Delete (#)"
 					className="flex items-center gap-1 rounded-lg px-2 py-1.5 text-sm text-ink-muted transition hover:bg-danger/10 hover:text-danger"
 				>
 					<Trash2 className="h-4 w-4" /> Delete
@@ -398,8 +407,9 @@ export default function MessageView({
 						title="email-body"
 						sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
 						srcDoc={emailDoc(msg.html, showRemote)}
+						onLoad={fitFrame}
 						className="mail-body-frame block w-full rounded-lg border border-hair bg-white"
-						style={{ height: "75vh" }}
+						style={{ height: 120 }}
 					/>
 				) : msg.text ? (
 					looksLikeMarkdown(msg.text) ? (
