@@ -14,6 +14,7 @@ import { AuthRoutes } from "./routes/auth.route.js";
 import { FilterRoutes } from "./routes/filter.route.js";
 import { HealthRoute } from "./routes/health.route.js";
 import { MailRoutes } from "./routes/mail.route.js";
+import { ProfileRoutes } from "./routes/profile.route.js";
 import { probeAndRecordLLM } from "./services/llm.service.js";
 
 // Fallback at-rest encryption secret (crypto.service.js) when neither
@@ -67,7 +68,8 @@ export const app = new Elysia()
 			.use(AuthPlugin)
 			.use(ProtectorPlugin)
 			.use(MailRoutes)
-			.use(FilterRoutes),
+			.use(FilterRoutes)
+			.use(ProfileRoutes),
 	)
 
 	.use(

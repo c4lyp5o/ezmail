@@ -207,7 +207,7 @@ describe("send", () => {
 		const sent = smtp.sent[0].mail;
 		expect(sent.inReplyTo).toBe("<m2@x.io>");
 		expect(sent.references).toBe("<m1@x.io> <m2@x.io>");
-		// fromName isn't in the request model (Elysia strips it) → mailbox
+		// no display name set → the address
 		expect(sent.from).toEqual({ name: ME, address: ME });
 
 		const copy = imap.boxes.get("Sent").messages[0];

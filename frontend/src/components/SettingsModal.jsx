@@ -1,11 +1,15 @@
-import { Filter, Settings, ShieldCheck, X } from "lucide-react";
+import { Filter, Settings, ShieldCheck, UserRound, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import FiltersTab from "./FiltersTab.jsx";
+import ProfileTab from "./ProfileTab.jsx";
 import SecurityTab from "./SecurityTab.jsx";
 
-// Tabbed settings modal: Security (TOTP) and Filters (server-side sorting).
-// Parent (MailPage) controls open/close via `open` + `onClose` and may open
-// a specific tab via `initialTab` ("security" | "filters").
+const TAB_IDS = ["profile", "security", "filters"];
+const pickTab = (t) => (TAB_IDS.includes(t) ? t : "security");
+
+// Tabbed settings modal: Profile (display name), Security (TOTP) and Filters
+// (server-side sorting). Parent (MailPage) controls open/close via `open` +
+// `onClose` and may open a specific tab via `initialTab`.
 export default function SettingsModal({
 	open,
 	onClose,
@@ -13,18 +17,17 @@ export default function SettingsModal({
 	folders = [],
 	initialTab,
 }) {
-	const [tab, setTab] = useState(
-		initialTab === "filters" ? "filters" : "security",
-	);
+	const [tab, setTab] = useState(() => pickTab(initialTab));
 
 	// Re-sync when reopened so MailPage can target a tab.
 	useEffect(() => {
-		if (open) setTab(initialTab === "filters" ? "filters" : "security");
+		if (open) setTab(pickTab(initialTab));
 	}, [open, initialTab]);
 
 	if (!open) return null;
 
 	const TABS = [
+		{ id: "profile", label: "Profile", icon: UserRound },
 		{ id: "security", label: "Security", icon: ShieldCheck },
 		{ id: "filters", label: "Filters", icon: Filter },
 	];
@@ -88,9 +91,9 @@ export default function SettingsModal({
 
 				{/* Tab panels */}
 				<div className="mt-4 min-h-0 flex-1 overflow-y-auto pr-1">
-					{tab === "security" ? (
-						<SecurityTab mailbox={mailbox} />
-					) : (
+					{tab === "profile" && <ProfileTab mailbox={mailbox} />}
+					{tab === "security" && <SecurityTab mailbox={mailbox} />}
+					{tab === "filters" && (
 						<FiltersTab mailbox={mailbox} folders={folders} />
 					)}
 				</div>

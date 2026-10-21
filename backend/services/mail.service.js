@@ -8,6 +8,7 @@ import sanitizeHtml from "sanitize-html";
 import { MAIL_SERVER } from "../config.js";
 import { generalLogger as logger } from "../logger.js";
 import { getUser } from "../plugins/auth.plugin.js";
+import { getDisplayName } from "./profile.service.js";
 
 // Builds an IMAP client bound to the authenticated user's mailbox. No global
 // account — the credentials come from the server-side session (created only
@@ -636,7 +637,10 @@ export const MailService = {
 
 			const domain = user.mailbox.split("@")[1] || "localhost";
 			const mail = {
-				from: { name: body.fromName || user.mailbox, address: user.mailbox },
+				from: {
+					name: getDisplayName(user.mailbox) || user.mailbox,
+					address: user.mailbox,
+				},
 				to: body.to,
 				cc: body.cc || undefined,
 				subject: body.subject || "",
