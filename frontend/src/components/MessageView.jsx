@@ -66,11 +66,27 @@ function formatBytes(bytes) {
 	return `${(bytes / 1024 ** i).toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
 }
 
+// The frame's own CSP: nothing remote loads until the user opts in — this
+// covers what src-stripping can't (CSS backgrounds, fonts, <link>, <video>).
+// 'self' keeps inline cid: images (served by our attachment endpoint).
+export function emailCsp(showRemote) {
+	const remote = showRemote ? " https: http:" : "";
+	return [
+		"default-src 'none'",
+		`img-src 'self' data:${remote}`,
+		`media-src 'self' data:${remote}`,
+		`style-src 'unsafe-inline'${remote}`,
+		`font-src data:${remote}`,
+	].join("; ");
+}
+
 // Wraps an email's HTML in a standalone document for the sandboxed iframe.
-function emailDoc(html, showRemote) {
+export function emailDoc(html, showRemote) {
 	return `<!doctype html>
 <html>
-<head><meta charset="utf-8"><style>
+<head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="${emailCsp(showRemote)}">
+<style>
 	body{margin:0;padding:0;display:flow-root;font-family:Helvetica,Arial,sans-serif;font-size:14px;line-height:1.5;color:#18181b;}
 	img{max-width:100%;height:auto;}
 	table{max-width:100%;border-collapse:collapse;}
