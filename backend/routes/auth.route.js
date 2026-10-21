@@ -88,7 +88,7 @@ export const AuthRoutes = new Elysia({ prefix: "/api/v1" })
 			response: AuthModel.meResponse,
 			detail: {
 				summary: "Returns current user",
-				description: "Decodes the JWT cookie and returns the logged-in mailbox.",
+				description: "Resolves the session cookie and returns the logged-in mailbox.",
 				tags: ["Auth"],
 			},
 		},

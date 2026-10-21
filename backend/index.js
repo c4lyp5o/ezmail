@@ -1,7 +1,6 @@
 import crypto from "node:crypto";
 import path from "node:path";
 import { cookie } from "@elysiajs/cookie";
-import { jwt } from "@elysiajs/jwt";
 import { openapi } from "@elysiajs/openapi";
 import staticPlugin from "@elysiajs/static";
 import { Elysia, file } from "elysia";
@@ -17,13 +16,10 @@ import { HealthRoute } from "./routes/health.route.js";
 import { MailRoutes } from "./routes/mail.route.js";
 import { probeAndRecordLLM } from "./services/llm.service.js";
 
-let JWT_SECRET = process.env.JWT_SECRET;
-if (!JWT_SECRET) {
-	JWT_SECRET = getSetting("jwtSecret");
-	if (!JWT_SECRET) {
-		JWT_SECRET = crypto.randomBytes(32).toString("hex");
-		setSetting("jwtSecret", JWT_SECRET);
-	}
+// Fallback at-rest encryption secret (crypto.service.js) when neither
+// TOTP_ENC_KEY nor JWT_SECRET is set: generated once, persisted in sqlite.
+if (!process.env.JWT_SECRET && !getSetting("jwtSecret")) {
+	setSetting("jwtSecret", crypto.randomBytes(32).toString("hex"));
 }
 
 export const app = new Elysia()
@@ -49,12 +45,6 @@ export const app = new Elysia()
 
 	.use(cookie())
 
-	.use(
-		jwt({
-			name: "jwt",
-			secret: JWT_SECRET,
-		}),
-	)
 
 	// Security headers for every response (CSP, clickjacking, feature policy).
 	.onAfterHandle(({ set }) => {

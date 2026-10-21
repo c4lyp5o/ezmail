@@ -17,7 +17,7 @@ export async function call(method, path, { body, cookie } = {}) {
 	return { status: res.status, json, headers: res.headers };
 }
 
-// Logs in and returns the session cookie ("ezmail_access=...").
+// Logs in and returns the session cookie ("ezmail_session=...").
 export async function login(mailbox, password = PASSWORD) {
 	const res = await call("POST", "/api/v1/login", {
 		body: { mailbox, password },

@@ -10,7 +10,8 @@ import { generalLogger as logger } from "../logger.js";
 import { getUser } from "../plugins/auth.plugin.js";
 
 // Builds an IMAP client bound to the authenticated user's mailbox. No global
-// account — the credentials come from the JWT (issued only after IMAP auth).
+// account — the credentials come from the server-side session (created only
+// after IMAP auth).
 function buildImapClient({ mailbox, password }) {
 	return new ImapFlow({
 		host: MAIL_SERVER.imapHost,
@@ -151,8 +152,8 @@ function toFlagsArray(flags) {
 
 export const MailService = {
 	// --- folders ---
-	listFolders: async ({ jwt, cookie, status }) => {
-		const user = await getUser(jwt, cookie);
+	listFolders: async ({ cookie, status }) => {
+		const user = await getUser(cookie);
 		if (!user?.mailbox || !user?.password)
 			return status(401, { success: false, message: "Unauthorized" });
 		return withClient(user, status, async (client) => {
@@ -174,8 +175,8 @@ export const MailService = {
 	},
 
 	// --- message list (envelope only) ---
-	listMessages: async ({ jwt, cookie, params, query, status }) => {
-		const user = await getUser(jwt, cookie);
+	listMessages: async ({ cookie, params, query, status }) => {
+		const user = await getUser(cookie);
 		if (!user?.mailbox || !user?.password)
 			return status(401, { success: false, message: "Unauthorized" });
 		const folder = params?.folder;
@@ -271,8 +272,8 @@ export const MailService = {
 	},
 
 	// --- single message full body + flags ---
-	getMessage: async ({ jwt, cookie, params, status }) => {
-		const user = await getUser(jwt, cookie);
+	getMessage: async ({ cookie, params, status }) => {
+		const user = await getUser(cookie);
 		if (!user?.mailbox || !user?.password)
 			return status(401, { success: false, message: "Unauthorized" });
 		const { folder, uid } = params;
@@ -366,8 +367,8 @@ export const MailService = {
 	},
 
 	// --- set flags (read/unread/delete) ---
-	setFlags: async ({ jwt, cookie, body, status }) => {
-		const user = await getUser(jwt, cookie);
+	setFlags: async ({ cookie, body, status }) => {
+		const user = await getUser(cookie);
 		if (!user?.mailbox || !user?.password)
 			return status(401, { success: false, message: "Unauthorized" });
 		const { folder, uids, flags } = body;
@@ -388,8 +389,8 @@ export const MailService = {
 		});
 	},
 
-	clearFlags: async ({ jwt, cookie, body, status }) => {
-		const user = await getUser(jwt, cookie);
+	clearFlags: async ({ cookie, body, status }) => {
+		const user = await getUser(cookie);
 		if (!user?.mailbox || !user?.password)
 			return status(401, { success: false, message: "Unauthorized" });
 		const { folder, uids, flags } = body;
@@ -410,8 +411,8 @@ export const MailService = {
 	},
 
 	// --- move message ---
-	moveMessage: async ({ jwt, cookie, body, status }) => {
-		const user = await getUser(jwt, cookie);
+	moveMessage: async ({ cookie, body, status }) => {
+		const user = await getUser(cookie);
 		if (!user?.mailbox || !user?.password)
 			return status(401, { success: false, message: "Unauthorized" });
 		const { uids, from, to } = body;
@@ -440,8 +441,8 @@ export const MailService = {
 
 	// Permanently delete a single message: flag \Deleted then expunge it from the
 	// mailbox. Used when deleting from Trash — the message is removed for good.
-	deleteMessage: async ({ jwt, cookie, body, status }) => {
-		const user = await getUser(jwt, cookie);
+	deleteMessage: async ({ cookie, body, status }) => {
+		const user = await getUser(cookie);
 		if (!user?.mailbox || !user?.password)
 			return status(401, { success: false, message: "Unauthorized" });
 		const { uids, folder } = body;
@@ -468,8 +469,8 @@ export const MailService = {
 
 	// Permanently delete every message in a folder (e.g. empty Trash). Flags all
 	// messages as \Deleted and expunges the mailbox.
-	expungeFolder: async ({ jwt, cookie, body, status }) => {
-		const user = await getUser(jwt, cookie);
+	expungeFolder: async ({ cookie, body, status }) => {
+		const user = await getUser(cookie);
 		if (!user?.mailbox || !user?.password)
 			return status(401, { success: false, message: "Unauthorized" });
 		const { folder } = body;
@@ -485,8 +486,8 @@ export const MailService = {
 	},
 
 	// --- send ---
-	sendMessage: async ({ jwt, cookie, body, status }) => {
-		const user = await getUser(jwt, cookie);
+	sendMessage: async ({ cookie, body, status }) => {
+		const user = await getUser(cookie);
 		if (!user?.mailbox || !user?.password)
 			return status(401, { success: false, message: "Unauthorized" });
 

@@ -27,7 +27,7 @@ describe("password login", () => {
 		});
 		expect(res.status).toBe(200);
 		const setCookie = res.headers.get("set-cookie");
-		expect(setCookie).toContain("ezmail_access=");
+		expect(setCookie).toContain("ezmail_session=");
 		expect(setCookie).toMatch(/HttpOnly/i);
 		expect(setCookie).toMatch(/SameSite=Strict/i);
 
@@ -118,7 +118,7 @@ describe("TOTP login", () => {
 			body: { mailbox, code: totpCode(mailbox, secret) },
 		});
 		expect(step2.status).toBe(200);
-		expect(step2.headers.get("set-cookie")).toContain("ezmail_access=");
+		expect(step2.headers.get("set-cookie")).toContain("ezmail_session=");
 	});
 
 	test("locks code login after 5 wrong codes", async () => {

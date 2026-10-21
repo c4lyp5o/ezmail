@@ -1,6 +1,6 @@
 import { ImapFlow } from "imapflow";
 import { MAIL_SERVER } from "../config.js";
-import { getUser } from "../plugins/auth.plugin.js";
+import { getUser, SESSION_COOKIE } from "../plugins/auth.plugin.js";
 import { isLLMPresent } from "./llm.service.js";
 import { generalLogger as logger } from "../logger.js";
 import {
@@ -11,28 +11,35 @@ import {
 	disableTotp,
 } from "./totp.service.js";
 import { codeLimiter, limitKey, loginLimiter } from "./rate-limit.service.js";
+import { createSession, deleteSession } from "./session.service.js";
 
-// Legacy-persist the mailbox password into the access cookie payload.
-function cookiePayload(mailbox, password) {
-	return { mailbox, password };
-}
-
-// The mailbox password travels inside the JWT cookie (required for the
-// IMAP/SMTP proxy). Secure is forced ON in production so the cookie is never
-// sent over plaintext HTTP; an explicit COOKIE_SECURE=true can override for
+// Secure is forced ON in production so the session cookie is never sent over
+// plaintext HTTP; an explicit COOKIE_SECURE=true can override for
 // reverse-proxy setups that terminate TLS upstream.
 const COOKIE_SECURE =
 	process.env.COOKIE_SECURE === "true" || process.env.NODE_ENV === "production";
 
-function setAuthCookies({ cookie, accessToken, rememberMe }) {
-	cookie.ezmail_access.set({
-		value: accessToken,
+const sessionTtl = (rememberMe) =>
+	rememberMe ? 60 * 60 * 24 * 7 : 60 * 60 * 24;
+
+// Pre-1.8 sessions were a JWT carrying the password; drop any leftover.
+function clearLegacyCookie(cookie) {
+	if (cookie.ezmail_access?.value) {
+		cookie.ezmail_access.set({ value: "", path: "/", maxAge: 0 });
+	}
+}
+
+function startSession({ cookie, mailbox, password, rememberMe }) {
+	const ttl = sessionTtl(rememberMe);
+	cookie[SESSION_COOKIE].set({
+		value: createSession(mailbox, password, ttl),
 		httpOnly: true,
 		sameSite: "strict",
 		path: "/",
 		secure: COOKIE_SECURE,
-		maxAge: rememberMe ? 60 * 60 * 24 * 7 : 60 * 60 * 24,
+		maxAge: ttl,
 	});
+	clearLegacyCookie(cookie);
 }
 
 function tooManyAttempts(status, set, retryAfter) {
@@ -43,14 +50,17 @@ function tooManyAttempts(status, set, retryAfter) {
 	});
 }
 
-function clearAuthCookies({ cookie }) {
-	cookie.ezmail_access.set({
+function endSession({ cookie }) {
+	deleteSession(cookie[SESSION_COOKIE]?.value);
+	cookie[SESSION_COOKIE].set({
+		value: "",
 		httpOnly: true,
 		sameSite: "strict",
 		secure: COOKIE_SECURE,
 		path: "/",
 		maxAge: 0,
 	});
+	clearLegacyCookie(cookie);
 }
 
 // Verifies the mailbox + password against the IMAP server. Returns true only
@@ -81,7 +91,7 @@ async function verifyImap(mailbox, password) {
 export const AuthService = {
 	// Steps truthfully: { totp: true } when the mailbox has TOTP enabled (tell the
 	// client to proceed to the code screen), otherwise logs straight in.
-	login: async ({ body, jwt, cookie, status, set }) => {
+	login: async ({ body, cookie, status, set }) => {
 		const { mailbox, password, rememberMe } = body;
 		if (!mailbox || !password) {
 			return status(400, {
@@ -111,26 +121,16 @@ export const AuthService = {
 		}
 		loginLimiter.reset(key);
 
-		const accessToken = await jwt.sign(
-			{
-				...cookiePayload(mailbox, password),
-			},
-			{
-				expiresIn: rememberMe ? "7d" : "1d",
-			},
-		);
-		setAuthCookies({ cookie, accessToken, rememberMe: !!rememberMe });
-
-		const user = await getUser(jwt, cookie);
+		startSession({ cookie, mailbox, password, rememberMe: !!rememberMe });
 		return {
 			success: true,
-			data: { mailbox: user?.mailbox || mailbox, llmPresent: isLLMPresent() },
+			data: { mailbox, llmPresent: isLLMPresent() },
 		};
 	},
 
 	// Step 2 of passwordless TOTP: verify a code and, on success, bind the
 	// decrypted stored mailbox password into the session.
-	loginWithCode: async ({ body, jwt, cookie, status, set }) => {
+	loginWithCode: async ({ body, cookie, status, set }) => {
 		const { mailbox, code, rememberMe } = body;
 		if (!mailbox || !code) {
 			return status(400, {
@@ -162,11 +162,12 @@ export const AuthService = {
 			});
 		}
 
-		const accessToken = await jwt.sign(
-			{ ...cookiePayload(mailbox, res.password) },
-			{ expiresIn: rememberMe ? "7d" : "1d" },
-		);
-		setAuthCookies({ cookie, accessToken, rememberMe: !!rememberMe });
+		startSession({
+			cookie,
+			mailbox,
+			password: res.password,
+			rememberMe: !!rememberMe,
+		});
 
 		return {
 			success: true,
@@ -177,7 +178,7 @@ export const AuthService = {
 	// Enroll — step 1: verify the mailbox password against IMAP (so we know it
 	// works), generate a fresh TOTP secret, store it + the encrypted password,
 	// and return the QR + otpauth URI for enrollment.
-	beginEnroll: async ({ body, jwt, cookie, status }) => {
+	beginEnroll: async ({ body, cookie, status }) => {
 		const { mailbox, password } = body;
 		// Must be authed to enroll (so only you can set up your own 2FA).
 		if (!mailbox || !password) {
@@ -186,7 +187,7 @@ export const AuthService = {
 				message: "Mailbox and password are required",
 			});
 		}
-		const usr = await getUser(jwt, cookie);
+		const usr = await getUser(cookie);
 		if (!usr || usr.mailbox !== mailbox) {
 			return status(401, {
 				success: false,
@@ -210,7 +211,7 @@ export const AuthService = {
 	},
 
 	// Enroll — step 2: validate the 6-digit code to activate TOTP.
-	completeEnroll: async ({ body, jwt, cookie, status }) => {
+	completeEnroll: async ({ body, cookie, status }) => {
 		const { mailbox, code } = body;
 		if (!mailbox || !code) {
 			return status(400, {
@@ -218,7 +219,7 @@ export const AuthService = {
 				message: "Mailbox and code are required",
 			});
 		}
-		const usr = await getUser(jwt, cookie);
+		const usr = await getUser(cookie);
 		if (!usr || usr.mailbox !== mailbox) {
 			return status(401, {
 				success: false,
@@ -237,11 +238,11 @@ export const AuthService = {
 	},
 
 	// Disable TOTP from settings (falls back to password login).
-	disableTotp: async ({ body, jwt, cookie, status }) => {
+	disableTotp: async ({ body, cookie, status }) => {
 		const { mailbox } = body || {};
 		if (!mailbox)
 			return status(400, { success: false, message: "Mailbox is required" });
-		const usr = await getUser(jwt, cookie);
+		const usr = await getUser(cookie);
 		if (!usr || usr.mailbox !== mailbox) {
 			return status(401, {
 				success: false,
@@ -252,8 +253,8 @@ export const AuthService = {
 		return { success: true };
 	},
 
-	me: async ({ jwt, cookie, status }) => {
-		const user = await getUser(jwt, cookie);
+	me: async ({ cookie, status }) => {
+		const user = await getUser(cookie);
 		if (!user?.mailbox) {
 			return status(401, { success: false, message: "Unauthorized" });
 		}
@@ -264,7 +265,7 @@ export const AuthService = {
 	},
 
 	logout: async ({ cookie }) => {
-		clearAuthCookies({ cookie });
+		endSession({ cookie });
 		return { success: true };
 	},
 };

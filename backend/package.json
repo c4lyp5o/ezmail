@@ -10,7 +10,6 @@
 	},
 	"dependencies": {
 		"@elysiajs/cookie": "^0.8.0",
-		"@elysiajs/jwt": "^1.4.2",
 		"@elysiajs/openapi": "^1.4.16",
 		"@elysiajs/static": "^1.4.10",
 		"deadslog": "^1.3.1",
