@@ -24,3 +24,9 @@ logs/
 *.swp
 .idea/
 .vscode/
+# Tests and test config (not needed to build or run)
+backend/tests/
+backend/bunfig.toml
+**/*.test.js
+**/*.test.jsx
+frontend/src/test/
