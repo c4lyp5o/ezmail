@@ -2,7 +2,7 @@
 	"name": "ezmail",
 	"private": true,
 	"type": "module",
-	"version": "1.7.1",
+	"version": "2.0.0",
 	"scripts": {
 		"install:backend": "cd backend && bun install",
 		"install:frontend": "cd frontend && bun install",
@@ -12,14 +12,16 @@
 		"dev": "conc -n \"BACKEND,FRONTEND\" -c \"cyan,yellow\" \"npm run dev:backend\" \"npm run dev:frontend\"",
 		"build:client": "cd frontend && bun run build",
 		"test:backend": "cd backend && bun test",
+		"test:frontend": "cd frontend && bun run test",
+		"test": "bun run test:backend && bun run test:frontend",
 		"start": "pm2-runtime start ecosystem.config.js --env production",
 		"stop": "pm2 stop all",
 		"restart": "pm2 restart all",
 		"logs": "pm2 monit"
 	},
 	"devDependencies": {
-		"@biomejs/biome": "2.5.9",
+		"@biomejs/biome": "2.5.15",
 		"@types/bun": "latest",
-		"concurrently": "^9.2.1"
+		"concurrently": "^10.0.6"
 	}
 }

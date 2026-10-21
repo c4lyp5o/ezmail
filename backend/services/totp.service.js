@@ -1,14 +1,16 @@
-import crypto from "node:crypto";
 import * as OTPAuth from "otpauth";
 import encodeQR from "qr";
 import { getSetting, setSetting, deleteSetting } from "../db.js";
+import { decryptSecret, encryptSecret } from "./crypto.service.js";
+
+export { decryptSecret, encryptSecret };
 
 // TOTP-based passwordless login for ezmail.
 //
 // ezmail is an IMAP/SMTP proxy, so the mailbox password must be retained
 // server-side to authenticate to the mail server after a code-only login.
 // The password is captured ONCE during enrollment, verified against IMAP,
-// then stored encrypted at rest (AES-256-GCM, key derived from JWT_SECRET).
+// then stored encrypted at rest (AES-256-GCM, see crypto.service.js).
 // After that, login asks only for a 6-digit TOTP code.
 
 const ISSUER = "ezmail";
@@ -23,46 +25,6 @@ const keyFor = (mailbox) => {
 		verifyMailbox: `totp:mailbox:${k}`,
 	};
 };
-
-// ---- key derivation ----
-// Prefer a dedicated TOTP_ENC_KEY so the at-rest encryption key is independent of
-// the JWT signing secret (defense in depth: a leaked signing key still can't open
-// stored passwords). Falls back to JWT_SECRET for environments that only set that.
-function encryptionKey() {
-	const secret =
-		process.env.TOTP_ENC_KEY ||
-		process.env.JWT_SECRET ||
-		getSetting("jwtSecret") ||
-		"";
-	const digest = crypto.createHash("sha256").update(secret).digest();
-	return digest; // 32 bytes for AES-256
-}
-
-export function encryptSecret(text) {
-	const iv = crypto.randomBytes(12);
-	const cipher = crypto.createCipheriv("aes-256-gcm", encryptionKey(), iv);
-	const enc = Buffer.concat([cipher.update(text, "utf8"), cipher.final()]);
-	const tag = cipher.getAuthTag();
-	return [iv, tag, enc].map((b) => b.toString("base64")).join(".");
-}
-
-export function decryptSecret(payload) {
-	try {
-		const [ivB64, tagB64, dataB64] = payload.split(".");
-		const decipher = crypto.createDecipheriv(
-			"aes-256-gcm",
-			encryptionKey(),
-			Buffer.from(ivB64, "base64"),
-		);
-		decipher.setAuthTag(Buffer.from(tagB64, "base64"));
-		return Buffer.concat([
-			decipher.update(Buffer.from(dataB64, "base64")),
-			decipher.final(),
-		]).toString("utf8");
-	} catch {
-		return null;
-	}
-}
 
 // ---- secret / QR ----
 function makeSecret() {

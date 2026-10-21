@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import { useAuth } from "../context/auth.jsx";
 import { Mail, ShieldCheck, ArrowLeft, Loader2 } from "lucide-react";
 import ThemeToggle from "../components/ThemeToggle.jsx";
@@ -166,8 +166,7 @@ export default function LoginPage() {
 								value={password}
 								onChange={(e) => setPassword(e.target.value)}
 								className={inputCls}
-								placeholder="Enter your mail password"
-								required
+								placeholder="Mail password (blank if you use an authenticator)"
 							/>
 						</div>
 

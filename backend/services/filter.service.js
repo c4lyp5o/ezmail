@@ -19,7 +19,7 @@ import { getUser } from "../plugins/auth.plugin.js";
 // home=/var/mail/%d/%u/home/). Writing the file is all that's needed: Dovecot
 // recompiles on mtime change at the next LMTP delivery.
 //
-// The mailbox ALWAYS comes from the JWT (verified against IMAP at login) —
+// The mailbox ALWAYS comes from the session (verified against IMAP at login) —
 // never from client-supplied request data — and is additionally sanitized
 // before being used in a path.
 // ---------------------------------------------------------------------------
@@ -201,8 +201,8 @@ function readFilters(mailbox) {
 }
 
 export const FilterService = {
-	get: async ({ jwt, cookie, status }) => {
-		const user = await getUser(jwt, cookie);
+	get: async ({ cookie, status }) => {
+		const user = await getUser(cookie);
 		if (!user?.mailbox || !user?.password)
 			return status(401, { success: false, message: "Unauthorized" });
 		const state = readFilters(user.mailbox);
@@ -212,8 +212,8 @@ export const FilterService = {
 		};
 	},
 
-	put: async ({ jwt, cookie, body, status }) => {
-		const user = await getUser(jwt, cookie);
+	put: async ({ cookie, body, status }) => {
+		const user = await getUser(cookie);
 		if (!user?.mailbox || !user?.password)
 			return status(401, { success: false, message: "Unauthorized" });
 		try {
@@ -228,8 +228,8 @@ export const FilterService = {
 		}
 	},
 
-	remove: async ({ jwt, cookie, status }) => {
-		const user = await getUser(jwt, cookie);
+	remove: async ({ cookie, status }) => {
+		const user = await getUser(cookie);
 		if (!user?.mailbox || !user?.password)
 			return status(401, { success: false, message: "Unauthorized" });
 		const dir = homeDir(user.mailbox);

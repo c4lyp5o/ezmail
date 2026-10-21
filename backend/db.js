@@ -5,7 +5,7 @@ import { DB_PATH } from "./config.js";
 
 mkdirSync(path.dirname(DB_PATH), { recursive: true });
 
-const db = new Database(DB_PATH, { create: true });
+export const db = new Database(DB_PATH, { create: true });
 db.run("PRAGMA journal_mode = WAL;");
 db.run("PRAGMA busy_timeout = 5000;");
 db.run("PRAGMA foreign_keys = ON;");
@@ -14,6 +14,17 @@ db.run(`
 	CREATE TABLE IF NOT EXISTS settings (
 		key TEXT PRIMARY KEY,
 		value TEXT
+	);
+`);
+
+// Server-side sessions. `id` is the SHA-256 of the cookie token (a leaked db
+// doesn't yield live cookies); the mailbox password is AES-GCM encrypted.
+db.run(`
+	CREATE TABLE IF NOT EXISTS sessions (
+		id TEXT PRIMARY KEY,
+		mailbox TEXT NOT NULL,
+		pass_enc TEXT NOT NULL,
+		expires_at INTEGER NOT NULL
 	);
 `);
 

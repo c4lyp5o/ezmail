@@ -1,4 +1,4 @@
-import { Routes, Route, Navigate } from "react-router-dom";
+import { Routes, Route, Navigate } from "react-router";
 import { AuthProvider, useAuth } from "./context/auth.jsx";
 import { ThemeProvider } from "./context/theme.jsx";
 import LoginPage from "./pages/LoginPage.jsx";

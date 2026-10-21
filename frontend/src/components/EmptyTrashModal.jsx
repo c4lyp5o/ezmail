@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { Trash2, X } from "lucide-react";
 
 // Modal to confirm emptying the trash folder.
