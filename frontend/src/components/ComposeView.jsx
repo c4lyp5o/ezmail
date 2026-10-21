@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useAuth } from "../context/auth.jsx";
 import { apiCall } from "../utils/apiCall.js";
 import { ArrowLeft, Send, Paperclip, X, FileText, Trash2 } from "lucide-react";
@@ -135,6 +135,7 @@ export default function ComposeView({ onBack, initial, onSent }) {
 			<div className="flex h-full flex-col items-center justify-center gap-4 p-8 text-ink-muted">
 				<p className="text-ink-2">Message sent ✅</p>
 				<button
+					type="button"
 					onClick={onBack}
 					className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white transition hover:bg-accent"
 				>
@@ -149,6 +150,7 @@ export default function ComposeView({ onBack, initial, onSent }) {
 			{/* Toolbar */}
 			<div className="flex items-center gap-2 border-b border-hair py-3 pl-14 pr-4 md:pl-4">
 				<button
+					type="button"
 					onClick={onBack}
 					className="flex items-center gap-1 rounded-lg px-2 py-1 text-sm text-ink-muted transition hover:bg-hover hover:text-ink-2"
 				>
@@ -171,6 +173,7 @@ export default function ComposeView({ onBack, initial, onSent }) {
 					<Trash2 className="h-4 w-4" />
 				</button>
 				<button
+					type="button"
 					onClick={submit}
 					disabled={busy}
 					className="flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white transition hover:bg-accent disabled:opacity-50"
@@ -224,6 +227,7 @@ export default function ComposeView({ onBack, initial, onSent }) {
 						<div className="flex flex-wrap gap-2 border-b border-hair px-4 py-2">
 							{attachments.map((a, i) => (
 								<span
+									// biome-ignore lint/suspicious/noArrayIndexKey: stateless chips; filenames can repeat
 									key={`${a.filename}-${i}`}
 									className="flex items-center gap-1.5 rounded-md border border-hair-strong bg-panel px-2 py-1 text-xs text-ink-2"
 								>
@@ -285,12 +289,17 @@ export default function ComposeView({ onBack, initial, onSent }) {
 }
 
 function Field({ label, value, onChange, placeholder, type, required, multiple }) {
+	const id = useId();
 	return (
 		<div className="flex items-center gap-3 border-b border-hair px-4 py-2">
-			<label className="w-16 shrink-0 text-sm font-medium text-ink-muted">
+			<label
+				htmlFor={id}
+				className="w-16 shrink-0 text-sm font-medium text-ink-muted"
+			>
 				{label}
 			</label>
 			<input
+				id={id}
 				type={type || "text"}
 				value={value}
 				onChange={onChange}

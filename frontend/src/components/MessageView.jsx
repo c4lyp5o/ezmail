@@ -221,11 +221,11 @@ export default function MessageView({
 		const body = frame.contentDocument?.body;
 		frameObserver.current?.disconnect();
 		if (!body) return;
-		const fit = () => {
+		const resize = () => {
 			frame.style.height = `${Math.max(120, body.scrollHeight)}px`;
 		};
-		fit();
-		frameObserver.current = new ResizeObserver(fit);
+		resize();
+		frameObserver.current = new ResizeObserver(resize);
 		frameObserver.current.observe(body);
 	}, []);
 

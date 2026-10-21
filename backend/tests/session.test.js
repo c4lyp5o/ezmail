@@ -51,9 +51,7 @@ describe("session cookie", () => {
 		const value = decodeURIComponent(cookie.split(";")[0].split("=")[1]);
 		expect(value).toMatch(/^[A-Za-z0-9_-]{43}$/); // 32 random bytes, base64url
 		expect(cookie).not.toContain(PASSWORD);
-		expect(atob(value.replace(/-/g, "+").replace(/_/g, "/") + "=")).not.toContain(
-			PASSWORD,
-		);
+		expect(Buffer.from(value, "base64url").toString("latin1")).not.toContain(PASSWORD);
 	});
 
 	test("logout revokes the session server-side", async () => {
