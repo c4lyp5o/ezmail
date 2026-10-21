@@ -25,7 +25,12 @@ beforeEach(() => {
 });
 
 // Owns the selection like MailPage does.
-function Harness({ onOpen, keyboardEnabled = true, initialSelected = [] }) {
+function Harness({
+	onOpen,
+	keyboardEnabled = true,
+	initialSelected = [],
+	swipeAction,
+}) {
 	const [selected, setSelected] = useState(() => new Set(initialSelected));
 	return (
 		<SWRConfig value={{ provider: () => new Map(), dedupingInterval: 0 }}>
@@ -45,6 +50,7 @@ function Harness({ onOpen, keyboardEnabled = true, initialSelected = [] }) {
 				onReady={() => {}}
 				onSelectionChange={setSelected}
 				keyboardEnabled={keyboardEnabled}
+				swipeAction={swipeAction}
 			/>
 		</SWRConfig>
 	);
@@ -177,5 +183,41 @@ describe("Shift selection", () => {
 		press("ArrowDown"); // cursor → 98, opens it
 		press("ArrowDown", { shiftKey: true }); // new anchor at 98 → adds 97
 		expect(selected().sort()).toEqual([100, 99, 98, 97].sort());
+	});
+});
+
+describe("swipe (mobile)", () => {
+	const row = () => screen.getByText("Subject 1").closest("[data-uid]");
+	const swipe = (el, dx, dy = 0) => {
+		fireEvent.touchStart(el, { touches: [{ clientX: 300, clientY: 100 }] });
+		fireEvent.touchMove(el, { touches: [{ clientX: 300 + dx / 2, clientY: 100 + dy / 2 }] });
+		fireEvent.touchMove(el, { touches: [{ clientX: 300 + dx, clientY: 100 + dy }] });
+		fireEvent.touchEnd(el);
+		fireEvent.click(el); // the click a real browser fires after touchend
+	};
+
+	test("a long swipe left runs the action instead of opening", async () => {
+		const onSwipe = vi.fn();
+		const onOpen = await setup({ swipeAction: { label: "Archive", onSwipe } });
+		swipe(row(), -100);
+		expect(onSwipe).toHaveBeenCalledWith(MESSAGES[0]);
+		expect(onOpen).not.toHaveBeenCalled();
+	});
+
+	test("a short or vertical swipe does nothing (and taps still open)", async () => {
+		const onSwipe = vi.fn();
+		const onOpen = await setup({ swipeAction: { label: "Delete", onSwipe } });
+		swipe(row(), -40);
+		swipe(row(), -100, 160); // mostly vertical: scrolling
+		expect(onSwipe).not.toHaveBeenCalled();
+		expect(onOpen).toHaveBeenCalledTimes(2);
+	});
+
+	test("shows the action behind the row while dragging", async () => {
+		await setup({ swipeAction: { label: "Archive", onSwipe: () => {} } });
+		fireEvent.touchStart(row(), { touches: [{ clientX: 300, clientY: 100 }] });
+		fireEvent.touchMove(row(), { touches: [{ clientX: 200, clientY: 100 }] });
+		expect(screen.getByText("Archive")).toBeTruthy();
+		expect(row().style.transform).toBe("translateX(-100px)");
 	});
 });

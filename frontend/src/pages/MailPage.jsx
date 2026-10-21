@@ -829,6 +829,29 @@ export default function MailPage() {
 						onMarkedRead={applyInboxUnseen}
 						onSelectionChange={setSelected}
 						refreshInterval={live && activeFolder === "INBOX" ? 60000 : 10000}
+						swipeAction={
+							isMobile
+								? archiveFolder && activeFolder !== archiveFolder
+									? {
+											label: "Archive",
+											onSwipe: (m) =>
+												moveMessages(
+													[m.uid],
+													activeFolder,
+													archiveFolder,
+												).catch((err) =>
+													showToast({ text: err.message || "Archive failed" }),
+												),
+										}
+									: {
+											label: "Delete",
+											onSwipe: (m) =>
+												deleteMessages([m.uid], activeFolder).catch((err) =>
+													showToast({ text: err.message || "Delete failed" }),
+												),
+										}
+								: undefined
+						}
 						keyboardEnabled={!modalOpen && view.type !== "compose"}
 					/>
 				</div>
@@ -907,7 +930,9 @@ export default function MailPage() {
 						onBack={handleBack}
 						onDelete={() => deleteMessages([Number(view.uid)], view.folder)}
 						onCompose={openCompose}
-						onOpenThread={(folder, uid) => openMessageWithBody(folder, uid, null)}
+						onOpenThread={(folder, uid) =>
+							openMessageWithBody(folder, uid, null)
+						}
 						setShowRemote={setShowRemote}
 						showRemote={showRemote}
 						onLoaded={setFullMessage}
@@ -928,11 +953,11 @@ export default function MailPage() {
 				!view.summaryClosed &&
 				!isMobile &&
 				fullMessage && (
-				<SummaryColumn
-					message={fullMessage}
-					onClose={() => setView((v) => ({ ...v, summaryClosed: true }))}
-				/>
-			)}
+					<SummaryColumn
+						message={fullMessage}
+						onClose={() => setView((v) => ({ ...v, summaryClosed: true }))}
+					/>
+				)}
 
 			{/* Move-to popup */}
 			{movePopup && (

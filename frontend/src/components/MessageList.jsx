@@ -2,9 +2,59 @@ import { useCallback, useEffect, memo, useRef, useState } from "react";
 import useSWR from "swr";
 import { apiCall } from "../utils/apiCall.js";
 import { isTypingTarget } from "../utils/keyboard.js";
-import { ArrowUpDown, ArrowUp, ArrowDown, Search, Star } from "lucide-react";
+import {
+	Archive,
+	ArrowDown,
+	ArrowUp,
+	ArrowUpDown,
+	Search,
+	Star,
+	Trash2,
+} from "lucide-react";
 
 const PAGE_SIZE = 50;
+const SWIPE_TRIGGER = 80; // px left before release acts
+const SWIPE_MAX = 120;
+
+// Touch swipe-left on a row (mobile). Horizontal only — `touch-action:
+// pan-y` leaves vertical scrolling to the browser. Returns the live offset
+// and handlers; a completed swipe suppresses the click that follows.
+function useSwipe(onSwipe) {
+	const [dx, setDx] = useState(0);
+	const start = useRef(null);
+	const swiped = useRef(false);
+	return {
+		dx,
+		swiped,
+		handlers: onSwipe
+			? {
+					onTouchStart: (e) => {
+						const t = e.touches[0];
+						start.current = { x: t.clientX, y: t.clientY, horizontal: null };
+						swiped.current = false;
+					},
+					onTouchMove: (e) => {
+						const s = start.current;
+						if (!s) return;
+						const t = e.touches[0];
+						const mx = t.clientX - s.x;
+						const my = t.clientY - s.y;
+						if (s.horizontal === null && Math.hypot(mx, my) > 10)
+							s.horizontal = Math.abs(mx) > Math.abs(my);
+						if (s.horizontal) setDx(Math.max(-SWIPE_MAX, Math.min(0, mx)));
+					},
+					onTouchEnd: () => {
+						if (start.current?.horizontal && dx <= -SWIPE_TRIGGER) {
+							swiped.current = true;
+							onSwipe();
+						}
+						start.current = null;
+						setDx(0);
+					},
+				}
+			: {},
+	};
+}
 
 const MessageRow = memo(function MessageRow({
 	msg,
@@ -14,67 +64,95 @@ const MessageRow = memo(function MessageRow({
 	onToggle,
 	onClick,
 	alwaysRead,
+	swipe, // { label: "Archive" | "Delete", onSwipe } — mobile swipe-left
 }) {
 	const isUnread = !alwaysRead && !msg.seen;
 	const isFlagged = msg.flags?.includes("\\Flagged");
+	const { dx, swiped, handlers } = useSwipe(swipe?.onSwipe);
+	const SwipeIcon = swipe?.label === "Archive" ? Archive : Trash2;
 
 	return (
-		// biome-ignore lint/a11y/noStaticElementInteractions: later
-		// biome-ignore lint/a11y/useKeyWithClickEvents: later
-		<div
-			onClick={onClick}
-			data-uid={msg.uid}
-			className={`group flex w-full items-center gap-3 border-b border-hair px-4 py-3 text-left transition hover:bg-hover/40 ${
-				selected ? "bg-accent/10 font-bold" : ""
-			} ${isReading === msg.uid ? "bg-accent/30" : ""} ${
-				isCursor ? "shadow-[inset_3px_0_0_var(--color-accent)]" : ""
-			}`}
-		>
-			<input
-				type="checkbox"
-				checked={!!selected}
-				onChange={(e) => {
-					e.stopPropagation();
-					onToggle(msg.uid);
-				}}
-				onClick={(e) => e.stopPropagation()}
-				className="h-4 w-4 shrink-0 cursor-pointer rounded border-hair-strong accent-accent"
-			/>
-
-			{/* Flagged Star Icon */}
-			{isFlagged && (
-				<Star className="h-4 w-4 shrink-0 fill-amber-400 text-amber-400" />
+		<div className="relative overflow-hidden border-b border-hair">
+			{dx < 0 && (
+				<div
+					aria-hidden
+					className={`absolute inset-0 flex items-center justify-end gap-2 px-5 text-sm font-medium text-white ${
+						swipe.label === "Archive" ? "bg-accent" : "bg-danger"
+					} ${dx <= -SWIPE_TRIGGER ? "" : "opacity-60"}`}
+				>
+					<SwipeIcon className="h-4 w-4" />
+					{swipe.label}
+				</div>
 			)}
-
-			<button
-				type="button"
-				className="flex min-w-0 flex-1 items-center gap-3 text-left"
+			{/* biome-ignore lint/a11y/noStaticElementInteractions: row click opens; keyboard via MessageList */}
+			{/* biome-ignore lint/a11y/useKeyWithClickEvents: keyboard handled globally */}
+			<div
+				onClick={(e) => {
+					if (swiped.current) {
+						swiped.current = false;
+						e.preventDefault();
+						return;
+					}
+					onClick(e);
+				}}
+				{...handlers}
+				data-uid={msg.uid}
+				style={{
+					transform: dx ? `translateX(${dx}px)` : undefined,
+					touchAction: "pan-y",
+				}}
+				className={`group relative flex w-full items-center gap-3 bg-canvas px-4 py-3 text-left ${
+					dx ? "" : "transition"
+				} hover:bg-hover/40 ${selected ? "bg-accent/10 font-bold" : ""} ${
+					isReading === msg.uid ? "bg-accent/30" : ""
+				} ${isCursor ? "shadow-[inset_3px_0_0_var(--color-accent)]" : ""}`}
 			>
-				<div className={`min-w-0 flex-1 ${selected ? "bg-red" : ""}`}>
-					<div
-						className={`truncate text-sm ${
-							isUnread ? "font-semibold text-ink" : "text-ink-muted"
-						}`}
-					>
-						{msg.fromName || msg.from}
-					</div>
-					<div className="flex items-center gap-2">
-						{isUnread && (
-							<span className="h-2 w-2 shrink-0 rounded-full bg-accent" />
-						)}
+				<input
+					type="checkbox"
+					checked={!!selected}
+					onChange={(e) => {
+						e.stopPropagation();
+						onToggle(msg.uid);
+					}}
+					onClick={(e) => e.stopPropagation()}
+					className="h-4 w-4 shrink-0 cursor-pointer rounded border-hair-strong accent-accent"
+				/>
+
+				{/* Flagged Star Icon */}
+				{isFlagged && (
+					<Star className="h-4 w-4 shrink-0 fill-amber-400 text-amber-400" />
+				)}
+
+				<button
+					type="button"
+					className="flex min-w-0 flex-1 items-center gap-3 text-left"
+				>
+					<div className={`min-w-0 flex-1 ${selected ? "bg-red" : ""}`}>
 						<div
 							className={`truncate text-sm ${
-								isUnread ? "text-ink-2" : "text-ink-muted"
+								isUnread ? "font-semibold text-ink" : "text-ink-muted"
 							}`}
 						>
-							{msg.subject}
+							{msg.fromName || msg.from}
+						</div>
+						<div className="flex items-center gap-2">
+							{isUnread && (
+								<span className="h-2 w-2 shrink-0 rounded-full bg-accent" />
+							)}
+							<div
+								className={`truncate text-sm ${
+									isUnread ? "text-ink-2" : "text-ink-muted"
+								}`}
+							>
+								{msg.subject}
+							</div>
 						</div>
 					</div>
-				</div>
-				<div className="shrink-0 text-right">
-					<div className="text-xs text-ink-muted">{formatDate(msg.date)}</div>
-				</div>
-			</button>
+					<div className="shrink-0 text-right">
+						<div className="text-xs text-ink-muted">{formatDate(msg.date)}</div>
+					</div>
+				</button>
+			</div>
 		</div>
 	);
 });
@@ -109,6 +187,7 @@ export default function MessageList({
 	onSelectionChange,
 	keyboardEnabled = true,
 	refreshInterval = 10000,
+	swipeAction, // { label, onSwipe(msg) } or undefined
 }) {
 	const [sort, setSort] = useState("desc");
 	const [search, setSearch] = useState("");
@@ -368,6 +447,12 @@ export default function MessageList({
 						onToggle={() => onToggleSelect(msg.uid)}
 						onClick={() => openMessage(msg)}
 						alwaysRead={alwaysRead}
+						swipe={
+							swipeAction && {
+								label: swipeAction.label,
+								onSwipe: () => swipeAction.onSwipe(msg),
+							}
+						}
 					/>
 				))}
 			</div>
