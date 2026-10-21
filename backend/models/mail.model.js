@@ -213,6 +213,24 @@ export const MailModel = {
 		data: t.Optional(t.Object({ savedToSent: t.Boolean() })),
 	}),
 
+	threadResponse: t.Object({
+		success: t.Boolean(),
+		message: t.Optional(t.String()),
+		data: t.Optional(
+			t.Array(
+				t.Object({
+					folder: t.String(),
+					uid: t.Integer(),
+					subject: t.String(),
+					from: t.String(),
+					fromName: t.String(),
+					date: t.Any(),
+					seen: t.Boolean(),
+				}),
+			),
+		),
+	}),
+
 	summarizeBody: t.Object({
 		text: t.String(),
 	}),

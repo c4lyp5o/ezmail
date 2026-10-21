@@ -41,6 +41,25 @@ export const imap = {
 	},
 };
 
+function headerValue(m, name) {
+	const head = m.source.toString().split(/\r?\n\r?\n/)[0].replace(/\r?\n[ \t]+/g, " ");
+	const line = head
+		.split(/\r?\n/)
+		.find((l) => l.toLowerCase().startsWith(`${name.toLowerCase()}:`));
+	return line ? line.slice(name.length + 1).trim() : "";
+}
+
+function matches(m, query) {
+	if (query.or) return query.or.some((q) => matches(m, q));
+	if (query.header) {
+		return Object.entries(query.header).every(([k, v]) =>
+			headerValue(m, k).toLowerCase().includes(String(v).toLowerCase()),
+		);
+	}
+	const text = String(query.text || "").toLowerCase();
+	return m.envelope.subject.toLowerCase().includes(text);
+}
+
 function parseSeqRange(range, count) {
 	const [lo, hi] = String(range)
 		.split(":")
@@ -123,10 +142,11 @@ export class FakeImapFlow extends EventEmitter {
 		return this.select(uid, opts)[0] || false;
 	}
 
+	// Supports { text }, { header: { name: value } } (substring, like IMAP
+	// HEADER) and { or: [query, ...] }.
 	async search(query) {
-		const text = String(query.text || "").toLowerCase();
 		return this.box(this.mailbox.path)
-			.messages.filter((m) => m.envelope.subject.toLowerCase().includes(text))
+			.messages.filter((m) => matches(m, query))
 			.map((m) => m.uid);
 	}
 

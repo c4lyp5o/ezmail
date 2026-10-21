@@ -419,6 +419,63 @@ export const MailService = {
 		});
 	},
 
+	// --- conversation: messages linked by Message-ID / References ---
+	// Searches INBOX and Sent for the message's ancestors (its References /
+	// In-Reply-To ids) and descendants (mail whose References mention it).
+	getThread: async ({ cookie, params, status }) => {
+		const user = await getUser(cookie);
+		if (!user?.mailbox || !user?.password)
+			return status(401, { success: false, message: "Unauthorized" });
+		const { folder, uid } = params;
+		return withClient(user, status, async (client) => {
+			const found = await fetchParsed(client, folder, uid);
+			const p = found?.parsed;
+			if (!p?.messageId) return [];
+
+			const ids = [
+				...new Set(
+					[p.messageId, p.inReplyTo, ...[p.references || []].flat()].filter(Boolean),
+				),
+			].slice(-25); // bound the search on very long threads
+			const terms = [
+				...ids.map((id) => ({ header: { "message-id": id } })),
+				{ header: { references: p.messageId } },
+			];
+			const query = terms.length > 1 ? { or: terms } : terms[0];
+
+			const sent = await findSpecialFolder(client, "\\Sent", SENT_NAMES);
+			const boxes = [...new Set(["INBOX", folder, sent].filter(Boolean))];
+			const items = [];
+			for (const box of boxes) {
+				const lock = await client.getMailboxLock(box);
+				try {
+					const uids = await client.search(query, { uid: true });
+					if (!uids?.length) continue;
+					for await (const m of client.fetch(
+						uids,
+						{ envelope: true, flags: true, internalDate: true },
+						{ uid: true },
+					)) {
+						const from = m.envelope?.from?.[0];
+						items.push({
+							folder: box,
+							uid: m.uid,
+							subject: m.envelope?.subject || "(no subject)",
+							from: from?.address || from?.name || "unknown",
+							fromName: from?.name || "",
+							date: m.envelope?.date || m.internalDate,
+							seen: toFlagsArray(m.flags).includes("\\Seen"),
+						});
+					}
+				} finally {
+					lock.release();
+				}
+			}
+			items.sort((a, b) => new Date(a.date) - new Date(b.date));
+			return items;
+		});
+	},
+
 	// --- one attachment's bytes (download, inline cid: images) ---
 	getAttachment: async ({ cookie, params, status }) => {
 		const user = await getUser(cookie);

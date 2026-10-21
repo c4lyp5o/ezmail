@@ -41,6 +41,16 @@ export const MailRoutes = new Elysia({ prefix: "/api/v1/mail" })
 			tags: ["Mail"],
 		},
 	})
+	.get("/message/:folder/:uid/thread", MailService.getThread, {
+		params: t.Object({ folder: t.String(), uid: t.String() }),
+		response: MailModel.threadResponse,
+		detail: {
+			summary: "Conversation for a message",
+			description:
+				"Messages in INBOX and Sent linked to this one by Message-ID / References / In-Reply-To, oldest first (includes the message itself).",
+			tags: ["Mail"],
+		},
+	})
 	.get("/message/:folder/:uid/attachment/:index", MailService.getAttachment, {
 		params: t.Object({
 			folder: t.String(),

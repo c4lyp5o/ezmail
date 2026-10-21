@@ -8,6 +8,7 @@ import {
 	Trash2,
 	ChevronDown,
 	ChevronRight,
+	MessagesSquare,
 	Paperclip,
 	Download,
 	FileWarning,
@@ -129,6 +130,7 @@ export default function MessageView({
 	onBack,
 	onDelete,
 	onCompose,
+	onOpenThread,
 	setShowRemote,
 	showRemote,
 	onLoaded,
@@ -179,6 +181,24 @@ export default function MessageView({
 	useEffect(() => {
 		load();
 	}, [load]);
+
+	// Conversation (Message-ID / References), fetched once the message is in.
+	const [thread, setThread] = useState([]);
+	const [threadOpen, setThreadOpen] = useState(false);
+	const messageId = msg?.messageId;
+	useEffect(() => {
+		setThread([]);
+		setThreadOpen(false);
+		if (!messageId) return;
+		const ctrl = new AbortController();
+		apiCall
+			.get(`/mail/message/${encodeURIComponent(thisFolder)}/${uid}/thread`, {
+				signal: ctrl.signal,
+			})
+			.then((res) => setThread(res.data || []))
+			.catch(() => {});
+		return () => ctrl.abort();
+	}, [messageId, thisFolder, uid]);
 
 	// Inline (cid:) images render in the body; only real files get cards.
 	const files = (msg?.attachments || []).filter((a) => !a.related);
@@ -349,6 +369,61 @@ export default function MessageView({
 							value={msg.date ? new Date(msg.date).toLocaleString() : "—"}
 						/>
 						<DetailRow label="Subject" value={msg.subject || "(no subject)"} />
+					</div>
+				)}
+
+				{/* Conversation — other messages linked by reply headers */}
+				{thread.length > 1 && (
+					<div className="mt-4 rounded-lg border border-hair bg-panel/40">
+						<button
+							type="button"
+							onClick={() => setThreadOpen((v) => !v)}
+							aria-expanded={threadOpen}
+							className="flex w-full items-center gap-2 px-3 py-2 text-sm text-ink-2"
+						>
+							<MessagesSquare className="h-4 w-4 text-accent" />
+							Conversation · {thread.length} messages
+							<span className="flex-1" />
+							{threadOpen ? (
+								<ChevronDown className="h-3.5 w-3.5 text-ink-muted" />
+							) : (
+								<ChevronRight className="h-3.5 w-3.5 text-ink-muted" />
+							)}
+						</button>
+						{threadOpen && (
+							<ol className="border-t border-hair">
+								{thread.map((t) => {
+									const current = t.folder === thisFolder && t.uid === Number(uid);
+									return (
+										<li key={`${t.folder}:${t.uid}`}>
+											<button
+												type="button"
+												disabled={current}
+												aria-current={current || undefined}
+												onClick={() => onOpenThread?.(t.folder, t.uid)}
+												className={`flex w-full items-center gap-3 px-3 py-2 text-left text-sm transition ${
+													current ? "bg-accent/10" : "hover:bg-hover"
+												}`}
+											>
+												<span
+													className={`min-w-0 flex-1 truncate ${
+														t.seen ? "text-ink-muted" : "font-semibold text-ink"
+													}`}
+												>
+													{t.fromName || t.from}
+												</span>
+												<span className="shrink-0 text-xs text-ink-faint">
+													{t.folder}
+												</span>
+												<span className="shrink-0 text-xs text-ink-muted">
+													{formatDate(t.date)}
+												</span>
+											</button>
+										</li>
+									);
+								})}
+							</ol>
+						)}
 					</div>
 				)}
 

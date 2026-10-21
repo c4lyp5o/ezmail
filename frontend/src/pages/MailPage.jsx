@@ -907,6 +907,7 @@ export default function MailPage() {
 						onBack={handleBack}
 						onDelete={() => deleteMessages([Number(view.uid)], view.folder)}
 						onCompose={openCompose}
+						onOpenThread={(folder, uid) => openMessageWithBody(folder, uid, null)}
 						setShowRemote={setShowRemote}
 						showRemote={showRemote}
 						onLoaded={setFullMessage}

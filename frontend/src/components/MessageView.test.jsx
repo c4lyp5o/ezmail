@@ -1,5 +1,7 @@
-import { describe, expect, test } from "vitest";
-import { emailCsp, emailDoc } from "./MessageView.jsx";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { describe, expect, test, vi } from "vitest";
+import { mockApi } from "../test/fetch.js";
+import MessageView, { emailCsp, emailDoc } from "./MessageView.jsx";
 
 const parse = (doc) => new DOMParser().parseFromString(doc, "text/html");
 const HTML = `
@@ -44,5 +46,76 @@ describe("remote content blocking", () => {
 		const a = parse(emailDoc(HTML, false)).getElementById("link");
 		expect(a.target).toBe("_blank");
 		expect(a.rel).toBe("noopener noreferrer");
+	});
+});
+
+describe("reader", () => {
+	const MSG = {
+		uid: 5,
+		folder: "INBOX",
+		subject: "Re: Plan",
+		from: "bob@x.io",
+		fromName: "Bob",
+		to: "me@x.io",
+		date: "2026-10-03T10:00:00Z",
+		flags: ["\\Seen"],
+		html: "",
+		text: "see below",
+		messageId: "<c3@x>",
+		attachments: [
+			{ index: 0, filename: "logo.png", contentType: "image/png", size: 5, related: true },
+			{ index: 1, filename: "plan.pdf", contentType: "application/pdf", size: 2048, related: false },
+		],
+	};
+	const THREAD = [
+		{ folder: "INBOX", uid: 1, subject: "Plan", from: "bob@x.io", fromName: "Bob", date: "2026-10-01T10:00:00Z", seen: true },
+		{ folder: "Sent", uid: 3, subject: "Re: Plan", from: "me@x.io", fromName: "", date: "2026-10-02T10:00:00Z", seen: true },
+		{ folder: "INBOX", uid: 5, subject: "Re: Plan", from: "bob@x.io", fromName: "Bob", date: "2026-10-03T10:00:00Z", seen: true },
+	];
+	const view = (props) =>
+		render(
+			<MessageView
+				folder="INBOX"
+				uid={5}
+				onBack={() => {}}
+				onDelete={async () => {}}
+				setShowRemote={() => {}}
+				showRemote={false}
+				{...props}
+			/>,
+		);
+
+	test("lists the conversation and opens another message from it", async () => {
+		mockApi({
+			"GET /mail/message/INBOX/5": MSG,
+			"GET /mail/message/INBOX/5/thread": THREAD,
+		});
+		const onOpenThread = vi.fn();
+		view({ onOpenThread });
+		fireEvent.click(await screen.findByText(/Conversation · 3 messages/));
+		const items = screen.getAllByRole("listitem");
+		expect(items).toHaveLength(3);
+		expect(items[2].querySelector("button").disabled).toBe(true); // current
+		fireEvent.click(screen.getByText("me@x.io", { selector: "span" }));
+		expect(onOpenThread).toHaveBeenCalledWith("Sent", 3);
+	});
+
+	test("no conversation box for a lone message", async () => {
+		mockApi({
+			"GET /mail/message/INBOX/5": MSG,
+			"GET /mail/message/INBOX/5/thread": [THREAD[2]],
+		});
+		view();
+		await screen.findByText("see below");
+		expect(screen.queryByText(/Conversation/)).toBeNull();
+	});
+
+	test("file attachments are download links; inline images aren't listed", async () => {
+		mockApi({ "GET /mail/message/INBOX/5": MSG, "GET /mail/message/INBOX/5/thread": [] });
+		view();
+		const link = (await screen.findByText("plan.pdf")).closest("a");
+		expect(link.getAttribute("href")).toBe("/api/v1/mail/message/INBOX/5/attachment/1");
+		expect(link.getAttribute("download")).toBe("plan.pdf");
+		expect(screen.queryByText("logo.png")).toBeNull();
 	});
 });
