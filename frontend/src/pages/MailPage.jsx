@@ -17,7 +17,7 @@ import {
 	X,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import ComposeView from "../components/ComposeView.jsx";
 import EmptyTrashModal from "../components/EmptyTrashModal.jsx";
 import FolderList from "../components/FolderList.jsx";

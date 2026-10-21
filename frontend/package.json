@@ -6,21 +6,26 @@
 	"scripts": {
 		"dev": "vite --host",
 		"build": "vite build",
-		"preview": "vite preview"
+		"preview": "vite preview",
+		"test": "vitest run"
 	},
 	"dependencies": {
 		"dompurify": "^3.4.17",
-		"lucide-react": "^0.468.0",
+		"lucide-react": "^1.61.0",
 		"marked": "^18.1.1",
 		"react": "^19.3.1",
 		"react-dom": "^19.3.1",
-		"react-router-dom": "^6.30.6",
+		"react-router": "^8.5.0",
 		"swr": "^2.5.1"
 	},
 	"devDependencies": {
 		"@tailwindcss/vite": "^4.3.3",
-		"@vitejs/plugin-react": "^4.7.0",
+		"@testing-library/dom": "^10.4.2",
+		"@testing-library/react": "^16.3.3",
+		"@vitejs/plugin-react": "^6.1.2",
+		"happy-dom": "^21.0.4",
 		"tailwindcss": "^4.3.3",
-		"vite": "^6.4.5"
+		"vite": "^8.3.5",
+		"vitest": "^5.0.5"
 	}
 }

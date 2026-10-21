@@ -1,4 +1,4 @@
-import { Navigate } from "react-router-dom";
+import { Navigate } from "react-router";
 import { useAuth } from "../context/auth.jsx";
 
 // Protects a route: shows a loader while auth is being checked, then redirects

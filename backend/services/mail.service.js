@@ -3,7 +3,7 @@ import { ImapFlow } from "imapflow";
 import { simpleParser } from "mailparser";
 import { marked } from "marked";
 import nodemailer from "nodemailer";
-import MailComposer from "nodemailer/lib/mail-composer/index.js";
+import MailComposer from "nodemailer/lib/mail-composer";
 import sanitizeHtml from "sanitize-html";
 import { MAIL_SERVER } from "../config.js";
 import { generalLogger as logger } from "../logger.js";

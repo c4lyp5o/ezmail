@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import { useAuth } from "../context/auth.jsx";
 import { Mail, ShieldCheck, ArrowLeft, Loader2 } from "lucide-react";
 import ThemeToggle from "../components/ThemeToggle.jsx";
