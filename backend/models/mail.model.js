@@ -79,11 +79,13 @@ export const MailModel = {
 				text: t.String(),
 				attachments: t.Array(
 					t.Object({
+						index: t.Integer(),
 						filename: t.String(),
 						contentType: t.String(),
 						size: t.Integer(),
-						content: t.Optional(t.String()),
 						contentId: t.Optional(t.String()),
+						// inline part referenced from the HTML (cid:)
+						related: t.Boolean(),
 					}),
 				),
 			}),
@@ -186,6 +188,14 @@ export const MailModel = {
 		markdown: t.Optional(t.Boolean()),
 		inReplyTo: t.Optional(t.String()),
 		references: t.Optional(t.String()),
+		// Attachments of an existing message to include (forwarding).
+		forwardAttachments: t.Optional(
+			t.Object({
+				folder: t.String(),
+				uid: t.Union([t.Integer(), t.String()]),
+				indexes: t.Array(t.Integer()),
+			}),
+		),
 		attachments: t.Optional(
 			t.Array(
 				t.Object({

@@ -15,9 +15,11 @@ const msg = {
 		to: ["ME@x.io", "carol@x.io"],
 		cc: ["bob@x.io", "dan@x.io"],
 	},
+	folder: "INBOX",
+	uid: 42,
 	attachments: [
-		{ filename: "a.pdf", contentType: "application/pdf", content: "QQ==", size: 1 },
-		{ filename: "empty.bin", contentType: "x", content: "", size: 0 },
+		{ index: 0, filename: "logo.png", contentType: "image/png", size: 9, related: true },
+		{ index: 1, filename: "a.pdf", contentType: "application/pdf", size: 1, related: false },
 	],
 };
 
@@ -58,12 +60,17 @@ describe("reply", () => {
 });
 
 describe("forward", () => {
-	test("keeps attachments with content, no threading", () => {
+	test("references real attachments (not inline images), no threading", () => {
 		const d = buildDraft("forward", { ...msg, subject: "Fw: Lunch?" }, "me@x.io");
 		expect(d.form.subject).toBe("Fw: Lunch?");
 		expect(d.form.to).toBe("");
 		expect(d.attachments).toEqual([
-			{ filename: "a.pdf", contentType: "application/pdf", content: "QQ==" },
+			{
+				filename: "a.pdf",
+				contentType: "application/pdf",
+				size: 1,
+				forward: { folder: "INBOX", uid: 42, index: 1 },
+			},
 		]);
 		expect(d.meta).toBeUndefined();
 		expect(d.form.text).toContain("---------- Forwarded message ----------");

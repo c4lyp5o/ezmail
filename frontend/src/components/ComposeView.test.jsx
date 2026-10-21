@@ -82,6 +82,55 @@ describe("sending", () => {
 		expect(onSent).toHaveBeenCalled();
 	});
 
+	test("forwarded attachments go as references; uploads as bytes", async () => {
+		render(
+			<ComposeView
+				onBack={() => {}}
+				initial={{
+					title: "Forward",
+					form: { to: "carol@x.io", subject: "Fwd: x" },
+					attachments: [
+						{ filename: "a.pdf", contentType: "application/pdf", size: 1, forward: { folder: "INBOX", uid: 42, index: 1 } },
+						{ filename: "b.pdf", contentType: "application/pdf", size: 1, forward: { folder: "INBOX", uid: 42, index: 3 } },
+					],
+				}}
+			/>,
+		);
+		const file = new File(["hello"], "note.txt", { type: "text/plain" });
+		const input = document.querySelector('input[type="file"]');
+		fireEvent.change(input, { target: { files: [file] } });
+		await screen.findByText("note.txt");
+		fireEvent.click(screen.getByText("Send"));
+		await screen.findByText(/Message sent/);
+		expect(calls[0].body.forwardAttachments).toEqual({
+			folder: "INBOX",
+			uid: 42,
+			indexes: [1, 3],
+		});
+		expect(calls[0].body.attachments).toEqual([
+			{ filename: "note.txt", contentType: "text/plain", content: btoa("hello") },
+		]);
+	});
+
+	test("forwarded attachment refs survive in the draft", () => {
+		vi.useFakeTimers();
+		render(
+			<ComposeView
+				onBack={() => {}}
+				initial={{
+					form: { subject: "Fwd: x" },
+					attachments: [
+						{ filename: "a.pdf", forward: { folder: "INBOX", uid: 42, index: 1 } },
+					],
+				}}
+			/>,
+		);
+		act(() => vi.advanceTimersByTime(900));
+		expect(JSON.parse(localStorage.getItem(KEY)).attachments).toEqual([
+			{ filename: "a.pdf", forward: { folder: "INBOX", uid: 42, index: 1 } },
+		]);
+	});
+
 	test("no recipient: error, no request", () => {
 		render(<ComposeView onBack={() => {}} />);
 		fireEvent.click(screen.getByText("Send"));

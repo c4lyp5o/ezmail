@@ -25,6 +25,16 @@ function buildImapClient({ mailbox, password }) {
 	});
 }
 
+async function withImap(user, fn) {
+	const client = buildImapClient(user);
+	try {
+		await client.connect();
+		return await fn(client);
+	} finally {
+		await client.logout().catch(() => {});
+	}
+}
+
 async function withClient(user, status, fn) {
 	if (!user?.mailbox || !user?.password) {
 		return status
@@ -119,6 +129,37 @@ async function saveToSent(user, raw) {
 	} finally {
 		await client.logout().catch(() => {});
 	}
+}
+
+// Fetches and parses one message's full source (mailparser), or null.
+async function fetchParsed(client, folder, uid) {
+	await client.mailboxOpen(folder || "INBOX");
+	const msg = await client.fetchOne(Number(uid), { source: true }, { uid: true });
+	if (!msg) return null;
+	return { msg, parsed: await simpleParser(msg.source, { keepCidLinks: true }) };
+}
+
+const attachmentUrl = (folder, uid, index) =>
+	`/api/v1/mail/message/${encodeURIComponent(folder)}/${uid}/attachment/${index}`;
+
+// Points cid: references at the attachment endpoint instead of letting
+// mailparser inline every image as base64 into the HTML.
+function rewriteCidLinks(html, attachments, folder, uid) {
+	if (!html) return html;
+	const byCid = new Map(
+		attachments
+			.map((a, i) => [a.contentId?.replace(/^<|>$/g, ""), i])
+			.filter(([cid]) => cid),
+	);
+	return html.replace(/(["'(])cid:([^"')\s]+)/gi, (m, q, cid) =>
+		byCid.has(cid) ? `${q}${attachmentUrl(folder, uid, byCid.get(cid))}` : m,
+	);
+}
+
+// RFC 6266 filename for Content-Disposition (ASCII fallback + UTF-8).
+function contentDisposition(filename) {
+	const ascii = filename.replace(/[^\x20-\x7e]|["\\]/g, "_");
+	return `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(filename)}`;
 }
 
 function mapEnvelope(msg) {
@@ -310,22 +351,22 @@ export const MailService = {
 			// quoted-printable/base64, HTML+text alternatives, attachments.
 			let parsed;
 			try {
-				parsed = await simpleParser(msg.source);
+				parsed = await simpleParser(msg.source, { keepCidLinks: true });
 			} catch (err) {
 				logger.error(`[MAIL] 💥[parse] ${err.message}`);
 				parsed = null;
 			}
 
-			const attachments = (parsed?.attachments || []).map((a) => {
-				const buf = a.content ? Buffer.from(a.content) : null;
-				return {
-					filename: a.filename || "attachment",
-					contentType: a.contentType || "application/octet-stream",
-					size: a.size || buf?.length || 0,
-					content: buf ? buf.toString("base64") : "",
-					contentId: a.contentId || undefined,
-				};
-			});
+			// Metadata only — bytes come from the attachment endpoint on demand.
+			const rawAttachments = parsed?.attachments || [];
+			const attachments = rawAttachments.map((a, index) => ({
+				index,
+				filename: a.filename || "attachment",
+				contentType: a.contentType || "application/octet-stream",
+				size: a.size || a.content?.length || 0,
+				contentId: a.contentId || undefined,
+				related: !!a.related,
+			}));
 
 			// Extra display headers for the toggleable detail panel.
 			const hdrs = parsed?.headers || {};
@@ -368,10 +409,42 @@ export const MailService = {
 				date: parsed?.date || msg.internalDate,
 				mailedBy,
 				signedBy,
-				html: parsed?.html || "",
+				html:
+					rewriteCidLinks(parsed?.html, rawAttachments, folder || "INBOX", msg.uid) ||
+					"",
 				text: parsed?.text || "",
 				attachments,
 			};
+		});
+	},
+
+	// --- one attachment's bytes (download, inline cid: images) ---
+	getAttachment: async ({ cookie, params, status }) => {
+		const user = await getUser(cookie);
+		if (!user?.mailbox || !user?.password)
+			return status(401, { success: false, message: "Unauthorized" });
+		const { folder, uid, index } = params;
+		let found;
+		try {
+			found = await withImap(user, (client) => fetchParsed(client, folder, uid));
+		} catch (err) {
+			logImapError(err);
+			return status(502, { success: false, message: "Mail command failed" });
+		}
+		const a = found?.parsed?.attachments?.[Number(index)];
+		if (!a) return status(404, { success: false, message: "Not Found" });
+
+		// Served from our own origin, so never let it render as a page:
+		// always a download on navigation, no sniffing, sandboxed if opened.
+		return new Response(a.content, {
+			headers: {
+				"Content-Type": a.contentType || "application/octet-stream",
+				"Content-Disposition": contentDisposition(a.filename || "attachment"),
+				"Content-Length": String(a.content.length),
+				"X-Content-Type-Options": "nosniff",
+				"Content-Security-Policy": "default-src 'none'; sandbox",
+				"Cache-Control": "private, max-age=3600",
+			},
 		});
 	},
 
@@ -536,6 +609,30 @@ export const MailService = {
 				contentType: a.contentType || "application/octet-stream",
 				content: Buffer.from(a.content || "", "base64"),
 			}));
+
+			// Forwarded attachments are copied from the original message here,
+			// so the browser never has to download and re-upload them.
+			const fwd = body.forwardAttachments;
+			if (fwd?.indexes?.length) {
+				const original = await withImap(user, (client) =>
+					fetchParsed(client, fwd.folder, fwd.uid),
+				);
+				const parts = original?.parsed?.attachments || [];
+				for (const i of fwd.indexes) {
+					const a = parts[i];
+					if (!a) {
+						return status(400, {
+							success: false,
+							message: "Forwarded attachment not found",
+						});
+					}
+					attachments.push({
+						filename: a.filename || "attachment",
+						contentType: a.contentType,
+						content: a.content,
+					});
+				}
+			}
 
 			const domain = user.mailbox.split("@")[1] || "localhost";
 			const mail = {

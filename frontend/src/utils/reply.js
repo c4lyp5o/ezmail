@@ -27,12 +27,14 @@ export function buildDraft(mode, msg, me) {
 				text: `\n\n---------- Forwarded message ----------\nFrom: ${msg.from}\nDate: ${when}\nSubject: ${msg.subject}\nTo: ${msg.to}\n\n${text}`,
 				markdown: false,
 			},
+			// References, not bytes: the server copies them from the original.
 			attachments: (msg.attachments || [])
-				.filter((a) => a.content)
-				.map(({ filename, contentType, content }) => ({
+				.filter((a) => !a.related)
+				.map(({ filename, contentType, size, index }) => ({
 					filename,
 					contentType,
-					content,
+					size,
+					forward: { folder: msg.folder, uid: msg.uid, index },
 				})),
 		};
 	}

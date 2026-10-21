@@ -32,6 +32,19 @@ export const MailRoutes = new Elysia({ prefix: "/api/v1/mail" })
 			tags: ["Mail"],
 		},
 	})
+	.get("/message/:folder/:uid/attachment/:index", MailService.getAttachment, {
+		params: t.Object({
+			folder: t.String(),
+			uid: t.String(),
+			index: t.String(),
+		}),
+		detail: {
+			summary: "Download an attachment",
+			description:
+				"Streams one attachment's bytes (also backs inline cid: images). Always served as a download with a sandboxing CSP.",
+			tags: ["Mail"],
+		},
+	})
 	.post("/flags", MailService.setFlags, {
 		body: MailModel.setFlagsBody,
 		response: MailModel.setFlagsResponse,

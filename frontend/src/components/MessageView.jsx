@@ -53,24 +53,8 @@ function looksLikeMarkdown(text) {
 	);
 }
 
-// Triggers a browser download for a base64 attachment.
-function downloadAttachment(a) {
-	if (!a?.content) return;
-	const bytes = atob(a.content);
-	const arr = new Uint8Array(bytes.length);
-	for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
-	const blob = new Blob([arr], {
-		type: a.contentType || "application/octet-stream",
-	});
-	const url = URL.createObjectURL(blob);
-	const link = document.createElement("a");
-	link.href = url;
-	link.download = a.filename || "attachment";
-	document.body.appendChild(link);
-	link.click();
-	link.remove();
-	URL.revokeObjectURL(url);
-}
+export const attachmentUrl = (folder, uid, index) =>
+	`/api/v1/mail/message/${encodeURIComponent(folder)}/${uid}/attachment/${index}`;
 
 function formatBytes(bytes) {
 	if (!bytes || bytes <= 0) return "0 B";
@@ -92,7 +76,6 @@ function emailDoc(html, showRemote) {
 	table{max-width:100%;border-collapse:collapse;}
 	a{color:#3451b1;}
 	/* Remote images stay hidden until the user opts in (privacy / tracking-safe). */
-	.show-remote img[src^="cid:"]{display:none;}
 </style></head>
 <body class="${showRemote ? "show-remote" : ""}">${prepareHtml(html, showRemote)}</body>
 </html>`;
@@ -180,6 +163,9 @@ export default function MessageView({
 	useEffect(() => {
 		load();
 	}, [load]);
+
+	// Inline (cid:) images render in the body; only real files get cards.
+	const files = (msg?.attachments || []).filter((a) => !a.related);
 
 	const remove = async () => {
 		try {
@@ -307,10 +293,10 @@ export default function MessageView({
 					</div>
 					<div className="flex-1" />
 					<div className="flex items-center gap-2">
-						{!!msg.attachments?.length && (
+						{files.length > 0 && (
 							<span className="flex items-center gap-1 text-xs text-ink-muted">
 								<Paperclip className="h-3.5 w-3.5" />
-								{msg.attachments.length}
+								{files.length}
 							</span>
 						)}
 						<button
@@ -351,21 +337,15 @@ export default function MessageView({
 				)}
 
 				{/* Attachment cards — download on click */}
-				{!!msg.attachments?.length && (
+				{files.length > 0 && (
 					<div className="mt-4 space-y-2">
-						{msg.attachments.map((a, i) => (
-							<button
-								type="button"
-								// biome-ignore lint/suspicious/noArrayIndexKey: later
-								key={`${a.filename}-${i}`}
-								onClick={() => downloadAttachment(a)}
-								disabled={!a.content}
-								title={
-									a.content
-										? `Download ${a.filename}`
-										: "Attachment unavailable"
-								}
-								className="flex w-full items-center gap-3 rounded-lg border border-hair bg-panel/40 p-3 text-left transition hover:border-indigo-700 hover:bg-panel disabled:opacity-50"
+						{files.map((a) => (
+							<a
+								key={a.index}
+								href={attachmentUrl(msg.folder || thisFolder, msg.uid, a.index)}
+								download={a.filename}
+								title={`Download ${a.filename}`}
+								className="flex w-full items-center gap-3 rounded-lg border border-hair bg-panel/40 p-3 text-left transition hover:border-indigo-700 hover:bg-panel"
 							>
 								<div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-accent/15 text-accent">
 									<Download className="h-4 w-4" />
@@ -380,7 +360,7 @@ export default function MessageView({
 									</div>
 								</div>
 								<FileWarning className="h-4 w-4 shrink-0 text-ink-faint" />
-							</button>
+							</a>
 						))}
 					</div>
 				)}

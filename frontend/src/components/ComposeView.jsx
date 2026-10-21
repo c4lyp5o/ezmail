@@ -5,8 +5,9 @@ import { ArrowLeft, Send, Paperclip, X, FileText, Trash2 } from "lucide-react";
 
 const EMPTY_FORM = { to: "", cc: "", subject: "", text: "", markdown: false };
 
-// One auto-saved draft per mailbox, kept in localStorage (attachments are not
-// saved — they can blow the storage quota).
+// One auto-saved draft per mailbox, kept in localStorage. Uploaded files are
+// not saved (they can blow the storage quota); forwarded ones are just
+// references, so they are.
 function loadDraft(key) {
 	try {
 		return JSON.parse(localStorage.getItem(key)) || null;
@@ -58,7 +59,12 @@ export default function ComposeView({ onBack, initial, onSent }) {
 			try {
 				localStorage.setItem(
 					draftKey,
-					JSON.stringify({ title: start.title, form, meta }),
+					JSON.stringify({
+						title: start.title,
+						form,
+						meta,
+						attachments: attachments.filter((a) => a.forward),
+					}),
 				);
 				setDraftSaved(true);
 			} catch {
@@ -66,7 +72,7 @@ export default function ComposeView({ onBack, initial, onSent }) {
 			}
 		}, 800);
 		return () => clearTimeout(id);
-	}, [form, meta, draftKey, sent, start.title]);
+	}, [form, meta, attachments, draftKey, sent, start.title]);
 
 	const discard = () => {
 		clearDraft(draftKey);
@@ -101,7 +107,19 @@ export default function ComposeView({ onBack, initial, onSent }) {
 		setBusy(true);
 		setError("");
 		try {
-			await apiCall.post("/mail/send", { ...form, ...meta, attachments });
+			const forwarded = attachments.filter((a) => a.forward);
+			await apiCall.post("/mail/send", {
+				...form,
+				...meta,
+				attachments: attachments.filter((a) => !a.forward),
+				forwardAttachments: forwarded.length
+					? {
+							folder: forwarded[0].forward.folder,
+							uid: forwarded[0].forward.uid,
+							indexes: forwarded.map((a) => a.forward.index),
+						}
+					: undefined,
+			});
 			clearDraft(draftKey);
 			setSent(true);
 			onSent?.();
