@@ -10,6 +10,7 @@ import {
 	totpStatus,
 	disableTotp,
 } from "./totp.service.js";
+import { codeLimiter, limitKey, loginLimiter } from "./rate-limit.service.js";
 
 // Legacy-persist the mailbox password into the access cookie payload.
 function cookiePayload(mailbox, password) {
@@ -20,7 +21,8 @@ function cookiePayload(mailbox, password) {
 // IMAP/SMTP proxy). Secure is forced ON in production so the cookie is never
 // sent over plaintext HTTP; an explicit COOKIE_SECURE=true can override for
 // reverse-proxy setups that terminate TLS upstream.
-const COOKIE_SECURE = process.env.NODE_ENV === "production";
+const COOKIE_SECURE =
+	process.env.COOKIE_SECURE === "true" || process.env.NODE_ENV === "production";
 
 function setAuthCookies({ cookie, accessToken, rememberMe }) {
 	cookie.ezmail_access.set({
@@ -30,6 +32,14 @@ function setAuthCookies({ cookie, accessToken, rememberMe }) {
 		path: "/",
 		secure: COOKIE_SECURE,
 		maxAge: rememberMe ? 60 * 60 * 24 * 7 : 60 * 60 * 24,
+	});
+}
+
+function tooManyAttempts(status, set, retryAfter) {
+	set.headers["Retry-After"] = String(retryAfter);
+	return status(429, {
+		success: false,
+		message: "Too many attempts. Try again later.",
 	});
 }
 
@@ -71,7 +81,7 @@ async function verifyImap(mailbox, password) {
 export const AuthService = {
 	// Steps truthfully: { totp: true } when the mailbox has TOTP enabled (tell the
 	// client to proceed to the code screen), otherwise logs straight in.
-	login: async ({ body, jwt, cookie, status }) => {
+	login: async ({ body, jwt, cookie, status, set }) => {
 		const { mailbox, password, rememberMe } = body;
 		if (!mailbox || !password) {
 			return status(400, {
@@ -87,13 +97,19 @@ export const AuthService = {
 			return { success: true, totp: true };
 		}
 
+		const key = limitKey(mailbox);
+		const wait = loginLimiter.retryAfter(key);
+		if (wait) return tooManyAttempts(status, set, wait);
+
 		const ok = await verifyImap(mailbox, password);
 		if (!ok) {
+			loginLimiter.fail(key);
 			return status(401, {
 				success: false,
 				message: "Username or password is incorrect",
 			});
 		}
+		loginLimiter.reset(key);
 
 		const accessToken = await jwt.sign(
 			{
@@ -123,14 +139,21 @@ export const AuthService = {
 			});
 		}
 
+		const key = limitKey(mailbox);
+		const wait = codeLimiter.retryAfter(key);
+		if (wait) return tooManyAttempts(status, set, wait);
+
 		const res = verifyLoginCode(mailbox, String(code));
 		if (!res.ok) {
+			codeLimiter.fail(key);
 			const msg =
 				res.reason === "invalid-code"
 					? "Invalid code. Check your authenticator and try again."
 					: "TOTP is not enabled for this mailbox.";
 			return status(401, { success: false, message: msg });
 		}
+
+		codeLimiter.reset(key);
 
 		if (!res.password) {
 			return status(500, {
