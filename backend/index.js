@@ -177,4 +177,5 @@ const startServer = async () => {
 	}
 };
 
-startServer();
+// `bun test` sets NODE_ENV=test and imports `app` directly (app.handle).
+if (process.env.NODE_ENV !== "test") startServer();

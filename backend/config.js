@@ -17,7 +17,8 @@ export const MAIL_SERVER = {
 	smtpSecure: process.env.SMTP_SECURE === "true",
 };
 
-export const DB_PATH = path.join(DATA_DIR, "ezmail.db");
+// DB_PATH env override lets tests run against a throwaway database.
+export const DB_PATH = process.env.DB_PATH || path.join(DATA_DIR, "ezmail.db");
 
 // Local LLM (ollama/openai-compatible) for message summarization. Optional —
 // if absent, LLM_PRESENT stays false and the summary column is hidden.
