@@ -191,6 +191,7 @@ export default function MessageList({
 }) {
 	const [sort, setSort] = useState("desc");
 	const [search, setSearch] = useState("");
+	const [searchInput, setSearchInput] = useState("");
 	const [page, setPage] = useState(1);
 	const [isReading, setIsReading] = useState("");
 	const selectAllRef = useRef(null);
@@ -227,7 +228,12 @@ export default function MessageList({
 	// biome-ignore lint/correctness/useExhaustiveDependencies: later
 	useEffect(() => {
 		setPage(1);
-	}, [activeFolder, sort, search]);
+	}, [activeFolder, sort]);
+
+	useEffect(() => {
+		const timer = setTimeout(() => { setPage(1); setSearch(searchInput); }, 300);
+		return () => clearTimeout(timer);
+	}, [searchInput]);
 
 	const refresh = useCallback(() => mutate(), [mutate]);
 
@@ -396,12 +402,14 @@ export default function MessageList({
 					<Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink-muted" />
 					<input
 						id="mail-search"
-						value={search}
-						onChange={(e) => setSearch(e.target.value)}
+						aria-label="Search current folder"
+						value={searchInput}
+						onChange={(e) => setSearchInput(e.target.value)}
 						onKeyDown={(e) => e.key === "Escape" && e.currentTarget.blur()}
 						placeholder="Search mail…"
-						className="w-full rounded-md border border-hair bg-panel/60 py-1.5 pl-8 pr-3 text-sm text-ink-2 outline-none transition placeholder:text-ink-faint focus:border-indigo-600"
+						className="w-full rounded-md border border-hair bg-panel/60 py-1.5 pl-8 pr-10 text-sm text-ink-2 outline-none transition placeholder:text-ink-faint focus:border-indigo-600"
 					/>
+					{searchInput && <button type="button" onClick={() => setSearchInput("")} aria-label="Clear search" className="absolute right-2 top-1 text-ink-muted">×</button>}
 				</div>
 				<button
 					type="button"
