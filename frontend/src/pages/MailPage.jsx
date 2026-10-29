@@ -144,12 +144,14 @@ export default function MailPage() {
 	);
 
 	useEffect(() => {
+		let frame = 0;
 		const handleMouseMove = (e) => {
 			if (!isDraggingList) return;
 			const { width, x } = dragStartRef.current;
 			// apply the delta from grab point, then clamp so the reader keeps room
 			const next = width + (e.clientX - x);
-			setListWidth(Math.max(240, Math.min(next, window.innerWidth - 380)));
+			cancelAnimationFrame(frame);
+			frame = requestAnimationFrame(() => setListWidth(Math.max(240, Math.min(next, window.innerWidth - 380))));
 		};
 		const handleMouseUp = () => {
 			setIsDraggingList(false);
@@ -164,6 +166,7 @@ export default function MailPage() {
 			document.body.style.cursor = "";
 		}
 		return () => {
+			cancelAnimationFrame(frame);
 			document.removeEventListener("mousemove", handleMouseMove);
 			document.removeEventListener("mouseup", handleMouseUp);
 			document.body.style.userSelect = "";
@@ -173,12 +176,13 @@ export default function MailPage() {
 
 	// Persist the width so it survives reloads.
 	useEffect(() => {
+		if (isDraggingList) return;
 		try {
 			localStorage.setItem("ezmail_list_width", String(Math.round(listWidth)));
 		} catch {
 			// localStorage may be unavailable; non-fatal
 		}
-	}, [listWidth]);
+	}, [listWidth, isDraggingList]);
 
 	const [listState, setListState] = useState({
 		refresh: null,
