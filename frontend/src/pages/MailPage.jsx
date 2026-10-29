@@ -258,16 +258,18 @@ export default function MailPage() {
 			return;
 		}
 		if (typeof Notification === "undefined") {
-			showToast({ text: "This browser doesn't support notifications" });
-			return;
+			const message = "This browser doesn't support notifications";
+			showToast({ text: message });
+			return message;
 		}
 		const permission =
 			Notification.permission === "default"
 				? await Notification.requestPermission()
 				: Notification.permission;
 		if (permission !== "granted") {
-			showToast({ text: "Notifications are blocked for this site" });
-			return;
+			const message = "Notifications are blocked for this site";
+			showToast({ text: message });
+			return message;
 		}
 		setNotifyOn(true);
 		writeNotifyPref(true);
@@ -647,7 +649,7 @@ export default function MailPage() {
 							type="button"
 							onClick={() => setSettingsOpen(true)}
 							aria-label="Settings"
-							title="Settings — security & mail filters"
+				title="Settings"
 							className="flex h-8 w-8 items-center justify-center rounded-md text-ink-muted transition hover:bg-hover hover:text-ink-2"
 						>
 							<Settings className="h-4 w-4" />
@@ -1100,7 +1102,8 @@ export default function MailPage() {
 				onClose={() => setSettingsOpen(false)}
 				mailbox={user?.mailbox}
 				folders={folders}
-				initialTab="security"
+				notifyOn={notifyOn}
+				onToggleNotify={toggleNotify}
 			/>
 		</div>
 	);

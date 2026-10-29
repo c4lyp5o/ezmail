@@ -1,4 +1,4 @@
-import { Filter, Loader2, Plus, Trash2 } from "lucide-react";
+import { Loader2, Plus, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { apiCall } from "../utils/apiCall.js";
 
@@ -127,17 +127,7 @@ export default function FiltersTab({ mailbox, folders = [] }) {
 
 	return (
 		<div>
-			<div className="mb-1 flex items-center gap-2.5">
-				<div className="flex h-9 w-9 items-center justify-center rounded-lg bg-accent/15 text-accent">
-					<Filter className="h-4.5 w-4.5" />
-				</div>
-				<div>
-					<h3 className="text-lg font-semibold text-ink-2">Mail filters</h3>
-					<p className="text-xs text-ink-faint">
-						Server-side sorting for {mailbox} — applies the moment mail arrives.
-					</p>
-				</div>
-			</div>
+			<p className="text-sm text-ink-muted">Rules apply to new mail as it arrives. The first matching rule wins.</p>
 
 			{conflict && <div role="alert" className="mt-3 text-sm text-danger">The active script is not an ezmail-generated script. It is read-only here; manage it externally.<pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap">{source}</pre></div>}
 			{loadFailed && <div role="alert" className="mt-3 text-sm text-danger">{error} <button type="button" onClick={load} className="underline">Retry</button></div>}
