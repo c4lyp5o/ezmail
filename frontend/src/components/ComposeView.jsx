@@ -224,6 +224,7 @@ export default function ComposeView({ onBack, initial, onSent, onBusyChange, onU
 					{error}
 				</div>
 			)}
+				<p className="px-4 py-1 text-xs text-ink-muted">One draft is saved locally per mailbox. Forwarded attachments are limited to 25 MiB total.</p>
 
 			{/* Ctrl/⌘+Enter sends */}
 			<form
