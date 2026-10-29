@@ -41,6 +41,8 @@ Everything is set in `backend/.env` (see [`backend/.env.example`](backend/.env.e
 | `COOKIE_SECURE` | auto | Force the Secure cookie flag (e.g. TLS terminated at a reverse proxy). |
 | `TOTP_ENC_KEY` | generated | Key that encrypts stored mailbox passwords (sessions and TOTP). Set a stable random 64-char string in production. Changing it signs everyone out and invalidates TOTP enrolments. |
 | `JWT_SECRET` | — | Legacy fallback for `TOTP_ENC_KEY`. |
+| `TRUST_PROXY` | `false` | Set `true` behind a reverse proxy (e.g. Traefik) so login throttling is per client address from `X-Forwarded-For`; otherwise all users share the proxy's address. |
+| `IMAP_POOL_IDLE_MS` | `30000` | How long an idle IMAP connection is kept for reuse. `0` disables reuse. |
 | `SAVE_SENT` | `true` | Append sent mail to the Sent folder. Set `false` if your server already does (e.g. Gmail). |
 | `SIEVE_HOST` | `IMAP_HOST` | ManageSieve server hostname. |
 | `SIEVE_PORT` | `4190` | ManageSieve server port. |

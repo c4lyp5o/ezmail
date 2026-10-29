@@ -5,6 +5,10 @@ All notable changes to ezmail are recorded here. The format follows [Keep a Chan
 ## [Unreleased]
 
 ### Changed
+- IMAP connections are reused for up to 30 s per mailbox (`IMAP_POOL_IDLE_MS`, `0` to disable) and connects now time out after 15 s. Folder-list polling slows to every two minutes while live updates are connected.
+- **Login throttling is per client:** with `TRUST_PROXY=true` password and discovery limits key on client address + mailbox, so one person's failures no longer lock a mailbox for everyone; a mailbox-wide ceiling of 100 failures remains. Without `TRUST_PROXY` all clients behind a proxy share one address, as before. Successful logins reset the discovery count.
+- **TOTP codes are single-use:** a code (or one from an earlier time step) is rejected after a successful login or recovery. Re-using the same code within its window now returns 401.
+- Deleting a message in a mailbox without a Trash folder creates one instead of failing. Conversation view also searches Archive.
 - **Breaking filter configuration:** filters now use ManageSieve instead of writing under `MAIL_DATA_DIR`. Configure `SIEVE_HOST`, `SIEVE_PORT`, and `SIEVE_TLS`; existing files are retained for manual recovery and are not migrated automatically.
 - HTTP request bodies are limited to 32 MiB, including the base64 representation of outgoing attachments.
 - Message display downloads headers and text parts instead of the full MIME source; displayable text is limited to 8 MiB per message.
@@ -13,6 +17,8 @@ All notable changes to ezmail are recorded here. The format follows [Keep a Chan
 - Login discovery is rate limited, and password attempts are counted before IMAP verification.
 
 ### Added
+- Create folders from the sidebar (`POST /api/v1/mail/folders`).
+- Bcc recipients when composing (`bcc` on `POST /api/v1/mail/send`). Bcc addresses are used for delivery only and are not in the message or the Sent copy.
 - `GET /api/v1/filters/` returns `lastCheck` (epoch milliseconds of the last successful IMAP fallback check) when the fallback is active. Existing databases gain a nullable `fallback_filters.last_success` column automatically on startup.
 - Filters panel: rules read as sentences with a folder picker, can be reordered, can be tried against a sample message without moving mail, show the filtering method and any fallback error, and ask before discarding unsaved edits or deleting all rules.
 - Optional continuous IMAP filtering when ManageSieve is unavailable. The background worker checks new inbox mail while ezmail is running and retains encrypted credentials until disabled or removed.
@@ -22,6 +28,7 @@ All notable changes to ezmail are recorded here. The format follows [Keep a Chan
 - Send responses indicate when saving to Sent is disabled; the composer warns when saving fails.
 
 ### Fixed
+- Single-part messages (no MIME multipart) opened with a blank body because imapflow gives their root structure no part number. They now display, and a lone attachment is listed and downloadable.
 - Isolate message-list caches between sessions, ignore stale message responses, and surface read-marker and reader errors.
 - Preserve the latest draft on navigation and protect an in-flight send. Settings and mail dialogs manage keyboard focus; authentication labels are associated with inputs.
 - Pending TOTP re-enrollment preserves the active credentials until confirmation.
