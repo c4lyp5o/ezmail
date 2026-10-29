@@ -77,7 +77,7 @@ test("test rule reports the first matching rule and destination without calling 
 	await screen.findByDisplayValue("invoice");
 	fireEvent.change(screen.getByLabelText("Sample subject"), { target: { value: "March INVOICE" } });
 	fireEvent.change(screen.getByLabelText("Sample from"), { target: { value: "Ann <ann@Example.com>" } });
-	expect(screen.getByText(/Rule 1 matches\..*moved to Finance.*Also matches rule 2/)).toBeTruthy();
+	expect(screen.getByText(/Rule 1 matches\. If Subject contains "invoice", move to Finance\..*Also matches rule 2/)).toBeTruthy();
 	fireEvent.change(screen.getByLabelText("Sample subject"), { target: { value: "hello" } });
 	fireEvent.change(screen.getByLabelText("Sample from"), { target: { value: "x@else.test" } });
 	expect(screen.getByText("No rule matches. The message would stay in Inbox.")).toBeTruthy();
@@ -89,6 +89,7 @@ test("shows the fallback method and its current error", async () => {
 	render(<FiltersTab mailbox="me@x.io" />);
 	expect(await screen.findByText("ezmail fallback")).toBeTruthy();
 	expect(screen.getByText(/Problem: Filtering failed/)).toBeTruthy();
+	expect(screen.getByText("Last successful check: none yet")).toBeTruthy();
 });
 
 test("reports unsaved edits and clears them after saving", async () => {
@@ -126,4 +127,11 @@ test("focus returns to Add filter after deleting all, and a new folder can go ba
 	fireEvent.click(screen.getByText("Delete all"));
 	fireEvent.click(screen.getByRole("button", { name: "Delete all filters" }));
 	await waitFor(() => expect(document.activeElement).toBe(screen.getByText("Add filter").closest("button")));
+});
+
+test("shows when the fallback last checked successfully", async () => {
+	const lastCheck = Date.UTC(2026, 9, 29, 12, 0, 0);
+	mockApi({ "GET /filters": { mode: "imap", rules: [], enabled: true, lastCheck } });
+	render(<FiltersTab mailbox="me@x.io" />);
+	expect(await screen.findByText(`Last successful check: ${new Date(lastCheck).toLocaleString()}`)).toBeTruthy();
 });

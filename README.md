@@ -55,10 +55,15 @@ the inbox about once a minute while ezmail is running, including after logout;
 it catches up after a restart, but cannot run while ezmail is stopped. It moves
 only messages arriving after the rules are enabled, with the first match winning.
 Existing server-side rules can still run and are not imported or disabled.
+The Filters panel shows which method is active and, for the fallback, the last
+successful check and any current error.
 The fallback stores the mailbox password encrypted in ezmail's database until
 the fallback is disabled or deleted. Keep the database and `TOTP_ENC_KEY` secure;
 after changing the mailbox password, sign in with the new credentials (or use
 TOTP recovery) to refresh the worker's stored password.
+Rules are listed in priority order and can be reordered; a **Test your rules**
+box shows which rule a sample sender, recipient or subject would match without
+moving mail.
 Active scripts are editable only when they exactly match ezmail's generated
 template. Other active scripts are shown read-only and must be managed
 externally. New scripts use new names; ezmail keeps the previous managed

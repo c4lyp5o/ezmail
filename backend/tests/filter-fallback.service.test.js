@@ -33,6 +33,22 @@ describe("continuous IMAP filter fallback", () => {
 		expect(imap.boxes.get("Bills").messages).toHaveLength(1);
 	});
 
+	test("records the last successful check and keeps it across a later failure", async () => {
+		await saveFallback(user, rules, true);
+		expect(getFallback(user.mailbox).lastCheck).toBeUndefined();
+		const before = Date.now();
+		await runFallbackMailbox(user.mailbox);
+		const first = getFallback(user.mailbox).lastCheck;
+		expect(first).toBeGreaterThanOrEqual(before);
+		imap.addMessage("INBOX", { subject: "invoice" });
+		imap.failMove = true;
+		await runFallbackMailbox(user.mailbox);
+		const failed = getFallback(user.mailbox);
+		expect(failed.lastError).toContain("retry");
+		expect(failed.lastCheck).toBe(first);
+		imap.failMove = false;
+	});
+
 	test("retries failed moves without advancing past the message", async () => {
 		await saveFallback(user, rules, true);
 		imap.addMessage("INBOX", { subject: "invoice" });

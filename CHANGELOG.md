@@ -13,6 +13,7 @@ All notable changes to ezmail are recorded here. The format follows [Keep a Chan
 - Login discovery is rate limited, and password attempts are counted before IMAP verification.
 
 ### Added
+- `GET /api/v1/filters/` returns `lastCheck` (epoch milliseconds of the last successful IMAP fallback check) when the fallback is active. Existing databases gain a nullable `fallback_filters.last_success` column automatically on startup.
 - Filters panel: rules read as sentences with a folder picker, can be reordered, can be tried against a sample message without moving mail, show the filtering method and any fallback error, and ask before discarding unsaved edits or deleting all rules.
 - Optional continuous IMAP filtering when ManageSieve is unavailable. The background worker checks new inbox mail while ezmail is running and retains encrypted credentials until disabled or removed.
 - Mail search is debounced and can be cleared; the sidebar shows live-update status. Move notifications remain available for ten seconds and explain when undo is unavailable.

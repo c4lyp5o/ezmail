@@ -44,6 +44,10 @@ db.run(`
 		lease_owner TEXT
 	);
 `);
+// Added after the table first shipped; CREATE TABLE IF NOT EXISTS won't add it to existing databases.
+if (!db.query("PRAGMA table_info(fallback_filters)").all().some((column) => column.name === "last_success")) {
+	db.run("ALTER TABLE fallback_filters ADD COLUMN last_success INTEGER");
+}
 
 export function getSetting(key) {
 	const row = db.query("SELECT value FROM settings WHERE key = ?").get(key);

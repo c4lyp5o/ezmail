@@ -27,7 +27,7 @@ function TestRule({ rules, enabled }) {
 	if (entered && !winner) result = "No rule matches. The message would stay in Inbox.";
 	if (winner) {
 		const stays = winner.folder.toUpperCase() === "INBOX";
-		result = `Rule ${hits[0] + 1} matches. ${describeRule(winner)} The message would ${stays ? "stay in Inbox" : `be moved to ${winner.folder}`}.`;
+		result = `Rule ${hits[0] + 1} matches. ${describeRule(winner)}${stays ? " The message would stay in Inbox." : ""}`;
 		if (hits.length > 1) result += ` Also matches rule ${hits.slice(1).map((i) => i + 1).join(", ")}, but the first match wins.`;
 	}
 	if (entered && !enabled) result += " Filtering is turned off, so no rule would run.";
@@ -67,6 +67,7 @@ export default function FiltersTab({ mailbox, folders = [], onDirtyChange }) {
 	const [saved, setSaved] = useState(false);
 	const [mode, setMode] = useState("sieve");
 	const [workerError, setWorkerError] = useState("");
+	const [lastCheck, setLastCheck] = useState(null);
 	const [baseline, setBaseline] = useState(null);
 	const [announce, setAnnounce] = useState("");
 	const listRef = useRef(null);
@@ -109,6 +110,7 @@ export default function FiltersTab({ mailbox, folders = [], onDirtyChange }) {
 			setSource(res.data?.sieveSource || "");
 			setMode(nextMode);
 			setWorkerError(res.data?.lastError || "");
+			setLastCheck(res.data?.lastCheck ?? null);
 			setBaseline(snapshot(next, nextEnabled, nextMode));
 		} catch (err) {
 			setLoadFailed(true);
@@ -128,6 +130,7 @@ export default function FiltersTab({ mailbox, folders = [], onDirtyChange }) {
 			setConflict(false);
 			setSource("");
 			setWorkerError("");
+			setLastCheck(null);
 			setBaseline(null);
 			load();
 		}
@@ -139,7 +142,10 @@ export default function FiltersTab({ mailbox, folders = [], onDirtyChange }) {
 		const timer = setInterval(async () => {
 			try {
 				const response = await apiCall.get("/filters");
-				if (active && response.data?.mode === "imap") setWorkerError(response.data.lastError || "");
+				if (active && response.data?.mode === "imap") {
+					setWorkerError(response.data.lastError || "");
+					setLastCheck(response.data.lastCheck ?? null);
+				}
 			} catch {
 				if (active) setWorkerError("Could not check filtering status. Try again later.");
 			}
@@ -244,6 +250,7 @@ export default function FiltersTab({ mailbox, folders = [], onDirtyChange }) {
 					</>}
 					{mode === "imap" && <>
 						<p className="mt-2 text-xs text-ink-muted">Your mailbox password is stored encrypted for this feature. Disabling or deleting these rules removes the stored password.</p>
+						<p className="mt-2 text-xs text-ink-muted">Last successful check: {lastCheck ? new Date(lastCheck).toLocaleString() : "none yet"}</p>
 						{workerError
 							? <p role="alert" className="mt-2 text-danger">Problem: {workerError}</p>
 							: <p role="status" className="mt-2 text-xs text-ink-muted">No problems reported.</p>}

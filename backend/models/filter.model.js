@@ -22,6 +22,7 @@ export const FilterModel = {
 				conflict: t.Optional(t.Boolean()),
 				mode: t.Optional(t.Union([t.Literal("sieve"), t.Literal("imap"), t.Literal("unavailable")])),
 				lastError: t.Optional(t.String()),
+				lastCheck: t.Optional(t.Number()),
 			}),
 		),
 	}),

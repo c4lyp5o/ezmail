@@ -13,7 +13,7 @@ const keyFor = (mailbox) => mailbox.trim().toLowerCase();
 export function getFallback(mailbox) {
 	const row = db.query("SELECT * FROM fallback_filters WHERE mailbox = ?").get(keyFor(mailbox));
 	if (!row) return null;
-	return { mode: "imap", enabled: !!row.enabled, rules: JSON.parse(row.rules_json), lastError: row.last_error || undefined };
+	return { mode: "imap", enabled: !!row.enabled, rules: JSON.parse(row.rules_json), lastError: row.last_error || undefined, lastCheck: row.last_success || undefined };
 }
 
 // Called after successful login to keep a persistent worker's credential current.
@@ -48,9 +48,10 @@ export async function saveFallback(user, rules, enabled) {
 		ON CONFLICT(mailbox) DO UPDATE SET username = excluded.username, pass_enc = excluded.pass_enc, rules_json = excluded.rules_json,
 		enabled = excluded.enabled, uid_validity = CASE WHEN ? THEN excluded.uid_validity ELSE fallback_filters.uid_validity END,
 		last_uid = CASE WHEN ? THEN excluded.last_uid ELSE fallback_filters.last_uid END,
+		last_success = CASE WHEN ? THEN NULL ELSE fallback_filters.last_success END,
 		revision = fallback_filters.revision + 1, last_error = NULL`)
 		.run(mailbox, user.mailbox, enabled ? encryptSecret(user.password) : null, JSON.stringify(rules), enabled ? 1 : 0,
-			cursor?.validity || "", cursor?.uid || 0, cursor ? 1 : 0, cursor ? 1 : 0);
+			cursor?.validity || "", cursor?.uid || 0, cursor ? 1 : 0, cursor ? 1 : 0, cursor ? 1 : 0);
 }
 
 export function removeFallback(mailbox) {
@@ -122,6 +123,7 @@ export async function runFallbackMailbox(mailbox) {
 				}
 			} finally { lock.release(); }
 		});
+		db.query("UPDATE fallback_filters SET last_success = ? WHERE mailbox = ? AND lease_owner = ?").run(Date.now(), key, owner);
 	} catch (err) {
 		logger.warn(`[FILTERS] IMAP fallback failed: ${err.message}`);
 		db.query("UPDATE fallback_filters SET last_error = ? WHERE mailbox = ? AND lease_owner = ?")
