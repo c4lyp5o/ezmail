@@ -91,6 +91,7 @@ export default function MailPage() {
 	const { user, logout } = useAuth();
 	const navigate = useNavigate();
 	const [folders, setFolders] = useState([]);
+	const [folderError, setFolderError] = useState("");
 	const [activeFolder, setActiveFolder] = useState("INBOX");
 	const [view, setView] = useState({ type: "folder" }); // {type:'folder'} | {type:'message', folder, uid, msg} | {type:'compose'}
 	const [selected, setSelected] = useState(() => new Set()); // Set of UIDs, persists across opens
@@ -207,8 +208,9 @@ export default function MailPage() {
 		try {
 			const res = await apiCall.get("/mail/folders");
 			setFolders(res.data || []);
-		} catch {
-			// folders stay empty; list drives UI
+			setFolderError("");
+		} catch (err) {
+			setFolderError(err.message || "Could not load folders");
 		}
 	}, []);
 
@@ -631,6 +633,7 @@ export default function MailPage() {
 					active={activeFolder}
 					onSelect={selectFolder}
 				/>
+				{folderError && <div role="alert" className="px-4 text-xs text-danger">{folderError} <button type="button" onClick={loadFolders} className="underline">Retry</button></div>}
 
 				<div className="mt-auto border-t border-hair p-4">
 					<div className="px-1">
