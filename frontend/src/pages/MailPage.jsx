@@ -537,12 +537,18 @@ export default function MailPage() {
 	// Events are hints; we refetch. While live, list polling backs off. The
 	// browser's EventSource reconnects on its own after drops.
 	const mailEvent = useRef(null);
+	const liveRefreshTimer = useRef(null);
 	mailEvent.current = (ev) => {
 		if (ev.type === "ready") setLive(true);
 		else if (ev.type === "closed" || ev.type === "error") setLive(false);
 		else if (ev.type === "new" || ev.type === "changed") {
-			if (activeFolder === "INBOX") refreshList?.();
-			loadFolders();
+			if (!liveRefreshTimer.current) {
+				liveRefreshTimer.current = setTimeout(() => {
+					liveRefreshTimer.current = null;
+					if (activeFolder === "INBOX") refreshList?.();
+					loadFolders();
+				}, 300);
+			}
 			if (
 				ev.type === "new" &&
 				notifyOn &&
@@ -573,7 +579,7 @@ export default function MailPage() {
 			}
 		};
 		es.onerror = () => setLive(false);
-		return () => es.close();
+		return () => { es.close(); clearTimeout(liveRefreshTimer.current); liveRefreshTimer.current = null; };
 	}, []);
 
 	return (
@@ -631,6 +637,7 @@ export default function MailPage() {
 						<div className="min-w-0 truncate text-sm font-medium text-ink-2">
 							{user?.mailbox || "mailbox"}
 						</div>
+						<div className="text-xs text-ink-muted" role="status">{live ? "Live updates connected" : "Live updates reconnecting; polling active"}</div>
 					</div>
 					<div className="mt-3 flex items-center justify-between px-1">
 						<button
