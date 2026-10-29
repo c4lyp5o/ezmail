@@ -8,12 +8,13 @@ import sanitizeHtml from "sanitize-html";
 import { MAIL_SERVER } from "../config.js";
 import { generalLogger as logger } from "../logger.js";
 import { getUser } from "../plugins/auth.plugin.js";
+import { createPool } from "./imap-pool.service.js";
 import { getDisplayName } from "./profile.service.js";
 
 // Builds an IMAP client bound to the authenticated user's mailbox. No global
 // account — the credentials come from the server-side session (created only
 // after IMAP auth).
-export function buildImapClient({ mailbox, password }) {
+export function buildImapClient({ mailbox, password }, options = {}) {
 	return new ImapFlow({
 		host: MAIL_SERVER.imapHost,
 		port: MAIL_SERVER.imapPort,
@@ -23,18 +24,14 @@ export function buildImapClient({ mailbox, password }) {
 			pass: password,
 		},
 		logger: false,
+		...options,
 	});
 }
 
-async function withImap(user, fn) {
-	const client = buildImapClient(user);
-	try {
-		await client.connect();
-		return await fn(client);
-	} finally {
-		await client.logout().catch(() => {});
-	}
-}
+const pool = createPool(buildImapClient);
+export const closeImapPool = () => pool.closeIdle();
+
+const withImap = (user, fn) => pool.use(user, fn);
 
 async function withClient(user, status, fn) {
 	if (!user?.mailbox || !user?.password) {
@@ -42,17 +39,12 @@ async function withClient(user, status, fn) {
 			? status(401, { success: false, message: "Unauthorized" })
 			: { success: false, message: "Unauthorized" };
 	}
-	const client = buildImapClient(user);
 	try {
-		await client.connect();
-		const result = await fn(client);
-		return { success: true, data: result };
+		return { success: true, data: await pool.use(user, fn) };
 	} catch (err) {
 		logImapError(err);
 		const body = { success: false, message: "Mail command failed" };
 		return status ? status(502, body) : body;
-	} finally {
-		await client.logout().catch(() => {});
 	}
 }
 
@@ -111,24 +103,25 @@ async function findSpecialFolder(client, use, namePattern) {
 }
 const TRASH_NAMES = /^(trash|bin|deleted( items| messages)?)$/i;
 const SENT_NAMES = /^sent( items| mail| messages)?$/i;
+// Same character set the Sieve filters accept, so a new folder can always be a rule target.
+const NEW_FOLDER_NAME = /^[A-Za-z0-9][A-Za-z0-9 _-]*$/;
+const ARCHIVE_NAMES = /^(archive|archives|all mail)$/i;
 
 // Saves a copy of a sent message to the account's Sent folder. Most IMAP
 // servers (docker-mailserver/Dovecot included) don't do this on SMTP submit.
 // Set SAVE_SENT=false for servers that already do (e.g. Gmail) to avoid dupes.
 async function saveToSent(user, raw) {
 	if (process.env.SAVE_SENT === "false") return false;
-	const client = buildImapClient(user);
 	try {
-		await client.connect();
-		const sent = await findSpecialFolder(client, "\\Sent", SENT_NAMES);
-		if (!sent) return false;
-		await client.append(sent, raw, ["\\Seen"]);
-		return true;
+		return await withImap(user, async (client) => {
+			const sent = await findSpecialFolder(client, "\\Sent", SENT_NAMES);
+			if (!sent) return false;
+			await client.append(sent, raw, ["\\Seen"]);
+			return true;
+		});
 	} catch (err) {
 		logImapError(err);
 		return false;
-	} finally {
-		await client.logout().catch(() => {});
 	}
 }
 
@@ -138,6 +131,88 @@ async function fetchParsed(client, folder, uid) {
 	const msg = await client.fetchOne(Number(uid), { source: true }, { uid: true });
 	if (!msg) return null;
 	return { msg, parsed: await simpleParser(msg.source, { keepCidLinks: true }) };
+}
+
+// imapflow leaves `part` off the root of a single-part message, but the body is
+// still addressable as part "1". Without this such messages open blank.
+const withRootPart = (structure) =>
+	structure && !structure.part && !structure.childNodes?.length ? { ...structure, part: "1" } : structure;
+
+// A single traversal defines the indexes exposed by the message API and used
+// for both downloads and forwarding. Do not descend into attached messages.
+function attachmentParts(structure) {
+	const parts = [];
+	function visit(node, related = false) {
+		if (!node) return;
+		const disposition = String(node.disposition || "").toLowerCase();
+		const attached = disposition === "attachment" || disposition === "inline" ||
+			!!node.dispositionParameters?.filename || !!node.parameters?.name ||
+			(related && !!node.id);
+		if (attached && node.part) {
+			parts.push({
+				part: node.part,
+				filename: node.dispositionParameters?.filename || node.parameters?.name || "attachment",
+				contentType: node.type || "application/octet-stream",
+				size: node.size || 0,
+				contentId: node.id || undefined,
+				related: related && !!node.id,
+			});
+			return;
+		}
+		for (const child of node.childNodes || []) visit(child, related || String(node.type).toLowerCase() === "multipart/related");
+	}
+	visit(withRootPart(structure));
+	return parts;
+}
+
+const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+const MAX_ENCODED_ATTACHMENT_BYTES = 36 * 1024 * 1024;
+async function loadAttachment(client, uid, part) {
+	if (!Number.isFinite(part.size) || part.size > MAX_ENCODED_ATTACHMENT_BYTES)
+		throw new Error("Attachment exceeds the encoded size limit");
+	// downloadMany decodes transfer encoding without charset or flowed-text
+	// transformations, preserving the original attachment bytes.
+	const result = await client.downloadMany(Number(uid), [part.part], {
+		uid: true, maxBytes: MAX_ENCODED_ATTACHMENT_BYTES + 1,
+	});
+	const content = result?.[part.part]?.content;
+	if (!Buffer.isBuffer(content)) throw new Error("Attachment not found");
+	if (content.length > MAX_ATTACHMENT_BYTES) throw new Error("Attachment exceeds 25 MiB limit");
+	return content;
+}
+
+// Fetch only displayable text parts; attachment bodies are downloaded on demand.
+async function loadDisplayBodies(client, uid, structure, attachments) {
+	const attachmentIds = new Set(attachments.map((part) => part.part));
+	const candidates = { "text/plain": [], "text/html": [] };
+	function visit(node) {
+		if (!node || attachmentIds.has(node.part)) return;
+		const type = String(node.type || "").toLowerCase();
+		if (candidates[type] && node.part) candidates[type].push(node.part);
+		for (const child of node.childNodes || []) visit(child);
+	}
+	visit(withRootPart(structure));
+	const bodies = { text: "", html: "" };
+	let total = 0;
+	for (const [type, key] of [["text/plain", "text"], ["text/html", "html"]]) {
+		for (const part of candidates[type]) {
+			const result = await client.download(Number(uid), part, { uid: true, maxBytes: 8 * 1024 * 1024 + 1 });
+			if (!result?.content) throw new Error("Message body part not found");
+			const chunks = [];
+			let size = 0;
+			for await (const chunk of result.content) {
+				size += chunk.length;
+				total += chunk.length;
+				if (total > 8 * 1024 * 1024) {
+					result.content.destroy();
+					throw new Error("Message body exceeds 8 MiB limit");
+				}
+				chunks.push(chunk);
+			}
+			bodies[key] += Buffer.concat(chunks, size).toString("utf8");
+		}
+	}
+	return bodies;
 }
 
 const attachmentUrl = (folder, uid, index) =>
@@ -174,21 +249,8 @@ function mapEnvelope(msg) {
 		date: msg.envelope?.date || msg.internalDate,
 		flags,
 		seen: flags.includes("\\Seen"),
-		attachments: countAttachments(msg.bodyStructure),
+		attachments: attachmentParts(msg.bodyStructure).length,
 	};
-}
-
-// imapflow's bodyStructure nests parts in childNodes; attachments carry a
-// disposition of "attachment"/"inline". Count them recursively.
-function countAttachments(bs) {
-	let count = 0;
-	const walk = (n) => {
-		if (!n) return;
-		if (n.disposition && /attachment|inline/i.test(n.disposition)) count++;
-		(n.childNodes || []).forEach(walk);
-	};
-	walk(bs?.childNodes ? { childNodes: bs.childNodes } : null);
-	return count;
 }
 
 // imapflow returns message flags as a Set (not an Array). Normalize to a
@@ -199,6 +261,29 @@ function toFlagsArray(flags) {
 		return [...flags];
 	}
 	return [];
+}
+
+// Fresh INBOX unseen count for the response, or undefined when the server
+// can't say (the client keeps its current badge).
+async function currentInboxUnseen(client) {
+	try {
+		return Number((await client.status("INBOX", { unseen: true }))?.unseen) || 0;
+	} catch {
+		return undefined;
+	}
+}
+
+async function changeFlags(method, cookie, body, status) {
+	const user = await getUser(cookie);
+	if (!user?.mailbox || !user?.password)
+		return status(401, { success: false, message: "Unauthorized" });
+	const { folder, uids, flags } = body;
+	return withClient(user, status, async (client) => {
+		const lock = await client.getMailboxLock(folder);
+		try { await client[method](uids, flags, { uid: true }); }
+		finally { lock.release(); }
+		return { uids, flags, inboxUnseen: await currentInboxUnseen(client) };
+	});
 }
 
 export const MailService = {
@@ -223,6 +308,25 @@ export const MailService = {
 
 			return folders;
 		});
+	},
+
+	// --- create a top-level folder ---
+	createFolder: async ({ cookie, body, status }) => {
+		const user = await getUser(cookie);
+		if (!user?.mailbox || !user?.password)
+			return status(401, { success: false, message: "Unauthorized" });
+		const name = body.name.trim();
+		if (!NEW_FOLDER_NAME.test(name) || name.toUpperCase() === "INBOX")
+			return status(400, { success: false, message: "Use letters, numbers, spaces, dashes and underscores." });
+		const res = await withClient(user, status, async (client) => {
+			const existing = await client.list();
+			if (existing.some((f) => f.path.toLowerCase() === name.toLowerCase())) return { path: name, created: false };
+			const made = await client.mailboxCreate(name);
+			return { path: made?.path || name, created: true };
+		});
+		if (res?.data?.created === false)
+			return status(409, { success: false, message: "A folder with that name already exists." });
+		return res?.data ? { success: true, data: { path: res.data.path } } : res;
 	},
 
 	// --- message list (envelope only) ---
@@ -306,12 +410,8 @@ export const MailService = {
 					}
 				}
 
-				// 5. Sort the page by date
-				pageItems.sort((a, b) => {
-					const da = new Date(a.internalDate || a.date || 0).getTime();
-					const db = new Date(b.internalDate || b.date || 0).getTime();
-					return sort === "asc" ? da - db : db - da;
-				});
+				// IMAP returns sequence/UID order; reverse for newest arrival first.
+				if (sort !== "asc") pageItems.reverse();
 				const messages = pageItems.map((msg) => mapEnvelope(msg));
 
 				return { messages, total, page, pageSize: size, sort, search };
@@ -336,7 +436,8 @@ export const MailService = {
 					envelope: true,
 					flags: true,
 					internalDate: true,
-					source: true,
+					headers: true,
+					bodyStructure: true,
 				},
 				{ uid: true },
 			);
@@ -348,43 +449,38 @@ export const MailService = {
 				return null;
 			}
 
-			// Parse the raw source with mailparser: handles multipart,
-			// quoted-printable/base64, HTML+text alternatives, attachments.
+			// Parse headers independently so the message body need not include attachments.
 			let parsed;
 			try {
-				parsed = await simpleParser(msg.source, { keepCidLinks: true });
+				parsed = await simpleParser(Buffer.concat([msg.headers || Buffer.alloc(0), Buffer.from("\r\n")]), { keepCidLinks: true });
 			} catch (err) {
 				logger.error(`[MAIL] 💥[parse] ${err.message}`);
 				parsed = null;
 			}
 
 			// Metadata only — bytes come from the attachment endpoint on demand.
-			const rawAttachments = parsed?.attachments || [];
+			const rawAttachments = attachmentParts(msg.bodyStructure);
+			const bodies = await loadDisplayBodies(client, uid, msg.bodyStructure, rawAttachments);
 			const attachments = rawAttachments.map((a, index) => ({
 				index,
 				filename: a.filename || "attachment",
 				contentType: a.contentType || "application/octet-stream",
-				size: a.size || a.content?.length || 0,
+				size: a.size || 0,
 				contentId: a.contentId || undefined,
-				related: !!a.related,
+				related: a.related,
 			}));
 
 			// Extra display headers for the toggleable detail panel.
-			const hdrs = parsed?.headers || {};
-			const replyTo =
-				parsed?.replyTo?.text ||
-				"" ||
-				(hdrs.get?.("reply-to")?.[0]?.value ?? "");
-			const mailedBy =
-				(hdrs.get?.("x-mailer")?.[0]?.value ?? "") ||
-				(hdrs.get?.("user-agent")?.[0]?.value ?? "");
-			const signedBy = hdrs.get?.("x-dkim-signature")
-				? (() => {
-						const raw = hdrs.get("x-dkim-signature")?.[0]?.value || "";
-						const m = raw.match(/d=([^\s;]+)/i);
-						return m ? m[1] : "";
-					})()
-				: "";
+			const hdrs = parsed?.headers;
+			// mailparser returns plain strings for most headers, objects for structured ones.
+			const header = (name) => {
+				const raw = hdrs?.get?.(name);
+				const first = Array.isArray(raw) ? raw[0] : raw;
+				return typeof first === "string" ? first : String(first?.value ?? "");
+			};
+			const replyTo = parsed?.replyTo?.text || "";
+			const mailedBy = header("x-mailer") || header("user-agent");
+			const signedBy = header("x-dkim-signature").match(/d=([^\s;]+)/i)?.[1] || "";
 
 			return {
 				uid: msg.uid,
@@ -411,9 +507,9 @@ export const MailService = {
 				mailedBy,
 				signedBy,
 				html:
-					rewriteCidLinks(parsed?.html, rawAttachments, folder || "INBOX", msg.uid) ||
+					rewriteCidLinks(bodies.html, rawAttachments, folder || "INBOX", msg.uid) ||
 					"",
-				text: parsed?.text || "",
+				text: bodies.text,
 				attachments,
 			};
 		});
@@ -444,7 +540,8 @@ export const MailService = {
 			const query = terms.length > 1 ? { or: terms } : terms[0];
 
 			const sent = await findSpecialFolder(client, "\\Sent", SENT_NAMES);
-			const boxes = [...new Set(["INBOX", folder, sent].filter(Boolean))];
+			const archive = await findSpecialFolder(client, "\\Archive", ARCHIVE_NAMES);
+			const boxes = [...new Set(["INBOX", folder, sent, archive].filter(Boolean))];
 			const items = [];
 			for (const box of boxes) {
 				const lock = await client.getMailboxLock(box);
@@ -484,12 +581,18 @@ export const MailService = {
 		const { folder, uid, index } = params;
 		let found;
 		try {
-			found = await withImap(user, (client) => fetchParsed(client, folder, uid));
+			found = await withImap(user, async (client) => {
+				await client.mailboxOpen(folder || "INBOX");
+				const msg = await client.fetchOne(Number(uid), { bodyStructure: true }, { uid: true });
+				const part = attachmentParts(msg?.bodyStructure)[Number(index)];
+				if (!part) return null;
+				return { ...part, content: await loadAttachment(client, uid, part) };
+			});
 		} catch (err) {
 			logImapError(err);
 			return status(502, { success: false, message: "Mail command failed" });
 		}
-		const a = found?.parsed?.attachments?.[Number(index)];
+		const a = found;
 		if (!a) return status(404, { success: false, message: "Not Found" });
 
 		// Served from our own origin, so never let it render as a page:
@@ -501,54 +604,14 @@ export const MailService = {
 				"Content-Length": String(a.content.length),
 				"X-Content-Type-Options": "nosniff",
 				"Content-Security-Policy": "default-src 'none'; sandbox",
-				"Cache-Control": "private, max-age=3600",
+				"Cache-Control": "no-store",
 			},
 		});
 	},
 
-	// --- set flags (read/unread/delete) ---
-	setFlags: async ({ cookie, body, status }) => {
-		const user = await getUser(cookie);
-		if (!user?.mailbox || !user?.password)
-			return status(401, { success: false, message: "Unauthorized" });
-		const { folder, uids, flags } = body;
-		return withClient(user, status, async (client) => {
-			const lock = await client.getMailboxLock(folder);
-			await client.messageFlagsAdd(uids, flags, { uid: true });
-			lock.release();
-			// Piggyback fresh INBOX unseen on the same connection (no extra
-			// request from the client).
-			let inboxUnseen;
-			try {
-				const s = await client.status("INBOX", { unseen: true });
-				inboxUnseen = Number(s?.unseen) || 0;
-			} catch {
-				// leave undefined — client keeps its current badge
-			}
-			return { uids: uids, flags: flags, inboxUnseen };
-		});
-	},
-
-	clearFlags: async ({ cookie, body, status }) => {
-		const user = await getUser(cookie);
-		if (!user?.mailbox || !user?.password)
-			return status(401, { success: false, message: "Unauthorized" });
-		const { folder, uids, flags } = body;
-		return withClient(user, status, async (client) => {
-			const lock = await client.getMailboxLock(folder);
-			await client.messageFlagsRemove(uids, flags, { uid: true });
-			lock.release();
-			// Piggyback fresh INBOX unseen on the same connection.
-			let inboxUnseen;
-			try {
-				const s = await client.status("INBOX", { unseen: true });
-				inboxUnseen = Number(s?.unseen) || 0;
-			} catch {
-				// leave undefined — client keeps its current badge
-			}
-			return { uids: uids, flags: flags, inboxUnseen };
-		});
-	},
+	// --- set / clear flags (read/unread/delete) ---
+	setFlags: ({ cookie, body, status }) => changeFlags("messageFlagsAdd", cookie, body, status),
+	clearFlags: ({ cookie, body, status }) => changeFlags("messageFlagsRemove", cookie, body, status),
 
 	// --- move message ---
 	moveMessage: async ({ cookie, body, status }) => {
@@ -567,14 +630,7 @@ export const MailService = {
 			} finally {
 				lock.release();
 			}
-			// Piggyback fresh INBOX unseen on the same connection.
-			let inboxUnseen;
-			try {
-				const s = await client.status("INBOX", { unseen: true });
-				inboxUnseen = Number(s?.unseen) || 0;
-			} catch {
-				// leave undefined — client keeps its current badge
-			}
+			const inboxUnseen = await currentInboxUnseen(client);
 			return { uids: targetUids, from: from, to: to, inboxUnseen, movedUids };
 		});
 	},
@@ -589,8 +645,12 @@ export const MailService = {
 		const targetUids = Array.isArray(uids) ? uids.map(Number) : uids;
 		return withClient(user, status, async (client) => {
 			// Outside Trash a delete is a move to Trash; inside it, permanent.
-			const trash =
-				(await findSpecialFolder(client, "\\Trash", TRASH_NAMES)) || "Trash";
+			let trash = await findSpecialFolder(client, "\\Trash", TRASH_NAMES);
+			if (!trash && folder !== "Trash") {
+				// Some mailboxes have no Trash yet; create it rather than failing the delete.
+				trash = "Trash";
+				await client.mailboxCreate(trash).catch(() => {});
+			}
 			const lock = await client.getMailboxLock(folder);
 			try {
 				if (folder !== trash) {
@@ -601,14 +661,7 @@ export const MailService = {
 			} finally {
 				lock.release();
 			}
-			// Piggyback fresh INBOX unseen on the same connection.
-			let inboxUnseen;
-			try {
-				const s = await client.status("INBOX", { unseen: true });
-				inboxUnseen = Number(s?.unseen) || 0;
-			} catch {
-				// leave undefined — client keeps its current badge
-			}
+			const inboxUnseen = await currentInboxUnseen(client);
 			return { uids: targetUids, folder: folder, inboxUnseen };
 		});
 	},
@@ -672,24 +725,25 @@ export const MailService = {
 			// so the browser never has to download and re-upload them.
 			const fwd = body.forwardAttachments;
 			if (fwd?.indexes?.length) {
-				const original = await withImap(user, (client) =>
-					fetchParsed(client, fwd.folder, fwd.uid),
-				);
-				const parts = original?.parsed?.attachments || [];
-				for (const i of fwd.indexes) {
-					const a = parts[i];
-					if (!a) {
-						return status(400, {
-							success: false,
-							message: "Forwarded attachment not found",
-						});
+				if (fwd.indexes.length > 100) return status(400, { success: false, message: "Too many forwarded attachments" });
+				const forwarded = await withImap(user, async (client) => {
+					await client.mailboxOpen(fwd.folder || "INBOX");
+					const original = await client.fetchOne(Number(fwd.uid), { bodyStructure: true }, { uid: true });
+					const parts = attachmentParts(original?.bodyStructure);
+					if (fwd.indexes.some((i) => !parts[i])) return null;
+					const result = [];
+					let total = 0;
+					for (const i of fwd.indexes) {
+						const a = parts[i];
+						const content = await loadAttachment(client, fwd.uid, a);
+						total += content.length;
+						if (total > MAX_ATTACHMENT_BYTES) throw new Error("Forwarded attachments exceed 25 MiB limit");
+						result.push({ filename: a.filename, contentType: a.contentType, content });
 					}
-					attachments.push({
-						filename: a.filename || "attachment",
-						contentType: a.contentType,
-						content: a.content,
-					});
-				}
+					return result;
+				});
+				if (!forwarded) return status(400, { success: false, message: "Forwarded attachment not found" });
+				attachments.push(...forwarded);
 			}
 
 			const domain = user.mailbox.split("@")[1] || "localhost";
@@ -700,6 +754,7 @@ export const MailService = {
 				},
 				to: body.to,
 				cc: body.cc || undefined,
+				bcc: body.bcc || undefined,
 				subject: body.subject || "",
 				text: body.text || "",
 				html: html || undefined,
@@ -711,12 +766,18 @@ export const MailService = {
 				messageId: `<${crypto.randomUUID()}@${domain}>`,
 				date: new Date(),
 			};
-			await transporter.sendMail(mail);
-			logger.info(`[MAIL] ${user.mailbox} sent message to ${body.to}`);
-
+			// Complete MIME construction before SMTP accepts the message.
 			const raw = await new MailComposer(mail).compile().build();
-			const savedToSent = await saveToSent(user, raw);
-			return { success: true, message: "Sent", data: { savedToSent } };
+			await transporter.sendMail({ ...mail, raw });
+			logger.info(`[MAIL] ${user.mailbox} sent message to ${body.to}`);
+			const sentSavingDisabled = process.env.SAVE_SENT === "false";
+			let savedToSent = false;
+			try {
+				savedToSent = await saveToSent(user, raw);
+			} catch (err) {
+				logger.error(`[MAIL] Sent copy failed: ${err.message}`);
+			}
+			return { success: true, message: "Sent", data: { savedToSent, sentSavingDisabled } };
 		} catch (err) {
 			logger.error(`[MAIL] 💥[smtp] ${err.message}`);
 			return status(502, { success: false, message: err.message });

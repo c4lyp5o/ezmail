@@ -2,7 +2,7 @@
 	"name": "ezmail-backend",
 	"private": true,
 	"type": "module",
-	"version": "2.0.0",
+	"version": "3.0.0",
 	"scripts": {
 		"dev": "bun --watch index.js",
 		"start": "bun index.js",
@@ -20,7 +20,8 @@
 		"nodemailer": "^10.1.7",
 		"otpauth": "^9.5.2",
 		"qr": "^0.7.2",
-		"sanitize-html": "^2.18.1"
+		"sanitize-html": "^2.18.1",
+		"sievelib-ts": "0.2.0"
 	},
 	"devDependencies": {
 		"@types/bun": "latest"

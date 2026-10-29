@@ -33,6 +33,8 @@ import { apiCall } from "../utils/apiCall.js";
 import { isTypingTarget } from "../utils/keyboard.js";
 import { specialFolder } from "../utils/folders.js";
 import { buildDraft } from "../utils/reply.js";
+import { useDialogFocus } from "../utils/useDialogFocus.js";
+import { useMailEvents } from "../utils/useMailEvents.js";
 
 const SHORTCUTS = [
 	["j / k, ↑ / ↓", "Next / previous message"],
@@ -91,16 +93,21 @@ export default function MailPage() {
 	const { user, logout } = useAuth();
 	const navigate = useNavigate();
 	const [folders, setFolders] = useState([]);
+	const [folderError, setFolderError] = useState("");
 	const [activeFolder, setActiveFolder] = useState("INBOX");
 	const [view, setView] = useState({ type: "folder" }); // {type:'folder'} | {type:'message', folder, uid, msg} | {type:'compose'}
 	const [selected, setSelected] = useState(() => new Set()); // Set of UIDs, persists across opens
 	const [movePopup, setMovePopup] = useState(false);
 	const [bulkBusy, setBulkBusy] = useState(false);
+	const [composeBusy, setComposeBusy] = useState(false);
+	const [composeHasUploads, setComposeHasUploads] = useState(false);
 	const [emptyTrashOpen, setEmptyTrashOpen] = useState(false);
 	const [emptyTrashBusy, setEmptyTrashBusy] = useState(false);
 	const [settingsOpen, setSettingsOpen] = useState(false);
 	const [showRemote, setShowRemote] = useState(false);
 	const [helpOpen, setHelpOpen] = useState(false);
+	const moveDialogRef = useDialogFocus(movePopup, () => setMovePopup(false));
+	const helpDialogRef = useDialogFocus(helpOpen, () => setHelpOpen(false));
 	const [toast, setToast] = useState(null); // { text, undo?: fn }
 	const toastTimer = useRef(null);
 	const [live, setLive] = useState(false); // SSE stream connected
@@ -124,7 +131,10 @@ export default function MailPage() {
 
 	// Growable message-list column width (drag the separator edge).
 	const [listWidth, setListWidth] = useState(
-		() => Number(localStorage.getItem("ezmail_list_width")) || 320,
+		() => {
+			try { return Number(localStorage.getItem("ezmail_list_width")) || 320; }
+			catch { return 320; }
+		},
 	);
 	const [isDraggingList, setIsDraggingList] = useState(false);
 	// Records where the drag began so the width tracks the mouse 1:1 without a
@@ -140,12 +150,14 @@ export default function MailPage() {
 	);
 
 	useEffect(() => {
+		let frame = 0;
 		const handleMouseMove = (e) => {
 			if (!isDraggingList) return;
 			const { width, x } = dragStartRef.current;
 			// apply the delta from grab point, then clamp so the reader keeps room
 			const next = width + (e.clientX - x);
-			setListWidth(Math.max(240, Math.min(next, window.innerWidth - 380)));
+			cancelAnimationFrame(frame);
+			frame = requestAnimationFrame(() => setListWidth(Math.max(240, Math.min(next, window.innerWidth - 380))));
 		};
 		const handleMouseUp = () => {
 			setIsDraggingList(false);
@@ -160,6 +172,7 @@ export default function MailPage() {
 			document.body.style.cursor = "";
 		}
 		return () => {
+			cancelAnimationFrame(frame);
 			document.removeEventListener("mousemove", handleMouseMove);
 			document.removeEventListener("mouseup", handleMouseUp);
 			document.body.style.userSelect = "";
@@ -169,12 +182,13 @@ export default function MailPage() {
 
 	// Persist the width so it survives reloads.
 	useEffect(() => {
+		if (isDraggingList) return;
 		try {
 			localStorage.setItem("ezmail_list_width", String(Math.round(listWidth)));
 		} catch {
 			// localStorage may be unavailable; non-fatal
 		}
-	}, [listWidth]);
+	}, [listWidth, isDraggingList]);
 
 	const [listState, setListState] = useState({
 		refresh: null,
@@ -199,8 +213,9 @@ export default function MailPage() {
 		try {
 			const res = await apiCall.get("/mail/folders");
 			setFolders(res.data || []);
-		} catch {
-			// folders stay empty; list drives UI
+			setFolderError("");
+		} catch (err) {
+			setFolderError(err.message || "Could not load folders");
 		}
 	}, []);
 
@@ -213,20 +228,21 @@ export default function MailPage() {
 		);
 	}, []);
 
-	// Unread badges for every folder: refresh on mount and every 30s while the
-	// tab is visible (one LIST-STATUS round-trip server-side).
+	// Unread badges for every folder: refresh on mount and while the tab is
+	// visible (one LIST-STATUS round-trip server-side). Live INBOX events already
+	// trigger refreshes, so polling only backs off, never stops.
 	useEffect(() => {
 		loadFolders();
 		const id = setInterval(() => {
 			if (!document.hidden) loadFolders();
-		}, 30000);
+		}, live ? 120000 : 30000);
 		return () => clearInterval(id);
-	}, [loadFolders]);
+	}, [loadFolders, live]);
 
 	const showToast = useCallback((next) => {
 		clearTimeout(toastTimer.current);
 		setToast(next);
-		toastTimer.current = setTimeout(() => setToast(null), 6000);
+		toastTimer.current = setTimeout(() => setToast(null), 10000);
 	}, []);
 	useEffect(() => () => clearTimeout(toastTimer.current), []);
 
@@ -243,16 +259,18 @@ export default function MailPage() {
 			return;
 		}
 		if (typeof Notification === "undefined") {
-			showToast({ text: "This browser doesn't support notifications" });
-			return;
+			const message = "This browser doesn't support notifications";
+			showToast({ text: message });
+			return message;
 		}
 		const permission =
 			Notification.permission === "default"
 				? await Notification.requestPermission()
 				: Notification.permission;
 		if (permission !== "granted") {
-			showToast({ text: "Notifications are blocked for this site" });
-			return;
+			const message = "Notifications are blocked for this site";
+			showToast({ text: message });
+			return message;
 		}
 		setNotifyOn(true);
 		writeNotifyPref(true);
@@ -265,6 +283,8 @@ export default function MailPage() {
 	}, [user?.mailbox]);
 
 	const handleLogout = async () => {
+		if (composeBusy) return;
+		if (view.type === "compose" && composeHasUploads && !window.confirm("Uploaded files are not saved in drafts. Leave anyway?")) return;
 		await logout();
 		navigate("/login", { replace: true });
 	};
@@ -317,7 +337,7 @@ export default function MailPage() {
 				.then((res) => applyInboxUnseen(res.data?.inboxUnseen));
 			afterMutation();
 		} catch (err) {
-			console.error(`Failed to update flags (${action})`, err);
+			showToast({ text: err.message || "Failed to update flags" });
 		} finally {
 			setBulkBusy(false);
 		}
@@ -336,7 +356,7 @@ export default function MailPage() {
 		afterMutation();
 		const moved = res.data?.movedUids;
 		showToast({
-			text: `${plural(uids.length)} moved to ${to}`,
+			text: `${plural(uids.length)} moved to ${to}${moved?.length ? "" : "; undo unavailable from this server"}`,
 			undo: moved?.length
 				? async () => {
 						setToast(null);
@@ -388,7 +408,8 @@ export default function MailPage() {
 			clearSelection();
 			afterMutation();
 		} catch (err) {
-			console.error("Failed to empty trash:", err.message);
+			showToast({ text: err.message || "Failed to empty trash" });
+			throw err;
 		} finally {
 			setEmptyTrashBusy(false);
 		}
@@ -399,8 +420,16 @@ export default function MailPage() {
 		return runBulk((uids) => moveMessages(uids, activeFolder, toFolder));
 	};
 
+	const createFolder = async (name) => {
+		const res = await apiCall.post("/mail/folders", { name });
+		await loadFolders();
+		selectFolder(res.data.path);
+	};
+
 	// ---- folder / message selection ----
 	const selectFolder = (f) => {
+		if (composeBusy) return;
+		if (view.type === "compose" && composeHasUploads && !window.confirm("Uploaded files are not saved in drafts. Leave anyway?")) return;
 		if (f !== activeFolder) clearSelection();
 		setActiveFolder(f);
 		setView({ type: "folder" });
@@ -418,6 +447,8 @@ export default function MailPage() {
 	// New message, or reply / replyAll / forward of a loaded message. The key
 	// remounts ComposeView so each open starts from its own initial state.
 	const openCompose = (mode, msg) => {
+		if (composeBusy) return;
+		if (view.type === "compose" && composeHasUploads && !window.confirm("Uploaded files are not saved in drafts. Leave anyway?")) return;
 		setView({
 			type: "compose",
 			key: Date.now(),
@@ -445,11 +476,14 @@ export default function MailPage() {
 	const [fullMessage, setFullMessage] = useState(null);
 
 	const openMessageWithBody = useCallback((folder, uid, msg) => {
+		if (composeBusy) return;
+		if (view.type === "compose" && composeHasUploads && !window.confirm("Uploaded files are not saved in drafts. Leave anyway?")) return;
 		setFullMessage(null); // clear previous body so no stale summary
 		setView({ type: "message", folder, uid, msg });
 		setMobilePane("reader");
 		setMobileSidebar(false);
-	}, []);
+	}, [composeBusy, composeHasUploads, view.type]);
+	const openListMessage = useCallback((msg) => openMessageWithBody(activeFolder, msg.uid, msg), [activeFolder, openMessageWithBody]);
 
 	// ---- global shortcuts (list navigation lives in MessageList) ----
 	const modalOpen = settingsOpen || movePopup || emptyTrashOpen || helpOpen;
@@ -523,13 +557,18 @@ export default function MailPage() {
 	// ---- live updates: SSE fed by IMAP IDLE on INBOX ----
 	// Events are hints; we refetch. While live, list polling backs off. The
 	// browser's EventSource reconnects on its own after drops.
-	const mailEvent = useRef(null);
-	mailEvent.current = (ev) => {
+	const liveRefreshTimer = useRef(null);
+	const mailEvent = (ev) => {
 		if (ev.type === "ready") setLive(true);
 		else if (ev.type === "closed" || ev.type === "error") setLive(false);
 		else if (ev.type === "new" || ev.type === "changed") {
-			if (activeFolder === "INBOX") refreshList?.();
-			loadFolders();
+			if (!liveRefreshTimer.current) {
+				liveRefreshTimer.current = setTimeout(() => {
+					liveRefreshTimer.current = null;
+					if (activeFolder === "INBOX") refreshList?.();
+					loadFolders();
+				}, 300);
+			}
 			if (
 				ev.type === "new" &&
 				notifyOn &&
@@ -549,19 +588,8 @@ export default function MailPage() {
 			}
 		}
 	};
-	useEffect(() => {
-		if (typeof EventSource === "undefined") return;
-		const es = new EventSource("/api/v1/mail/events");
-		es.onmessage = (e) => {
-			try {
-				mailEvent.current(JSON.parse(e.data));
-			} catch {
-				// malformed frame; ignore
-			}
-		};
-		es.onerror = () => setLive(false);
-		return () => es.close();
-	}, []);
+	useMailEvents(mailEvent, () => setLive(false));
+	useEffect(() => () => { clearTimeout(liveRefreshTimer.current); liveRefreshTimer.current = null; }, []);
 
 	return (
 		<div className="flex h-dvh w-full overflow-x-hidden bg-canvas text-ink">
@@ -569,6 +597,7 @@ export default function MailPage() {
 			<button
 				type="button"
 				onClick={() => setMobileSidebar(true)}
+				disabled={composeBusy}
 				className="fixed left-3 top-1.5 z-30 flex h-10 w-10 items-center justify-center rounded-lg border border-hair bg-panel text-ink-2 shadow-lg md:hidden"
 				aria-label="Open folders"
 			>
@@ -577,6 +606,7 @@ export default function MailPage() {
 
 			{/* Sidebar */}
 			<aside
+				inert={composeBusy || undefined}
 				className={`fixed inset-y-0 left-0 z-40 flex w-60 shrink-0 flex-col border-r border-hair bg-panel/95 backdrop-blur transition-transform duration-200 md:static md:translate-x-0 md:bg-panel/60 ${
 					mobileSidebar ? "translate-x-0" : "-translate-x-full"
 				}`}
@@ -611,20 +641,23 @@ export default function MailPage() {
 					folders={folders}
 					active={activeFolder}
 					onSelect={selectFolder}
+					onCreate={createFolder}
 				/>
+				{folderError && <div role="alert" className="px-4 text-xs text-danger">{folderError} <button type="button" onClick={loadFolders} className="underline">Retry</button></div>}
 
 				<div className="mt-auto border-t border-hair p-4">
 					<div className="px-1">
 						<div className="min-w-0 truncate text-sm font-medium text-ink-2">
 							{user?.mailbox || "mailbox"}
 						</div>
+						<div className="text-xs text-ink-muted" role="status">{live ? "Live updates connected" : "Live updates reconnecting; polling active"}</div>
 					</div>
 					<div className="mt-3 flex items-center justify-between px-1">
 						<button
 							type="button"
 							onClick={() => setSettingsOpen(true)}
 							aria-label="Settings"
-							title="Settings — security & mail filters"
+				title="Settings"
 							className="flex h-8 w-8 items-center justify-center rounded-md text-ink-muted transition hover:bg-hover hover:text-ink-2"
 						>
 							<Settings className="h-4 w-4" />
@@ -671,6 +704,7 @@ export default function MailPage() {
 
 			{/* Message list column — resizable on desktop, full-screen when selected on mobile */}
 			<div
+				inert={composeBusy || undefined}
 				style={isMobile ? undefined : { width: listWidth }}
 				className={`relative shrink-0 flex-col border-r border-hair ${
 					isMobile
@@ -821,9 +855,7 @@ export default function MailPage() {
 						selected={selected}
 						onToggleSelect={toggleSelect}
 						onToggleAll={toggleAll}
-						onOpenMessage={(msg) =>
-							openMessageWithBody(activeFolder, msg.uid, msg)
-						}
+						onOpenMessage={openListMessage}
 						alwaysRead={activeFolder === sentFolder}
 						onReady={setListState}
 						onMarkedRead={applyInboxUnseen}
@@ -920,6 +952,8 @@ export default function MailPage() {
 						initial={view.initial}
 						onBack={handleBack}
 						onSent={() => loadFolders()}
+						onBusyChange={setComposeBusy}
+						onUploadsChange={setComposeHasUploads}
 					/>
 				)}
 				{view.type === "message" && (
@@ -967,9 +1001,13 @@ export default function MailPage() {
 					className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
 					onClick={() => setMovePopup(false)}
 				>
-					{/** biome-ignore lint/a11y/noStaticElementInteractions: later */}
 					{/** biome-ignore lint/a11y/useKeyWithClickEvents: later */}
 					<div
+						ref={moveDialogRef}
+						role="dialog"
+						aria-modal="true"
+						aria-label="Move to folder"
+						tabIndex={-1}
 						className="w-80 rounded-xl border border-hair-strong bg-panel p-4 shadow-xl"
 						onClick={(e) => e.stopPropagation()}
 					>
@@ -1035,9 +1073,13 @@ export default function MailPage() {
 					className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
 					onClick={() => setHelpOpen(false)}
 				>
-					{/** biome-ignore lint/a11y/noStaticElementInteractions: stop backdrop close */}
 					{/** biome-ignore lint/a11y/useKeyWithClickEvents: no keyboard action */}
 					<div
+						ref={helpDialogRef}
+						role="dialog"
+						aria-modal="true"
+						aria-label="Keyboard shortcuts"
+						tabIndex={-1}
 						className="w-[26rem] max-w-[calc(100vw-2rem)] rounded-xl border border-hair-strong bg-panel p-5 shadow-xl"
 						onClick={(e) => e.stopPropagation()}
 					>
@@ -1068,7 +1110,8 @@ export default function MailPage() {
 				onClose={() => setSettingsOpen(false)}
 				mailbox={user?.mailbox}
 				folders={folders}
-				initialTab="security"
+				notifyOn={notifyOn}
+				onToggleNotify={toggleNotify}
 			/>
 		</div>
 	);

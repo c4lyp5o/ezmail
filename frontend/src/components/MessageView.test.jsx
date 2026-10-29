@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, test, vi } from "vitest";
 import { mockApi } from "../test/fetch.js";
 import MessageView, { emailCsp, emailDoc } from "./MessageView.jsx";
@@ -84,6 +84,24 @@ describe("reader", () => {
 				{...props}
 			/>,
 		);
+
+	test("an older response cannot replace the newly selected message", async () => {
+		let finishOld;
+		const oldResponse = new Promise((resolve) => { finishOld = resolve; });
+		vi.stubGlobal("fetch", vi.fn((url) => {
+			if (String(url).endsWith("/INBOX/1")) return oldResponse;
+			return Promise.resolve(new Response(JSON.stringify({ success: true, data: { ...MSG, uid: 2, messageId: undefined, subject: "New message" } }), { headers: { "content-type": "application/json" } }));
+		}));
+		const onLoaded = vi.fn();
+		const setShowRemote = vi.fn();
+		const props = { folder: "INBOX", onLoaded, setShowRemote, showRemote: false };
+		const { rerender } = render(<MessageView {...props} uid={1} />);
+		rerender(<MessageView {...props} uid={2} />);
+		await screen.findByText("New message");
+		await act(async () => finishOld(new Response(JSON.stringify({ success: true, data: { ...MSG, uid: 1, subject: "Old message" } }), { headers: { "content-type": "application/json" } })));
+		expect(screen.queryByText("Old message")).toBeNull();
+		expect(onLoaded).toHaveBeenCalledTimes(1);
+	});
 
 	test("lists the conversation and opens another message from it", async () => {
 		mockApi({

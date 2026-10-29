@@ -165,6 +165,16 @@ export const MailModel = {
 		),
 	}),
 
+	createFolderBody: t.Object({
+		name: t.String({ minLength: 1, maxLength: 64 }),
+	}),
+
+	createFolderResponse: t.Object({
+		success: t.Boolean(),
+		message: t.Optional(t.String()),
+		data: t.Optional(t.Object({ path: t.String() })),
+	}),
+
 	expungeFolderBody: t.Object({
 		folder: t.String(),
 	}),
@@ -182,6 +192,7 @@ export const MailModel = {
 	sendMessageBody: t.Object({
 		to: t.String(),
 		cc: t.Optional(t.String()),
+		bcc: t.Optional(t.String()),
 		subject: t.Optional(t.String()),
 		text: t.Optional(t.String()),
 		html: t.Optional(t.String()),
@@ -210,7 +221,7 @@ export const MailModel = {
 	sendMessageResponse: t.Object({
 		success: t.Boolean(),
 		message: t.String(),
-		data: t.Optional(t.Object({ savedToSent: t.Boolean() })),
+		data: t.Optional(t.Object({ savedToSent: t.Boolean(), sentSavingDisabled: t.Optional(t.Boolean()) })),
 	}),
 
 	threadResponse: t.Object({

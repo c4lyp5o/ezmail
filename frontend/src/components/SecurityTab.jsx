@@ -18,8 +18,10 @@ export default function SecurityTab({ mailbox }) {
 		try {
 			const res = await apiCall.post("/totp/status", { mailbox });
 			setStatus(res.data);
-		} catch {
-			setStatus({ enrolled: false, enabled: false });
+			setError("");
+		} catch (err) {
+			setStatus(null);
+			setError(err.message || "Could not load TOTP status");
 		}
 	};
 
@@ -42,7 +44,7 @@ export default function SecurityTab({ mailbox }) {
 			setStep("qr");
 			setPassword("");
 		} catch (err) {
-			setError(err.response?.data?.message || "Could not start enrollment");
+			setError(err.message || "Could not start enrollment");
 		} finally {
 			setBusy(false);
 		}
@@ -64,7 +66,7 @@ export default function SecurityTab({ mailbox }) {
 			setCode("");
 		} catch (err) {
 			setError(
-				err.response?.data?.message || "Verification failed. Try again.",
+				err.message || "Verification failed. Try again.",
 			);
 		} finally {
 			setBusy(false);
@@ -87,7 +89,7 @@ export default function SecurityTab({ mailbox }) {
 			setStep("idle");
 			setQrDraft(null);
 		} catch (err) {
-			setError(err.response?.data?.message || "Could not disable TOTP");
+			setError(err.message || "Could not disable TOTP");
 		} finally {
 			setBusy(false);
 		}
@@ -95,15 +97,12 @@ export default function SecurityTab({ mailbox }) {
 
 	return (
 		<div>
-			{mailbox && (
-				<p className="mb-4 truncate text-xs text-ink-muted">{mailbox}</p>
-			)}
-
 			{error && (
 				<div className="mb-4 rounded-lg border border-danger/20 bg-danger/10 px-3 py-2 text-sm text-danger">
 					{error}
 				</div>
 			)}
+			{!status && error && <button type="button" onClick={loadStatus} className="mb-4 text-sm text-accent underline">Retry</button>}
 
 			{/* Status summary */}
 			{status?.enabled ? (
@@ -129,13 +128,6 @@ export default function SecurityTab({ mailbox }) {
 					<div className="mt-3 flex gap-2">
 						<button
 							type="button"
-							onClick={() => setStep("qr")}
-							className="rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-white transition hover:bg-accent"
-						>
-							Resume setup
-						</button>
-						<button
-							type="button"
 							onClick={handleDisable}
 							disabled={busy}
 							className="rounded-md border border-hair-strong px-3 py-1.5 text-xs font-medium text-ink-muted transition hover:bg-hover"
@@ -155,11 +147,11 @@ export default function SecurityTab({ mailbox }) {
 			{step === "idle" && status && !status.enabled && (
 				<form onSubmit={handleStart} className="space-y-3">
 					<div>
-						{/** biome-ignore lint/a11y/noLabelWithoutControl: later */}
-						<label className="mb-1 block text-sm font-medium text-ink-muted">
+						<label htmlFor="totp-password" className="mb-1 block text-sm font-medium text-ink-muted">
 							Mailbox password (one-time, to verify your account)
 						</label>
 						<input
+							id="totp-password"
 							type="password"
 							value={password}
 							onChange={(e) => setPassword(e.target.value)}
@@ -197,11 +189,11 @@ export default function SecurityTab({ mailbox }) {
 					</p>
 					<form onSubmit={handleComplete} className="space-y-3">
 						<div>
-							{/** biome-ignore lint/a11y/noLabelWithoutControl: later */}
-							<label className="mb-1 block text-sm font-medium text-ink-muted">
+							<label htmlFor="totp-enroll-code" className="mb-1 block text-sm font-medium text-ink-muted">
 								Enter the 6-digit code
 							</label>
 							<input
+								id="totp-enroll-code"
 								type="text"
 								value={code}
 								onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}

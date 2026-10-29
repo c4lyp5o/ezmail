@@ -17,6 +17,7 @@
         "otpauth": "^9.5.2",
         "qr": "^0.7.2",
         "sanitize-html": "^2.18.1",
+        "sievelib-ts": "0.2.0",
       },
       "devDependencies": {
         "@types/bun": "latest",
@@ -211,6 +212,8 @@
     "sanitize-html": ["sanitize-html@2.18.1", "", { "dependencies": { "escape-string-regexp": "^4.0.0", "htmlparser2": "^12.0.0", "is-plain-object": "^5.1.0", "launder": "^1.7.2", "parse-srcset": "^1.0.2", "postcss": "^8.5.27" } }, "sha512-2X5lC8fYla8YaT8g73Nj+HcLWXan5dLyCWLgVvaOmfw7JI78IRsyNtIDytTHdn7hBQbIkCah7Zbmd5jabzeDig=="],
 
     "selderee": ["selderee@0.12.0", "", { "dependencies": { "parseley": "~0.13.1" } }, "sha512-b1YMh3+DHZp59DLna3qVwQ5iOla/nrI6mLBNW02XxU77M3046Df6VLkoaJyFz20VsGIG5kkp+FK0kg4K4HnUFw=="],
+
+    "sievelib-ts": ["sievelib-ts@0.2.0", "", {}, "sha512-CqUlfCs43vZgbv0UNU60ZwsDvOxT8m8M2xTqbuy4gWcPQNryDZRSKdKa6shFwJXt+D7BFJPCYDGmt4j6hQCh2w=="],
 
     "smart-buffer": ["smart-buffer@4.2.0", "", {}, "sha512-94hK0Hh8rPqQl2xXc3HsaBoOXKV20MToPkcXvwbISWLEs+64sBq5kFgn2kJDHb1Pry9yrP0dxrCI9RRci7RXKg=="],
 

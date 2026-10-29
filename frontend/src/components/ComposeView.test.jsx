@@ -51,6 +51,40 @@ describe("drafts", () => {
 		expect(localStorage.getItem(KEY)).toBeNull();
 		expect(onBack).toHaveBeenCalled();
 	});
+
+	test("leaving immediately flushes the latest draft", () => {
+		vi.useFakeTimers();
+		const onBack = vi.fn();
+		render(<ComposeView onBack={onBack} />);
+		type("Subject", "Latest change");
+		fireEvent.click(screen.getByText("Back"));
+		expect(JSON.parse(localStorage.getItem(KEY)).form.subject).toBe("Latest change");
+		expect(onBack).toHaveBeenCalled();
+	});
+
+	test("unmounting immediately flushes the latest draft", () => {
+		vi.useFakeTimers();
+		const { unmount } = render(<ComposeView onBack={() => {}} />);
+		type("Subject", "Not yet debounced");
+		unmount();
+		expect(JSON.parse(localStorage.getItem(KEY)).form.subject).toBe("Not yet debounced");
+	});
+
+	test("clearing the last content removes a saved draft", () => {
+		localStorage.setItem(KEY, JSON.stringify({ form: { subject: "Old" } }));
+		render(<ComposeView onBack={() => {}} />);
+		type("Subject", "");
+		expect(localStorage.getItem(KEY)).toBeNull();
+	});
+
+	test("older forwarding drafts do not silently reuse changed attachment indexes", () => {
+		localStorage.setItem(KEY, JSON.stringify({ form: { to: "x@y.z" }, attachments: [
+			{ filename: "old.pdf", forward: { folder: "INBOX", uid: 1, index: 0 } },
+		] }));
+		render(<ComposeView onBack={() => {}} />);
+		expect(screen.getByText(/older draft were removed/)).toBeTruthy();
+		expect(screen.queryByText("old.pdf")).toBeNull();
+	});
 });
 
 describe("sending", () => {
@@ -129,6 +163,14 @@ describe("sending", () => {
 		expect(JSON.parse(localStorage.getItem(KEY)).attachments).toEqual([
 			{ filename: "a.pdf", forward: { folder: "INBOX", uid: 42, index: 1 } },
 		]);
+	});
+
+	test("sends Bcc recipients and keeps them in the saved draft", async () => {
+		render(<ComposeView onBack={() => {}} initial={{ form: { to: "bob@x.io", bcc: "quiet@x.io" } }} />);
+		expect(screen.getByLabelText("Bcc").value).toBe("quiet@x.io");
+		fireEvent.click(screen.getByText("Send"));
+		await screen.findByText(/Message sent/);
+		expect(calls[0].body).toMatchObject({ to: "bob@x.io", bcc: "quiet@x.io" });
 	});
 
 	test("no recipient: error, no request", () => {

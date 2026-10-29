@@ -36,6 +36,65 @@ describe("folders", () => {
 	});
 });
 
+describe("single-part messages", () => {
+	// imapflow omits `part` on the root node of a message with no MIME multipart.
+	test("show their body even though the root structure has no part number", async () => {
+		const uid = imap.addMessage("INBOX", {
+			subject: "plain",
+			bodyStructure: { type: "text/plain", size: 5 },
+			parts: { 1: Buffer.from("hello") },
+		});
+		const res = await get(`/message/INBOX/${uid}`);
+		expect(res.status).toBe(200);
+		expect(res.json.data.text).toBe("hello");
+		expect(res.json.data.attachments).toEqual([]);
+	});
+
+	test("a lone attachment is listed and downloadable", async () => {
+		const uid = imap.addMessage("INBOX", {
+			bodyStructure: { type: "application/pdf", size: 4, disposition: "attachment", dispositionParameters: { filename: "a.pdf" } },
+			parts: { 1: Buffer.from("%PDF") },
+		});
+		const res = await get(`/message/INBOX/${uid}`);
+		expect(res.json.data.attachments.map((a) => a.filename)).toEqual(["a.pdf"]);
+		const file = await call("GET", `/api/v1/mail/message/INBOX/${uid}/attachment/0`, { cookie });
+		expect(file.status).toBe(200);
+	});
+});
+
+describe("create folder", () => {
+	test("creates a top-level folder and lists it", async () => {
+		const res = await post("/folders", { name: "  Finance 2026 " });
+		expect(res.status).toBe(200);
+		expect(res.json.data).toEqual({ path: "Finance 2026" });
+		expect(imap.boxes.has("Finance 2026")).toBe(true);
+	});
+
+	test("rejects duplicates (any case), INBOX and unsafe names", async () => {
+		expect((await post("/folders", { name: "archive" })).status).toBe(409);
+		expect((await post("/folders", { name: "inbox" })).status).toBe(400);
+		for (const name of ["a/b", "x.y", "../up", "-lead", "tab\tname", "*"]) {
+			expect((await post("/folders", { name })).status).toBe(400);
+		}
+		expect((await post("/folders", { name: "" })).status).toBe(400);
+	});
+
+	test("requires a session", async () => {
+		const res = await call("POST", "/api/v1/mail/folders", { body: { name: "X" } });
+		expect(res.status).toBe(401);
+	});
+});
+
+describe("delete without a Trash folder", () => {
+	test("creates Trash and moves the message there", async () => {
+		imap.boxes.delete("Trash");
+		const uid = imap.addMessage("INBOX", { subject: "bye" });
+		const res = await post("/delete", { folder: "INBOX", uids: [uid] });
+		expect(res.status).toBe(200);
+		expect(imap.boxes.get("Trash").messages.map((m) => m.envelope.subject)).toEqual(["bye"]);
+	});
+});
+
 describe("message list", () => {
 	const fill = (count) => {
 		for (let i = 0; i < count; i++) imap.addMessage("INBOX", { subject: `msg ${i + 1}` });
@@ -217,6 +276,13 @@ describe("send", () => {
 		expect(raw).toContain("In-Reply-To: <m2@x.io>");
 	});
 
+	test("sends to Bcc recipients without exposing them in the message", async () => {
+		const res = await post("/send", { ...mail, bcc: "hidden@x.io" });
+		expect(res.status).toBe(200);
+		expect(smtp.sent[0].mail.bcc).toBe("hidden@x.io");
+		expect(smtp.sent[0].mail.raw.toString()).not.toContain("hidden@x.io");
+	});
+
 	test("SAVE_SENT=false skips the Sent copy", async () => {
 		process.env.SAVE_SENT = "false";
 		try {
@@ -226,6 +292,16 @@ describe("send", () => {
 		} finally {
 			delete process.env.SAVE_SENT;
 		}
+	});
+
+	test("an accepted message reports a missing Sent folder without suggesting failure", async () => {
+		imap.reset();
+		imap.addBox("INBOX", "\\Inbox");
+		const res = await post("/send", { to: "bob@x.io", subject: "hello", text: "body" });
+		expect(res.status).toBe(200);
+		expect(res.json.data).toEqual({ savedToSent: false, sentSavingDisabled: false });
+		expect(smtp.sent).toHaveLength(1);
+		expect(Buffer.isBuffer(smtp.sent[0].mail.raw)).toBe(true);
 	});
 
 	test("SMTP failure is a 502 so the UI doesn't claim it was sent", async () => {

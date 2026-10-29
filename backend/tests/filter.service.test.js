@@ -1,126 +1,89 @@
-import { afterAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import path from "node:path";
-import {
-	generateSieveScript,
-	homeDir,
-	mailboxParts,
-	writeFilters,
-} from "../services/filter.service.js";
+import { describe, expect, test } from "bun:test";
+import { generateSieveScript, parseGeneratedScript } from "../services/filter.service.js";
 
-// Redirect the mail store into a throwaway dir for the whole suite.
-const TMP = mkdtempSync(path.join(tmpdir(), "ezmail-filters-"));
-process.env.MAIL_DATA_DIR = TMP;
-
-const GOOD_RULES = [
-	{
-		field: "subject",
-		match: "contains",
-		value: "[eztest]",
-		folder: "Sieve-Demo",
-	},
+const rules = [
+	{ field: "subject", match: "contains", value: 'invoice "quoted"', folder: "Finance" },
 	{ field: "from", match: "is", value: "boss@example.com", folder: "Boss" },
 ];
 
-describe("generateSieveScript", () => {
-	test("emits require + fileinto with :create", () => {
-		const s = generateSieveScript(GOOD_RULES);
-		expect(s).toContain('require ["fileinto", "mailbox"];');
-		expect(s).toContain('if header :contains "Subject" "[eztest]"');
-		expect(s).toContain('fileinto :create "Sieve-Demo";');
-		expect(s).toContain('address :is "from" "boss@example.com"');
-		// every rule ends with stop
-		expect((s.match(/stop;/g) || []).length).toBe(2);
+describe("generated Sieve scripts", () => {
+	test("round-trips existing generated rules", () => {
+		const script = generateSieveScript(rules);
+		expect(script).toContain('fileinto :create "Finance";');
+		expect(parseGeneratedScript(script)).toEqual(rules);
+		expect(parseGeneratedScript(script.slice(0, -1))).toEqual(rules);
+		expect(parseGeneratedScript(generateSieveScript([]))).toEqual([]);
 	});
 
-	test("escapes quotes and backslashes in values", () => {
-		const s = generateSieveScript([
-			{ field: "subject", match: "contains", value: 'evil"\\x', folder: "F" },
-		]);
-		expect(s).toContain('header :contains "Subject" "evil\\"\\\\x"');
-		// the raw unescaped value must not appear bare
-		expect(s).not.toContain('"evil"');
+	test("rejects modified and arbitrary scripts even with the marker", () => {
+		const script = generateSieveScript(rules);
+		expect(parseGeneratedScript(`${script}\nredirect "other@example.com";`)).toBeNull();
+		expect(parseGeneratedScript(script.replace("\tstop;", "\tkeep;"))).toBeNull();
+		expect(parseGeneratedScript('require ["fileinto"];\nkeep;')).toBeNull();
 	});
 
-	test("to-address rules use the address test", () => {
-		const s = generateSieveScript([
-			{ field: "to", match: "contains", value: "team", folder: "Team" },
-		]);
-		expect(s).toContain('address :contains "to" "team"');
+	test("rejects generated scripts containing control characters", () => {
+		const script = generateSieveScript([{ ...rules[0], value: "bad\nvalue" }]);
+		expect(parseGeneratedScript(script)).toBeNull();
 	});
 });
 
-describe("mailboxParts safety", () => {
-	test("splits normal addresses", () => {
-		expect(mailboxParts("maxine@calypsocloud.one")).toEqual({
-			local: "maxine",
-			domain: "calypsocloud.one",
+import { filterState, saveFilters } from "../services/filter.service.js";
+
+function fakeSieve(active, scripts = {}) {
+	return {
+		active, scripts: { ...scripts }, calls: [], fail: "", errmsg: "server refused",
+		async listscripts() { return [this.active, Object.keys(this.scripts).filter((n) => n !== this.active)]; },
+		async getscript(name) { return this.scripts[name]?.replace(/\n$/, "") ?? null; },
+		async checkscript() { this.calls.push("check"); return this.fail !== "check"; },
+		async putscript(name, source) { this.calls.push("put"); if (this.fail === "put") return false; this.scripts[name] = source; return true; },
+		async deletescript(name) { delete this.scripts[name]; return true; },
+		async setactive(name) { this.calls.push("activate"); if (this.fail === "activate") return false; this.active = name || undefined; return true; },
+	};
+}
+
+describe("ManageSieve filter operations", () => {
+	test("custom active scripts are read-only", async () => {
+		const client = fakeSieve("custom", { custom: "keep;" });
+		expect((await filterState(client)).conflict).toBe(true);
+		await expect(saveFilters(client, rules, true)).rejects.toThrow("not managed");
+		expect(client.calls).toEqual([]);
+		expect(client.scripts.custom).toBe("keep;");
+	});
+
+	test("refuses activation if another client changes the active script", async () => {
+		const client = fakeSieve("original", { original: generateSieveScript([]), custom: "keep;" });
+		client.putscript = async (name, source) => { client.scripts[name] = source; client.active = "custom"; return true; };
+		await expect(saveFilters(client, rules, true)).rejects.toThrow("active script changed");
+		expect(client.active).toBe("custom");
+	});
+
+	test("prunes older generated history without touching custom scripts", async () => {
+		const old = generateSieveScript(rules);
+		const client = fakeSieve("ezmail-100-a", { "ezmail-100-a": old, "ezmail-099-b": old, "ezmail-098-c": "keep;" });
+		await saveFilters(client, [], true);
+		expect(client.scripts["ezmail-100-a"]).toBe(old);
+		expect(client.scripts["ezmail-099-b"]).toBeUndefined();
+		expect(client.scripts["ezmail-098-c"]).toBe("keep;");
+	});
+
+	for (const stage of ["check", "put", "activate"]) {
+		test(`${stage} failure preserves the active script`, async () => {
+			const original = generateSieveScript(rules);
+			const client = fakeSieve("original", { original });
+			client.fail = stage;
+			await expect(saveFilters(client, [], true)).rejects.toThrow();
+			expect(client.active).toBe("original");
+			expect(client.scripts.original).toBe(original);
 		});
-	});
-	test("rejects traversal and bad charset", () => {
-		expect(mailboxParts("../etc@x.com")).toBeNull();
-		expect(mailboxParts("a/b@x.com")).toBeNull();
-		expect(mailboxParts("no-at-sign")).toBeNull();
-		expect(mailboxParts("@domain-only.com")).toBeNull();
-		expect(mailboxParts("")).toBeNull();
-	});
-});
-
-describe("writeFilters file layout", () => {
-	test("writes sieve + json sidecar under <domain>/<local>/home/", () => {
-		const n = writeFilters("maxine@calypsocloud.one", GOOD_RULES, true);
-		expect(n).toBe(2);
-		const home = path.join(TMP, "calypsocloud.one", "maxine", "home");
-		const sieve = readFileSync(path.join(home, ".dovecot.sieve"), "utf8");
-		expect(sieve).toContain('fileinto :create "Sieve-Demo";');
-		const sidecar = JSON.parse(
-			readFileSync(path.join(home, ".ezmail-filters.json"), "utf8"),
-		);
-		expect(sidecar.enabled).toBe(true);
-		expect(sidecar.rules).toHaveLength(2);
-	});
-
-	test("invalid rule values are rejected wholesale", () => {
-		expect(() =>
-			writeFilters(
-				"maxine@calypsocloud.one",
-				[
-					{
-						field: "subject",
-						match: "contains",
-						value: "ok",
-						folder: "../evil",
-					},
-				],
-				true,
-			),
-		).toThrow("Invalid filter rule(s)");
-	});
-
-	test("traversal mailbox is rejected outright", () => {
-		expect(homeDir("../../etc@x.com")).toBeNull();
-		expect(() => writeFilters("../../etc@x.com", GOOD_RULES, true)).toThrow(
-			"invalid mailbox",
-		);
-	});
-
-	test("disabled write keeps rules but removes the sieve script", () => {
-		writeFilters("maxine@calypsocloud.one", GOOD_RULES, false);
-		const home = path.join(TMP, "calypsocloud.one", "maxine", "home");
-		expect(existsSync(path.join(home, ".dovecot.sieve"))).toBe(false);
-		const sidecar = JSON.parse(
-			readFileSync(path.join(home, ".ezmail-filters.json"), "utf8"),
-		);
-		expect(sidecar.enabled).toBe(false);
-		expect(sidecar.rules).toHaveLength(2);
-	});
-});
-
-afterAll(() => {
-	try {
-		rmSync(TMP, { recursive: true, force: true });
-	} catch {
-		// ignore
 	}
+
+	test("validates, saves and activates a new script without deleting the old one", async () => {
+		const client = fakeSieve("original", { original: generateSieveScript([]) });
+		await saveFilters(client, rules, true);
+		expect(client.calls).toEqual(["check", "put", "activate"]);
+		expect(client.active).not.toBe("original");
+		expect((await filterState(client)).rules).toEqual(rules);
+		expect(client.scripts.original).toBeDefined();
+	});
 });

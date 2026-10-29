@@ -7,7 +7,7 @@ A self-hosted webmail client. A Bun + Elysia backend talks IMAP/SMTP to your mai
 - **Any mailbox can sign in.** Credentials are checked directly against your IMAP server; there are no ezmail accounts.
 - **Reading:** server-side pagination, search, sort, and unread counts on every folder. Conversation view built from `Message-ID` / `References` across INBOX and Sent.
 - **Live updates:** new mail arrives over IMAP IDLE, streamed to the browser with server-sent events. Optional desktop notifications and an unread count in the tab title.
-- **Writing:** compose, reply, reply-all and forward (attachments are copied on the server). Optional Markdown body. Drafts auto-save locally. A copy of each sent message is saved to Sent. Ctrl/⌘+Enter sends.
+- **Writing:** compose, reply, reply-all and forward (attachments are copied on the server). Optional Markdown body. One draft per mailbox auto-saves locally; uploaded files must be added again after leaving. A copy of each sent message is saved to Sent. Ctrl/⌘+Enter sends.
 - **Organising:** bulk select with checkboxes or Shift+arrows, move, archive, delete, mark read. Undo for moves and deletes. Swipe left on mobile to archive.
 - **Safe rendering:** HTML mail is sanitised and shown in a sandboxed iframe with a strict Content-Security-Policy. Remote images, CSS backgrounds, fonts and media stay blocked until you allow them for that message. Attachments download on demand.
 - **Security:** server-side sessions, optional passwordless TOTP login, rate-limited login and code attempts.
@@ -41,10 +41,40 @@ Everything is set in `backend/.env` (see [`backend/.env.example`](backend/.env.e
 | `COOKIE_SECURE` | auto | Force the Secure cookie flag (e.g. TLS terminated at a reverse proxy). |
 | `TOTP_ENC_KEY` | generated | Key that encrypts stored mailbox passwords (sessions and TOTP). Set a stable random 64-char string in production. Changing it signs everyone out and invalidates TOTP enrolments. |
 | `JWT_SECRET` | — | Legacy fallback for `TOTP_ENC_KEY`. |
+| `TRUST_PROXY` | `false` | Set `true` behind a reverse proxy (e.g. Traefik) so login throttling is per client address from `X-Forwarded-For`; otherwise all users share the proxy's address. |
+| `IMAP_POOL_IDLE_MS` | `30000` | How long an idle IMAP connection is kept for reuse. `0` disables reuse. |
 | `SAVE_SENT` | `true` | Append sent mail to the Sent folder. Set `false` if your server already does (e.g. Gmail). |
-| `MAIL_DATA_DIR` | `/var/mail` | Mail store root, bind-mounted read-write, for server-side filters (Dovecot Sieve). Filters are unavailable without it. |
+| `SIEVE_HOST` | `IMAP_HOST` | ManageSieve server hostname. |
+| `SIEVE_PORT` | `4190` | ManageSieve server port. |
+| `SIEVE_TLS` | `starttls` | ManageSieve TLS mode: `starttls` or `implicit`. |
 | `LLM_SERVER` / `LLM_SERVER_APIKEY` / `LLM_MODEL` | — | Optional Ollama or OpenAI-compatible server for summaries. |
 | `DB_PATH` | `backend/data/ezmail.db` | SQLite file. |
+
+Filters normally use ManageSieve with the signed-in mailbox credentials. The
+server must offer TLS and `CHECKSCRIPT`. If it is unavailable, select **Use
+ezmail filtering** to opt into the IMAP fallback instead. The fallback checks
+the inbox about once a minute while ezmail is running, including after logout;
+it catches up after a restart, but cannot run while ezmail is stopped. It moves
+only messages arriving after the rules are enabled, with the first match winning.
+Existing server-side rules can still run and are not imported or disabled.
+The Filters panel shows which method is active and, for the fallback, the last
+successful check and any current error.
+The fallback stores the mailbox password encrypted in ezmail's database until
+the fallback is disabled or deleted. Keep the database and `TOTP_ENC_KEY` secure;
+after changing the mailbox password, sign in with the new credentials (or use
+TOTP recovery) to refresh the worker's stored password.
+Rules are listed in priority order and can be reordered; a **Test your rules**
+box shows which rule a sample sender, recipient or subject would match without
+moving mail.
+Active scripts are editable only when they exactly match ezmail's generated
+template. Other active scripts are shown read-only and must be managed
+externally. New scripts use new names; ezmail keeps the previous managed
+version and removes older recognized ezmail history after a successful save.
+The old `MAIL_DATA_DIR` files remain on disk and are not migrated automatically;
+back them up and migrate them manually with a ManageSieve client if needed.
+Avoid concurrent external edits while saving filters in ezmail. ManageSieve
+does not provide an atomic compare-and-swap for the active script: ezmail
+rechecks before activation, but cannot prevent a change in the final interval.
 
 ### LLM summaries (optional)
 

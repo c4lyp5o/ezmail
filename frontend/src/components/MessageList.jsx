@@ -68,7 +68,7 @@ const MessageRow = memo(function MessageRow({
 }) {
 	const isUnread = !alwaysRead && !msg.seen;
 	const isFlagged = msg.flags?.includes("\\Flagged");
-	const { dx, swiped, handlers } = useSwipe(swipe?.onSwipe);
+	const { dx, swiped, handlers } = useSwipe(swipe ? () => swipe.onSwipe(msg) : null);
 	const SwipeIcon = swipe?.label === "Archive" ? Archive : Trash2;
 
 	return (
@@ -93,7 +93,7 @@ const MessageRow = memo(function MessageRow({
 						e.preventDefault();
 						return;
 					}
-					onClick(e);
+					onClick(msg);
 				}}
 				{...handlers}
 				data-uid={msg.uid}
@@ -191,8 +191,10 @@ export default function MessageList({
 }) {
 	const [sort, setSort] = useState("desc");
 	const [search, setSearch] = useState("");
+	const [searchInput, setSearchInput] = useState("");
 	const [page, setPage] = useState(1);
 	const [isReading, setIsReading] = useState("");
+	const [markError, setMarkError] = useState("");
 	const selectAllRef = useRef(null);
 	const listRef = useRef(null);
 	// Keyboard cursor row (follows clicks). anchorRef holds the Shift-range
@@ -227,7 +229,12 @@ export default function MessageList({
 	// biome-ignore lint/correctness/useExhaustiveDependencies: later
 	useEffect(() => {
 		setPage(1);
-	}, [activeFolder, sort, search]);
+	}, [activeFolder, sort]);
+
+	useEffect(() => {
+		const timer = setTimeout(() => { setPage(1); setSearch(searchInput); }, 300);
+		return () => clearTimeout(timer);
+	}, [searchInput]);
 
 	const refresh = useCallback(() => mutate(), [mutate]);
 
@@ -262,7 +269,10 @@ export default function MessageList({
 						if (onMarkedRead) onMarkedRead(res.data?.inboxUnseen);
 						mutate();
 					})
-					.catch(() => {});
+					.catch((err) => {
+						setMarkError(err.message || "Could not mark message read");
+						mutate();
+					});
 			}
 			setCursor(msg.uid);
 			anchorRef.current = null;
@@ -396,17 +406,19 @@ export default function MessageList({
 					<Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink-muted" />
 					<input
 						id="mail-search"
-						value={search}
-						onChange={(e) => setSearch(e.target.value)}
+						aria-label="Search current folder"
+						value={searchInput}
+						onChange={(e) => setSearchInput(e.target.value)}
 						onKeyDown={(e) => e.key === "Escape" && e.currentTarget.blur()}
 						placeholder="Search mail…"
-						className="w-full rounded-md border border-hair bg-panel/60 py-1.5 pl-8 pr-3 text-sm text-ink-2 outline-none transition placeholder:text-ink-faint focus:border-indigo-600"
+						className="w-full rounded-md border border-hair bg-panel/60 py-1.5 pl-8 pr-10 text-sm text-ink-2 outline-none transition placeholder:text-ink-faint focus:border-indigo-600"
 					/>
+					{searchInput && <button type="button" onClick={() => setSearchInput("")} aria-label="Clear search" className="absolute right-2 top-1 text-ink-muted">×</button>}
 				</div>
 				<button
 					type="button"
 					onClick={() => setSort(sort === "desc" ? "asc" : "desc")}
-					title={`Sort by date: ${sort === "desc" ? "Newest first" : "Oldest first"}`}
+					title={`Sort by arrival: ${sort === "desc" ? "Newest first" : "Oldest first"}`}
 					className="flex items-center gap-1 rounded-md border border-hair px-2 py-1.5 text-ink-muted transition hover:bg-hover hover:text-ink-2"
 				>
 					{sort === "desc" ? (
@@ -420,6 +432,7 @@ export default function MessageList({
 
 			{/* Message list */}
 			<div ref={listRef} className="flex-1 overflow-y-auto">
+				{markError && <div role="alert" className="m-4 text-sm text-danger">{markError} <button type="button" onClick={() => setMarkError("")} className="underline">Dismiss</button></div>}
 				{isValidating && !messages.length && (
 					<div className="flex flex-col items-center gap-3 p-12 text-ink-muted">
 						<div className="h-6 w-6 animate-spin rounded-full border-2 border-hair-strong border-t-indigo-500" />
@@ -428,7 +441,8 @@ export default function MessageList({
 				)}
 				{error && (
 					<div className="m-4 rounded-lg border border-danger/20 bg-danger/10 p-4 text-sm text-danger">
-						{error}
+						{error.message || "Could not load messages"}
+						<button type="button" onClick={() => mutate()} className="ml-2 underline">Retry</button>
 					</div>
 				)}
 				{!isValidating && !error && messages.length === 0 && (
@@ -444,15 +458,10 @@ export default function MessageList({
 						isReading={isReading}
 						isCursor={cursor === msg.uid}
 						selected={selected?.has(msg.uid)}
-						onToggle={() => onToggleSelect(msg.uid)}
-						onClick={() => openMessage(msg)}
+						onToggle={onToggleSelect}
+						onClick={openMessage}
 						alwaysRead={alwaysRead}
-						swipe={
-							swipeAction && {
-								label: swipeAction.label,
-								onSwipe: () => swipeAction.onSwipe(msg),
-							}
-						}
+						swipe={swipeAction}
 					/>
 				))}
 			</div>

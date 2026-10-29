@@ -4,6 +4,7 @@ import { cookie } from "@elysiajs/cookie";
 import { openapi } from "@elysiajs/openapi";
 import staticPlugin from "@elysiajs/static";
 import { Elysia, file } from "elysia";
+import pkg from "./package.json" with { type: "json" };
 import { CLIENT_DIR, MAIL_SERVER } from "./config.js";
 import { getSetting, setSetting } from "./db.js";
 import { generalLogger as logger } from "./logger.js";
@@ -16,6 +17,7 @@ import { HealthRoute } from "./routes/health.route.js";
 import { MailRoutes } from "./routes/mail.route.js";
 import { ProfileRoutes } from "./routes/profile.route.js";
 import { probeAndRecordLLM } from "./services/llm.service.js";
+import { startFallbackWorker } from "./services/filter-fallback.service.js";
 
 // Fallback at-rest encryption secret (crypto.service.js) when neither
 // TOTP_ENC_KEY nor JWT_SECRET is set: generated once, persisted in sqlite.
@@ -115,7 +117,7 @@ if (process.env.NODE_ENV === "development") {
 			documentation: {
 				info: {
 					title: "ezmail API 💌",
-					version: "0.1.0",
+					version: pkg.version,
 					description:
 						"A modern webmail client backed by imapflow + nodemailer, proxying docker-mailserver.",
 					contact: {
@@ -159,7 +161,12 @@ const startServer = async () => {
 		await probeAndRecordLLM();
 		// idleTimeout (s): Elysia's default 30 would cut LLM summaries (up to
 		// 40s); SSE heartbeats (20s) keep event streams alive regardless.
-		app.listen({ port: Number(process.env.PORT) || 5000, idleTimeout: 120 });
+		app.listen({
+			port: Number(process.env.PORT) || 5000,
+			idleTimeout: 120,
+			maxRequestBodySize: 32 * 1024 * 1024,
+		});
+		startFallbackWorker();
 		process.env.NODE_ENV === "development" &&
 			logger.info("[SERVER] 📘 ezmail OpenAPI UI enabled at /openapi");
 		logger.info(

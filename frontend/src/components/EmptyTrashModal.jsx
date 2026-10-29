@@ -1,15 +1,16 @@
 import { Trash2, X } from "lucide-react";
+import { useDialogFocus } from "../utils/useDialogFocus.js";
 
 // Modal to confirm emptying the trash folder.
 // Parent (MailPage) controls open/close via `open` + `onClose`.
 export default function EmptyTrashModal({ open, onClose, emptyTrash, busy }) {
+	const dialogRef = useDialogFocus(open, () => { if (!busy) onClose(); });
 	const handleConfirm = async () => {
 		try {
 			await emptyTrash?.();
-		} catch (err) {
-			console.error("Failed to empty trash:", err);
-		} finally {
 			onClose();
+		} catch {
+			// Parent displays the failure; keep the confirmation open.
 		}
 	};
 
@@ -23,8 +24,12 @@ export default function EmptyTrashModal({ open, onClose, emptyTrash, busy }) {
 			onClick={onClose}
 		>
 			{/** biome-ignore lint/a11y/useKeyWithClickEvents: later */}
-			{/** biome-ignore lint/a11y/noStaticElementInteractions: later */}
 			<div
+				ref={dialogRef}
+				role="dialog"
+				aria-modal="true"
+				aria-label="Empty Trash"
+				tabIndex={-1}
 				className="relative w-full max-w-md rounded-2xl border border-hair-strong bg-panel p-6 shadow-2xl transition-all"
 				onClick={(e) => e.stopPropagation()}
 			>
@@ -32,6 +37,7 @@ export default function EmptyTrashModal({ open, onClose, emptyTrash, busy }) {
 				<button
 					type="button"
 					onClick={onClose}
+					aria-label="Close confirmation"
 					className="absolute right-4 top-4 rounded-lg p-1.5 text-ink-muted transition hover:bg-hover hover:text-ink-2"
 				>
 					<X className="h-4 w-4" />

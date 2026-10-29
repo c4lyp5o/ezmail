@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import * as OTPAuth from "otpauth";
 import { imap, PASSWORD } from "./helpers/fake-imap.js";
+import { app } from "../index.js";
 import { call, login } from "./helpers/http.js";
 
 // The limiters are module-global, so every test uses its own mailbox.
@@ -12,12 +13,12 @@ beforeEach(() => {
 	imap.addBox("INBOX", "\\Inbox");
 });
 
-const totpCode = (mailbox, secret) =>
+const totpCode = (mailbox, secret, timestamp = Date.now()) =>
 	new OTPAuth.TOTP({
 		issuer: "ezmail",
 		label: mailbox,
 		secret: OTPAuth.Secret.fromBase32(secret),
-	}).generate();
+	}).generate({ timestamp });
 
 describe("password login", () => {
 	test("sets an HttpOnly session cookie and /me returns the mailbox", async () => {
@@ -141,6 +142,50 @@ describe("TOTP login", () => {
 		expect(locked.status).toBe(429);
 	});
 
+	test("recovery requires both a valid code and mailbox password", async () => {
+		const mailbox = fresh();
+		const { secret } = await enroll(mailbox);
+		const code = totpCode(mailbox, secret);
+		const wrongCode = code === "000000" ? "111111" : "000000";
+		for (const body of [
+			{ mailbox, code: wrongCode, password: PASSWORD },
+			{ mailbox, code, password: "wrong" },
+		]) {
+			const response = await call("POST", "/api/v1/totp/recover", { body });
+			expect(response.status).toBe(401);
+		}
+		const response = await call("POST", "/api/v1/totp/recover", {
+			body: { mailbox, code, password: PASSWORD },
+		});
+		expect(response.status).toBe(200);
+		// Recovery consumed that code; the next time step still works.
+		const replay = await call("POST", "/api/v1/login/code", { body: { mailbox, code } });
+		expect(replay.status).toBe(401);
+		const next = await call("POST", "/api/v1/login/code", { body: { mailbox, code: totpCode(mailbox, secret, Date.now() + 30_000) } });
+		expect(next.status).toBe(200);
+	});
+
+	test("a code cannot be used twice", async () => {
+		const mailbox = fresh();
+		const { secret } = await enroll(mailbox);
+		const code = totpCode(mailbox, secret);
+		expect((await call("POST", "/api/v1/login/code", { body: { mailbox, code } })).status).toBe(200);
+		expect((await call("POST", "/api/v1/login/code", { body: { mailbox, code } })).status).toBe(401);
+	});
+
+	test("a pending re-enrollment leaves the existing code usable", async () => {
+		const mailbox = fresh();
+		const { secret, cookie } = await enroll(mailbox);
+		const begin = await call("POST", "/api/v1/totp/begin", {
+			body: { mailbox, password: PASSWORD }, cookie,
+		});
+		expect(begin.status).toBe(200);
+		const response = await call("POST", "/api/v1/login/code", {
+			body: { mailbox, code: totpCode(mailbox, secret) },
+		});
+		expect(response.status).toBe(200);
+	});
+
 	test("disable falls back to password login", async () => {
 		const mailbox = fresh();
 		const { cookie } = await enroll(mailbox);
@@ -173,4 +218,37 @@ test("TOTP status can't be probed for other mailboxes", async () => {
 test("protected routes reject requests without a session", async () => {
 	const res = await call("GET", "/api/v1/mail/folders");
 	expect(res.status).toBe(401);
+});
+
+describe("login throttling per client", () => {
+	const from = (ip) => ({ "x-forwarded-for": `10.0.0.9, ${ip}` });
+	const attempt = (mailbox, password, ip) =>
+		app.handle(new Request("http://localhost/api/v1/login", {
+			method: "POST",
+			headers: { "content-type": "application/json", ...from(ip) },
+			body: JSON.stringify({ mailbox, password }),
+		}));
+
+	test("one client's failures do not lock the mailbox for others", async () => {
+		process.env.TRUST_PROXY = "true";
+		try {
+			const mailbox = fresh();
+			for (let i = 0; i < 10; i++) expect((await attempt(mailbox, "nope", "203.0.113.1")).status).toBe(401);
+			expect((await attempt(mailbox, PASSWORD, "203.0.113.1")).status).toBe(429);
+			expect((await attempt(mailbox, PASSWORD, "203.0.113.2")).status).toBe(200);
+		} finally {
+			delete process.env.TRUST_PROXY;
+		}
+	});
+
+	test("logins from many clients still hit a mailbox-wide ceiling", async () => {
+		process.env.TRUST_PROXY = "true";
+		try {
+			const mailbox = fresh();
+			for (let i = 0; i < 100; i++) await attempt(mailbox, "nope", `198.51.100.${i % 250}.${i}`);
+			expect((await attempt(mailbox, PASSWORD, "192.0.2.1")).status).toBe(429);
+		} finally {
+			delete process.env.TRUST_PROXY;
+		}
+	});
 });

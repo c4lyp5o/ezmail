@@ -29,4 +29,15 @@ describe("createLimiter", () => {
 		expect(l.retryAfter("a", 0)).toBe(0);
 		expect(l.retryAfter("c", 0)).toBeGreaterThan(0);
 	});
+
+	test("success does not erase concurrent reservations", () => {
+		const l = createLimiter({ max: 2, windowMs: 60000 });
+		const a = l.reserve("a", 0);
+		const b = l.reserve("a", 0);
+		expect(l.reserve("a", 0).wait).toBe(60);
+		a.settle(true);
+		expect(l.reserve("a", 0).wait).toBe(0);
+		b.settle(false);
+		expect(l.reserve("a", 0).wait).toBe(60);
+	});
 });

@@ -30,6 +30,7 @@ export const AuthRoutes = new Elysia({ prefix: "/api/v1" })
 			},
 		},
 	)
+	.post("/totp/recover", AuthService.recover, { body: AuthModel.recoverBody })
 	.post(
 		"/totp/begin",
 		(handler) => AuthService.beginEnroll(handler),

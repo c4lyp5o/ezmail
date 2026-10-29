@@ -28,6 +28,27 @@ db.run(`
 	);
 `);
 
+// Optional IMAP filtering survives logout; credentials use the session key.
+db.run(`
+	CREATE TABLE IF NOT EXISTS fallback_filters (
+		mailbox TEXT PRIMARY KEY,
+		username TEXT NOT NULL,
+		pass_enc TEXT,
+		rules_json TEXT NOT NULL,
+		enabled INTEGER NOT NULL DEFAULT 0,
+		uid_validity TEXT NOT NULL,
+		last_uid INTEGER NOT NULL,
+		revision INTEGER NOT NULL DEFAULT 1,
+		last_error TEXT,
+		lease_until INTEGER NOT NULL DEFAULT 0,
+		lease_owner TEXT
+	);
+`);
+// Added after the table first shipped; CREATE TABLE IF NOT EXISTS won't add it to existing databases.
+if (!db.query("PRAGMA table_info(fallback_filters)").all().some((column) => column.name === "last_success")) {
+	db.run("ALTER TABLE fallback_filters ADD COLUMN last_success INTEGER");
+}
+
 export function getSetting(key) {
 	const row = db.query("SELECT value FROM settings WHERE key = ?").get(key);
 	return row?.value ?? null;

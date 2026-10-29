@@ -13,8 +13,9 @@ Only the latest release (the `master` branch and the `calypso666/ezmail:latest` 
 - Credentials are verified against your IMAP server. ezmail has no accounts of its own.
 - The browser holds only an opaque random session token (HttpOnly, SameSite=Strict, and Secure in production). Sessions are stored server-side, keyed by a hash of that token.
 - Mailbox passwords are kept server-side, encrypted with AES-GCM using `TOTP_ENC_KEY`, because IMAP/SMTP needs them on every request. Protect `backend/data/` and the key accordingly.
+- When continuous IMAP filtering is explicitly enabled, the mailbox password also remains encrypted in the database after logout so the background worker can connect. Disabling or deleting fallback rules removes that stored credential.
 - HTML mail is sanitised and rendered in a sandboxed iframe with a CSP that blocks all remote content until the user opts in. Attachments are served with `Content-Disposition: attachment`, `nosniff` and a sandbox CSP.
-- Login and TOTP code attempts are rate-limited per mailbox.
+- Password and discovery attempts are rate-limited per client address and mailbox (set `TRUST_PROXY=true` behind a reverse proxy so the address is the real client), with a mailbox-wide ceiling; TOTP code attempts are rate-limited per mailbox. A TOTP code can be used only once.
 
 ## Known limitations
 
@@ -26,4 +27,5 @@ Only the latest release (the `master` branch and the `calypso666/ezmail:latest` 
 
 - Run behind HTTPS with `NODE_ENV=production`.
 - Set a stable, random `TOTP_ENC_KEY` (64 characters) and keep it out of the image.
-- Keep the backend on a trusted network path to your mail server (IMAPS / SMTP with STARTTLS).
+- Keep the backend on a trusted network path to your mail server (IMAPS, SMTP with STARTTLS, and ManageSieve with TLS).
+- Apply per-IP limits at the reverse proxy. ezmail's per-mailbox limits are process-local and are not shared between instances.

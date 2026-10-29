@@ -2,6 +2,42 @@
 
 All notable changes to ezmail are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+## [3.0.0] - 2026-10-30
+
+### Breaking
+- **Breaking filter configuration:** filters now use ManageSieve instead of writing under `MAIL_DATA_DIR`. Configure `SIEVE_HOST`, `SIEVE_PORT`, and `SIEVE_TLS`; existing files are retained for manual recovery and are not migrated automatically.
+- **TOTP codes are single-use:** a code (or one from an earlier time step) is rejected after a successful login or recovery. Re-using the same code within its window now returns 401.
+- **Attachment indexes now follow IMAP body-structure order.** Previously saved forwarding drafts may need to be recreated. Downloads and forwarded attachments are limited to 25 MiB.
+- Message list sorting now uses mailbox arrival order, including across pages, instead of sorting each page by date. API consumers relying on per-page date ordering should adjust.
+
+### Changed
+- IMAP connections are reused for up to 30 s per mailbox (`IMAP_POOL_IDLE_MS`, `0` to disable) and connects now time out after 15 s. Folder-list polling slows to every two minutes while live updates are connected.
+- **Login throttling is per client:** with `TRUST_PROXY=true` password and discovery limits key on client address + mailbox, so one person's failures no longer lock a mailbox for everyone; a mailbox-wide ceiling of 100 failures remains. Without `TRUST_PROXY` all clients behind a proxy share one address, as before. Successful logins reset the discovery count.
+- Deleting a message in a mailbox without a Trash folder creates one instead of failing. Conversation view also searches Archive.
+- HTTP request bodies are limited to 32 MiB, including the base64 representation of outgoing attachments.
+- Message display downloads headers and text parts instead of the full MIME source; displayable text is limited to 8 MiB per message.
+- Login discovery is rate limited, and password attempts are counted before IMAP verification.
+
+### Added
+- Create folders from the sidebar (`POST /api/v1/mail/folders`).
+- Bcc recipients when composing (`bcc` on `POST /api/v1/mail/send`). Bcc addresses are used for delivery only and are not in the message or the Sent copy.
+- `GET /api/v1/filters/` returns `lastCheck` (epoch milliseconds of the last successful IMAP fallback check) when the fallback is active. Existing databases gain a nullable `fallback_filters.last_success` column automatically on startup.
+- Filters panel: rules read as sentences with a folder picker, can be reordered, can be tried against a sample message without moving mail, show the filtering method and any fallback error, and ask before discarding unsaved edits or deleting all rules.
+- Optional continuous IMAP filtering when ManageSieve is unavailable. The background worker checks new inbox mail while ezmail is running and retains encrypted credentials until disabled or removed.
+- Mail search is debounced and can be cleared; the sidebar shows live-update status. Move notifications remain available for ten seconds and explain when undo is unavailable.
+- Compose warns before leaving uploaded files, shows attachment sizes, and explains the local draft and attachment limits. Failed message, folder, profile, filter, and TOTP status loads offer retry.
+- TOTP users can update a changed mailbox password using their authenticator code and current password via `POST /api/v1/totp/recover`.
+- Send responses indicate when saving to Sent is disabled; the composer warns when saving fails.
+
+### Fixed
+- Single-part messages (no MIME multipart) opened with a blank body because imapflow gives their root structure no part number. They now display, and a lone attachment is listed and downloadable.
+- Isolate message-list caches between sessions, ignore stale message responses, and surface read-marker and reader errors.
+- Preserve the latest draft on navigation and protect an in-flight send. Settings and mail dialogs manage keyboard focus; authentication labels are associated with inputs.
+- Pending TOTP re-enrollment preserves the active credentials until confirmation.
+- Preserve drafts when leaving the composer, report failed bulk actions, and release mailbox locks on flag errors.
+
 ## [2.0.0] - 2026-10-21
 
 ### Breaking
@@ -26,6 +62,7 @@ All notable changes to ezmail are recorded here. The format follows [Keep a Chan
 - Test suites (bun test, and Vitest + happy-dom), a CI workflow, and project docs (CONTRIBUTING, AGENTS, SECURITY, CHANGELOG).
 
 ### Changed
+- **Filters API:** `GET /api/v1/filters/` reports `mode: unavailable` when ManageSieve cannot be reached instead of returning a connection error; `PUT` accepts an optional `mode`. A new `fallback_filters` SQLite table stores the optional worker configuration and progress.
 - Attachments download on demand instead of being inlined as base64, and inline `cid:` images load from the endpoint.
 - Server-side pagination fetches only the requested page.
 - Trash, Sent and Archive are found by IMAP special-use role, not by name.
