@@ -428,7 +428,8 @@ export default function MessageList({
 				)}
 				{error && (
 					<div className="m-4 rounded-lg border border-danger/20 bg-danger/10 p-4 text-sm text-danger">
-						{error}
+						{error.message || "Could not load messages"}
+						<button type="button" onClick={() => mutate()} className="ml-2 underline">Retry</button>
 					</div>
 				)}
 				{!isValidating && !error && messages.length === 0 && (
