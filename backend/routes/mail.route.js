@@ -21,6 +21,21 @@ export const MailRoutes = new Elysia({ prefix: "/api/v1/mail" })
 			tags: ["Mail"],
 		},
 	})
+	.post("/folders", MailService.createFolder, {
+		body: MailModel.createFolderBody,
+		response: {
+			200: MailModel.createFolderResponse,
+			400: MailModel.createFolderResponse,
+			409: MailModel.createFolderResponse,
+			502: MailModel.createFolderResponse,
+		},
+		detail: {
+			summary: "Create a folder",
+			description:
+				"Creates a top-level folder. Names use letters, numbers, spaces, dashes and underscores so filters can target them. 409 when it already exists.",
+			tags: ["Mail"],
+		},
+	})
 	.get("/messages/:folder", MailService.listMessages, {
 		response: MailModel.listMessagesResponse,
 		detail: {

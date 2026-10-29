@@ -165,6 +165,16 @@ export const MailModel = {
 		),
 	}),
 
+	createFolderBody: t.Object({
+		name: t.String({ minLength: 1, maxLength: 64 }),
+	}),
+
+	createFolderResponse: t.Object({
+		success: t.Boolean(),
+		message: t.Optional(t.String()),
+		data: t.Optional(t.Object({ path: t.String() })),
+	}),
+
 	expungeFolderBody: t.Object({
 		folder: t.String(),
 	}),

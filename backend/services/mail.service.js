@@ -103,6 +103,8 @@ async function findSpecialFolder(client, use, namePattern) {
 }
 const TRASH_NAMES = /^(trash|bin|deleted( items| messages)?)$/i;
 const SENT_NAMES = /^sent( items| mail| messages)?$/i;
+// Same character set the Sieve filters accept, so a new folder can always be a rule target.
+const NEW_FOLDER_NAME = /^[A-Za-z0-9][A-Za-z0-9 _-]*$/;
 const ARCHIVE_NAMES = /^(archive|archives|all mail)$/i;
 
 // Saves a copy of a sent message to the account's Sent folder. Most IMAP
@@ -306,6 +308,25 @@ export const MailService = {
 
 			return folders;
 		});
+	},
+
+	// --- create a top-level folder ---
+	createFolder: async ({ cookie, body, status }) => {
+		const user = await getUser(cookie);
+		if (!user?.mailbox || !user?.password)
+			return status(401, { success: false, message: "Unauthorized" });
+		const name = body.name.trim();
+		if (!NEW_FOLDER_NAME.test(name) || name.toUpperCase() === "INBOX")
+			return status(400, { success: false, message: "Use letters, numbers, spaces, dashes and underscores." });
+		const res = await withClient(user, status, async (client) => {
+			const existing = await client.list();
+			if (existing.some((f) => f.path.toLowerCase() === name.toLowerCase())) return { path: name, created: false };
+			const made = await client.mailboxCreate(name);
+			return { path: made?.path || name, created: true };
+		});
+		if (res?.data?.created === false)
+			return status(409, { success: false, message: "A folder with that name already exists." });
+		return res?.data ? { success: true, data: { path: res.data.path } } : res;
 	},
 
 	// --- message list (envelope only) ---

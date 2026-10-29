@@ -62,6 +62,29 @@ describe("single-part messages", () => {
 	});
 });
 
+describe("create folder", () => {
+	test("creates a top-level folder and lists it", async () => {
+		const res = await post("/folders", { name: "  Finance 2026 " });
+		expect(res.status).toBe(200);
+		expect(res.json.data).toEqual({ path: "Finance 2026" });
+		expect(imap.boxes.has("Finance 2026")).toBe(true);
+	});
+
+	test("rejects duplicates (any case), INBOX and unsafe names", async () => {
+		expect((await post("/folders", { name: "archive" })).status).toBe(409);
+		expect((await post("/folders", { name: "inbox" })).status).toBe(400);
+		for (const name of ["a/b", "x.y", "../up", "-lead", "tab\tname", "*"]) {
+			expect((await post("/folders", { name })).status).toBe(400);
+		}
+		expect((await post("/folders", { name: "" })).status).toBe(400);
+	});
+
+	test("requires a session", async () => {
+		const res = await call("POST", "/api/v1/mail/folders", { body: { name: "X" } });
+		expect(res.status).toBe(401);
+	});
+});
+
 describe("delete without a Trash folder", () => {
 	test("creates Trash and moves the message there", async () => {
 		imap.boxes.delete("Trash");

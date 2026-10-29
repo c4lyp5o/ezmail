@@ -420,6 +420,12 @@ export default function MailPage() {
 		return runBulk((uids) => moveMessages(uids, activeFolder, toFolder));
 	};
 
+	const createFolder = async (name) => {
+		const res = await apiCall.post("/mail/folders", { name });
+		await loadFolders();
+		selectFolder(res.data.path);
+	};
+
 	// ---- folder / message selection ----
 	const selectFolder = (f) => {
 		if (composeBusy) return;
@@ -635,6 +641,7 @@ export default function MailPage() {
 					folders={folders}
 					active={activeFolder}
 					onSelect={selectFolder}
+					onCreate={createFolder}
 				/>
 				{folderError && <div role="alert" className="px-4 text-xs text-danger">{folderError} <button type="button" onClick={loadFolders} className="underline">Retry</button></div>}
 
