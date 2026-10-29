@@ -11,21 +11,23 @@ export const imap = {
 	boxes: new Map(),
 	calls: [],
 	uidplus: true,
+	failMove: false,
 	clients: [], // every FakeImapFlow created, for pushing IDLE events
 	reset() {
 		this.boxes = new Map();
 		this.calls = [];
 		this.uidplus = true;
+		this.failMove = false;
 		this.clients = [];
 	},
 	addBox(path, specialUse) {
-		const box = { path, specialUse, nextUid: 1, messages: [] };
+		const box = { path, specialUse, nextUid: 1, uidValidity: 1n, messages: [] };
 		this.boxes.set(path, box);
 		return box;
 	},
 	addMessage(
 		path,
-		{ subject = "s", from = "a@x.io", date, seen = false, source, bodyStructure, parts } = {},
+		{ subject = "s", from = "a@x.io", to, date, seen = false, source, bodyStructure, parts } = {},
 	) {
 		const box = this.boxes.get(path);
 		const uid = box.nextUid++;
@@ -38,7 +40,7 @@ export const imap = {
 			uid,
 			flags: new Set(seen ? ["\\Seen"] : []),
 			internalDate: date || new Date(Date.UTC(2026, 0, 1, 0, uid)),
-			envelope: { subject, from: [{ address: from, name: "" }] },
+			envelope: { subject, from: [{ address: from, name: "" }], to: to ? [{ address: to, name: "" }] : [] },
 			bodyStructure,
 			parts,
 			headers,
@@ -121,7 +123,7 @@ export class FakeImapFlow extends EventEmitter {
 
 	async getMailboxLock(path) {
 		const b = this.box(path);
-		this.mailbox = { path, exists: b.messages.length };
+		this.mailbox = { path, exists: b.messages.length, uidValidity: b.uidValidity, uidNext: b.nextUid };
 		return { release: () => {} };
 	}
 
@@ -167,6 +169,10 @@ export class FakeImapFlow extends EventEmitter {
 	// Supports { text }, { header: { name: value } } (substring, like IMAP
 	// HEADER) and { or: [query, ...] }.
 	async search(query) {
+		if (query.uid) {
+			const min = Number(String(query.uid).split(":")[0]);
+			return this.box(this.mailbox.path).messages.filter((m) => m.uid >= min).map((m) => m.uid);
+		}
 		return this.box(this.mailbox.path)
 			.messages.filter((m) => matches(m, query))
 			.map((m) => m.uid);
@@ -183,6 +189,7 @@ export class FakeImapFlow extends EventEmitter {
 	}
 
 	async messageMove(uids, to, opts) {
+		if (imap.failMove) throw new Error("simulated move failure");
 		const src = this.box(this.mailbox.path);
 		const dst = this.box(to);
 		const moving = this.select(uids, opts);
@@ -194,6 +201,12 @@ export class FakeImapFlow extends EventEmitter {
 			dst.messages.push({ ...m, uid: newUid });
 		}
 		return imap.uidplus ? { path: src.path, destination: to, uidMap } : { path: src.path, destination: to };
+	}
+
+	async mailboxCreate(path) {
+		if (imap.boxes.has(path)) throw new Error("Mailbox exists");
+		imap.addBox(path);
+		return { path };
 	}
 
 	async messageDelete(uids, opts = {}) {

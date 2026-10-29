@@ -8,7 +8,7 @@ export const FilterRoutes = new Elysia({ prefix: "/api/v1/filters" })
 		detail: {
 			summary: "Get mail filters",
 			description:
-				"Returns the account's server-side filter rules (Dovecot Sieve) and their enabled state.",
+				"Returns the selected filtering mode, its rules, and its enabled state.",
 			tags: ["Filters"],
 		},
 	})
@@ -18,7 +18,7 @@ export const FilterRoutes = new Elysia({ prefix: "/api/v1/filters" })
 		detail: {
 			summary: "Save mail filters",
 			description:
-				"Validates and saves generated rules using ManageSieve; disabling retains the rules without an active script.",
+				"Saves rules using ManageSieve or the explicitly selected continuous IMAP fallback.",
 			tags: ["Filters"],
 		},
 	})
@@ -27,7 +27,7 @@ export const FilterRoutes = new Elysia({ prefix: "/api/v1/filters" })
 		detail: {
 			summary: "Delete all mail filters",
 			description:
-				"Deactivates ezmail filters and saves an empty rule set; previous scripts are retained.",
+				"Deletes IMAP fallback rules and credentials, or deactivates ezmail's Sieve rules.",
 			tags: ["Filters"],
 		},
 	});

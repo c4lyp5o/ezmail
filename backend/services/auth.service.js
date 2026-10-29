@@ -13,6 +13,7 @@ import {
 } from "./totp.service.js";
 import { codeLimiter, discoveryLimiter, limitKey, loginLimiter } from "./rate-limit.service.js";
 import { createSession, deleteSession } from "./session.service.js";
+import { refreshFallbackPassword } from "./filter-fallback.service.js";
 
 // Secure is forced ON in production so the session cookie is never sent over
 // plaintext HTTP; an explicit COOKIE_SECURE=true can override for
@@ -31,6 +32,7 @@ function clearLegacyCookie(cookie) {
 }
 
 function startSession({ cookie, mailbox, password, rememberMe }) {
+	refreshFallbackPassword(mailbox, password);
 	const ttl = sessionTtl(rememberMe);
 	cookie[SESSION_COOKIE].set({
 		value: createSession(mailbox, password, ttl),
@@ -198,6 +200,7 @@ export const AuthService = {
 			return status(401, { success: false, message: "Invalid code or mailbox password" });
 		}
 		updateTotpPassword(mailbox, password);
+		refreshFallbackPassword(mailbox, password);
 		attempt.settle(true);
 		return { success: true };
 	},

@@ -48,8 +48,17 @@ Everything is set in `backend/.env` (see [`backend/.env.example`](backend/.env.e
 | `LLM_SERVER` / `LLM_SERVER_APIKEY` / `LLM_MODEL` | — | Optional Ollama or OpenAI-compatible server for summaries. |
 | `DB_PATH` | `backend/data/ezmail.db` | SQLite file. |
 
-Filters use ManageSieve with the signed-in mailbox credentials. The server must
-offer TLS and `CHECKSCRIPT`; mail remains usable if ManageSieve is unavailable.
+Filters normally use ManageSieve with the signed-in mailbox credentials. The
+server must offer TLS and `CHECKSCRIPT`. If it is unavailable, select **Use
+ezmail filtering** to opt into the IMAP fallback instead. The fallback checks
+the inbox about once a minute while ezmail is running, including after logout;
+it catches up after a restart, but cannot run while ezmail is stopped. It moves
+only messages arriving after the rules are enabled, with the first match winning.
+Existing server-side rules can still run and are not imported or disabled.
+The fallback stores the mailbox password encrypted in ezmail's database until
+the fallback is disabled or deleted. Keep the database and `TOTP_ENC_KEY` secure;
+after changing the mailbox password, sign in with the new credentials (or use
+TOTP recovery) to refresh the worker's stored password.
 Active scripts are editable only when they exactly match ezmail's generated
 template. Other active scripts are shown read-only and must be managed
 externally. New scripts use new names; ezmail keeps the previous managed

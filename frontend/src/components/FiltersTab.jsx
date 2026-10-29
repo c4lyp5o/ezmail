@@ -30,6 +30,8 @@ export default function FiltersTab({ mailbox, folders = [] }) {
 	const [removing, setRemoving] = useState(false);
 	const [error, setError] = useState("");
 	const [saved, setSaved] = useState(false);
+	const [mode, setMode] = useState("sieve");
+	const [workerError, setWorkerError] = useState("");
 
 	const load = async () => {
 		setLoadFailed(false);
@@ -42,6 +44,8 @@ export default function FiltersTab({ mailbox, folders = [] }) {
 			setEnabled(res.data?.enabled ?? true);
 			setConflict(!!res.data?.conflict);
 			setSource(res.data?.sieveSource || "");
+			setMode(res.data?.mode || "sieve");
+			setWorkerError(res.data?.lastError || "");
 		} catch (err) {
 			setLoadFailed(true);
 			setError(err.message || "Could not load filters. Check the mail server connection.");
@@ -59,9 +63,24 @@ export default function FiltersTab({ mailbox, folders = [] }) {
 			setLoadFailed(false);
 			setConflict(false);
 			setSource("");
+			setWorkerError("");
 			load();
 		}
 	}, [mailbox]);
+
+	useEffect(() => {
+		if (mode !== "imap") return;
+		let active = true;
+		const timer = setInterval(async () => {
+			try {
+				const response = await apiCall.get("/filters");
+				if (active && response.data?.mode === "imap") setWorkerError(response.data.lastError || "");
+			} catch {
+				if (active) setWorkerError("Could not check filtering status. Try again later.");
+			}
+		}, 30_000);
+		return () => { active = false; clearInterval(timer); };
+	}, [mode]);
 
 	const updateRule = (i, patch) => {
 		setRules((rs) => rs.map((r, j) => (j === i ? { ...r, ...patch } : r)));
@@ -97,6 +116,7 @@ export default function FiltersTab({ mailbox, folders = [] }) {
 			const res = await apiCall.put("/filters", {
 				rules: clean,
 				enabled,
+				mode,
 			});
 			if (!res.success) throw new Error(res.message || "Save failed");
 			// Keep the stable client IDs used as React keys.
@@ -113,7 +133,7 @@ export default function FiltersTab({ mailbox, folders = [] }) {
 		setError("");
 		try {
 			await apiCall.del("/filters");
-			setRules([]);
+			await load();
 			setSaved(false);
 		} catch (err) {
 			setError(err.message);
@@ -127,11 +147,21 @@ export default function FiltersTab({ mailbox, folders = [] }) {
 
 	return (
 		<div>
-			<p className="text-sm text-ink-muted">Rules apply to new mail as it arrives. The first matching rule wins.</p>
+			<p className="text-sm text-ink-muted">Rules apply to new mail. The first matching rule wins.</p>
+			{mode === "unavailable" && <div role="alert" className="mt-3 rounded-lg border border-warn/20 bg-warn/10 p-3 text-sm text-ink-2">
+				<p>Server-side filtering is unavailable. You can use ezmail to check the inbox and move matching new messages instead.</p>
+				<p className="mt-2 text-xs text-ink-muted">Existing server rules may still run. This does not import or change them.</p>
+				<button type="button" onClick={() => { setMode("imap"); setEnabled(true); }} className="mt-3 rounded-lg bg-accent px-3 py-2 text-sm font-medium text-white">Use ezmail filtering</button>
+			</div>}
+			{mode === "imap" && <div className="mt-3 rounded-lg border border-hair-strong bg-canvas p-3 text-sm text-ink-2">
+				<p>ezmail checks for new inbox messages about once a minute while the ezmail server is running, including after you sign out. Rules do not move existing mail.</p>
+				<p className="mt-2 text-xs text-ink-muted">Your mailbox password is stored encrypted for this feature. Disabling or deleting these rules removes the stored password.</p>
+				{workerError && <p role="alert" className="mt-2 text-danger">{workerError}</p>}
+			</div>}
 
 			{conflict && <div role="alert" className="mt-3 text-sm text-danger">The active script is not an ezmail-generated script. It is read-only here; manage it externally.<pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap">{source}</pre></div>}
 			{loadFailed && <div role="alert" className="mt-3 text-sm text-danger">{error} <button type="button" onClick={load} className="underline">Retry</button></div>}
-			<fieldset disabled={conflict || loadFailed || busy || removing}>
+			<fieldset disabled={mode === "unavailable" || conflict || loadFailed || busy || removing}>
 			<label className="mt-3 flex cursor-pointer items-center gap-2 text-sm text-ink-2">
 				<input
 					type="checkbox"
@@ -215,7 +245,7 @@ export default function FiltersTab({ mailbox, folders = [] }) {
 			{error && !loadFailed && <p className="mt-2 text-sm text-danger">{error}</p>}
 			{saved && !error && (
 				<p className="mt-2 text-sm text-accent">
-					{enabled ? "Saved — filters are live for new mail." : "Saved — filtering is disabled."}
+					{enabled ? mode === "imap" ? "Saved — ezmail will check for new mail." : "Saved — filters are live for new mail." : "Saved — filtering is disabled."}
 				</p>
 			)}
 

@@ -16,6 +16,7 @@ import { HealthRoute } from "./routes/health.route.js";
 import { MailRoutes } from "./routes/mail.route.js";
 import { ProfileRoutes } from "./routes/profile.route.js";
 import { probeAndRecordLLM } from "./services/llm.service.js";
+import { startFallbackWorker } from "./services/filter-fallback.service.js";
 
 // Fallback at-rest encryption secret (crypto.service.js) when neither
 // TOTP_ENC_KEY nor JWT_SECRET is set: generated once, persisted in sqlite.
@@ -164,6 +165,7 @@ const startServer = async () => {
 			idleTimeout: 120,
 			maxRequestBodySize: 32 * 1024 * 1024,
 		});
+		startFallbackWorker();
 		process.env.NODE_ENV === "development" &&
 			logger.info("[SERVER] 📘 ezmail OpenAPI UI enabled at /openapi");
 		logger.info(

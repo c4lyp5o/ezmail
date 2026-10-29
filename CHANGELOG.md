@@ -13,6 +13,7 @@ All notable changes to ezmail are recorded here. The format follows [Keep a Chan
 - Login discovery is rate limited, and password attempts are counted before IMAP verification.
 
 ### Added
+- Optional continuous IMAP filtering when ManageSieve is unavailable. The background worker checks new inbox mail while ezmail is running and retains encrypted credentials until disabled or removed.
 - Mail search is debounced and can be cleared; the sidebar shows live-update status. Move notifications remain available for ten seconds and explain when undo is unavailable.
 - Compose warns before leaving uploaded files, shows attachment sizes, and explains the local draft and attachment limits. Failed message, folder, profile, filter, and TOTP status loads offer retry.
 - TOTP users can update a changed mailbox password using their authenticator code and current password via `POST /api/v1/totp/recover`.
@@ -48,6 +49,7 @@ All notable changes to ezmail are recorded here. The format follows [Keep a Chan
 - Test suites (bun test, and Vitest + happy-dom), a CI workflow, and project docs (CONTRIBUTING, AGENTS, SECURITY, CHANGELOG).
 
 ### Changed
+- **Filters API:** `GET /api/v1/filters/` reports `mode: unavailable` when ManageSieve cannot be reached instead of returning a connection error; `PUT` accepts an optional `mode`. A new `fallback_filters` SQLite table stores the optional worker configuration and progress.
 - Attachments download on demand instead of being inlined as base64, and inline `cid:` images load from the endpoint.
 - Server-side pagination fetches only the requested page.
 - Trash, Sent and Archive are found by IMAP special-use role, not by name.

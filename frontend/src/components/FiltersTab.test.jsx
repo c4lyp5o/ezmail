@@ -32,3 +32,21 @@ test("saving disabled rules reports their actual state and keeps rows editable",
 	expect(screen.queryByDisplayValue("one")).toBeNull();
 	expect(screen.getByDisplayValue("two")).toBeTruthy();
 });
+
+test("offers continuous ezmail filtering when server filtering is unavailable", async () => {
+	const calls = mockApi({
+		"GET /filters": { mode: "unavailable", rules: [], enabled: false },
+		"PUT /filters": { ruleCount: 1, enabled: true },
+	});
+	render(<FiltersTab mailbox="me@x.io" />);
+	await screen.findByText(/Server-side filtering is unavailable/);
+	expect(screen.getByText("Save").closest("fieldset").disabled).toBe(true);
+	fireEvent.click(screen.getByRole("button", { name: "Use ezmail filtering" }));
+	expect(screen.getByText(/including after you sign out/)).toBeTruthy();
+	fireEvent.click(screen.getByText("Add filter"));
+	fireEvent.change(screen.getByPlaceholderText("value…"), { target: { value: "invoice" } });
+	fireEvent.change(screen.getByPlaceholderText("Folder"), { target: { value: "Bills" } });
+	fireEvent.click(screen.getByText("Save"));
+	await screen.findByText("Saved — ezmail will check for new mail.");
+	expect(calls.find((call) => call.method === "PUT").body).toMatchObject({ mode: "imap", enabled: true });
+});

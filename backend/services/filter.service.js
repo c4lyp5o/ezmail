@@ -1,6 +1,7 @@
 import { Client } from "sievelib-ts";
 import { MAIL_SERVER } from "../config.js";
 import { getUser } from "../plugins/auth.plugin.js";
+import { getFallback, removeFallback, saveFallback } from "./filter-fallback.service.js";
 
 // Sieve string literal escaping (backslash + double quote).
 function sieveEscape(s) {
@@ -175,17 +176,27 @@ export const FilterService = {
 	get: async ({ cookie, status }) => {
 		const user = await getUser(cookie);
 		if (!user?.mailbox || !user?.password) return status(401, { success: false, message: "Unauthorized" });
+		const fallback = getFallback(user.mailbox);
+		if (fallback) return { success: true, data: { mailbox: user.mailbox, ...fallback } };
 		try {
 			const data = await withSieve(user, filterState);
-			return { success: true, data: { mailbox: user.mailbox, ...data } };
-		} catch (err) { return status(502, { success: false, message: err.message }); }
+			return { success: true, data: { mailbox: user.mailbox, mode: "sieve", ...data } };
+		} catch {
+			return { success: true, data: { mailbox: user.mailbox, mode: "unavailable", enabled: false, rules: [] } };
+		}
 	},
 	put: async ({ cookie, body, status }) => {
 		const user = await getUser(cookie);
 		if (!user?.mailbox || !user?.password) return status(401, { success: false, message: "Unauthorized" });
 		if (body.rules.some((rule) => !validRule(rule))) return status(400, { success: false, message: "Invalid filter rule(s)" });
 		try {
-			await serializeWrite(user.mailbox, () => withSieve(user, (client) => saveFilters(client, body.rules, body.enabled)));
+			const fallback = getFallback(user.mailbox);
+			if (fallback && body.mode === "sieve") return status(409, { success: false, message: "Remove ezmail filtering before switching to server filters." });
+			if (fallback || body.mode === "imap") {
+				await serializeWrite(user.mailbox, () => saveFallback(user, body.rules, body.enabled));
+			} else {
+				await serializeWrite(user.mailbox, () => withSieve(user, (client) => saveFilters(client, body.rules, body.enabled)));
+			}
 			return { success: true, data: { ruleCount: body.rules.length, enabled: body.enabled } };
 		} catch (err) { return status(502, { success: false, message: err.message }); }
 	},
@@ -193,7 +204,10 @@ export const FilterService = {
 		const user = await getUser(cookie);
 		if (!user?.mailbox || !user?.password) return status(401, { success: false, message: "Unauthorized" });
 		try {
-			await serializeWrite(user.mailbox, () => withSieve(user, (client) => saveFilters(client, [], false)));
+			await serializeWrite(user.mailbox, async () => {
+				if (getFallback(user.mailbox)) removeFallback(user.mailbox);
+				else await withSieve(user, (client) => saveFilters(client, [], false));
+			});
 			return { success: true, data: { removed: true } };
 		} catch (err) { return status(502, { success: false, message: err.message }); }
 	},

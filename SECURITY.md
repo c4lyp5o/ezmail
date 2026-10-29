@@ -13,6 +13,7 @@ Only the latest release (the `master` branch and the `calypso666/ezmail:latest` 
 - Credentials are verified against your IMAP server. ezmail has no accounts of its own.
 - The browser holds only an opaque random session token (HttpOnly, SameSite=Strict, and Secure in production). Sessions are stored server-side, keyed by a hash of that token.
 - Mailbox passwords are kept server-side, encrypted with AES-GCM using `TOTP_ENC_KEY`, because IMAP/SMTP needs them on every request. Protect `backend/data/` and the key accordingly.
+- When continuous IMAP filtering is explicitly enabled, the mailbox password also remains encrypted in the database after logout so the background worker can connect. Disabling or deleting fallback rules removes that stored credential.
 - HTML mail is sanitised and rendered in a sandboxed iframe with a CSP that blocks all remote content until the user opts in. Attachments are served with `Content-Disposition: attachment`, `nosniff` and a sandbox CSP.
 - Login and TOTP code attempts are rate-limited per mailbox.
 
