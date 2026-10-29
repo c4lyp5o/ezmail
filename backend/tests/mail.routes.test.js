@@ -62,6 +62,16 @@ describe("single-part messages", () => {
 	});
 });
 
+describe("delete without a Trash folder", () => {
+	test("creates Trash and moves the message there", async () => {
+		imap.boxes.delete("Trash");
+		const uid = imap.addMessage("INBOX", { subject: "bye" });
+		const res = await post("/delete", { folder: "INBOX", uids: [uid] });
+		expect(res.status).toBe(200);
+		expect(imap.boxes.get("Trash").messages.map((m) => m.envelope.subject)).toEqual(["bye"]);
+	});
+});
+
 describe("message list", () => {
 	const fill = (count) => {
 		for (let i = 0; i < count; i++) imap.addMessage("INBOX", { subject: `msg ${i + 1}` });

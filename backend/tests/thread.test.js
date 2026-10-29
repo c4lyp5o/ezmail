@@ -65,4 +65,14 @@ describe("conversation", () => {
 		const res = await thread("INBOX", ids.a);
 		expect(res.json.data.some((m) => m.from === "spam@x.io")).toBe(false);
 	});
+
+	test("includes archived replies", async () => {
+		imap.addBox("Archive", "\\Archive");
+		const archived = imap.addMessage("Archive", {
+			date: new Date("2026-10-04"),
+			source: mail({ id: "<d4@x>", refs: ["<a1@x>", "<c3@x>"], from: "bob@x.io", subject: "Re: Plan" }),
+		});
+		const res = await thread("INBOX", ids.a);
+		expect(res.json.data.some((m) => m.folder === "Archive" && m.uid === archived)).toBe(true);
+	});
 });

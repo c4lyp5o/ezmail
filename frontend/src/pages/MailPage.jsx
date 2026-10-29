@@ -228,15 +228,16 @@ export default function MailPage() {
 		);
 	}, []);
 
-	// Unread badges for every folder: refresh on mount and every 30s while the
-	// tab is visible (one LIST-STATUS round-trip server-side).
+	// Unread badges for every folder: refresh on mount and while the tab is
+	// visible (one LIST-STATUS round-trip server-side). Live INBOX events already
+	// trigger refreshes, so polling only backs off, never stops.
 	useEffect(() => {
 		loadFolders();
 		const id = setInterval(() => {
 			if (!document.hidden) loadFolders();
-		}, 30000);
+		}, live ? 120000 : 30000);
 		return () => clearInterval(id);
-	}, [loadFolders]);
+	}, [loadFolders, live]);
 
 	const showToast = useCallback((next) => {
 		clearTimeout(toastTimer.current);

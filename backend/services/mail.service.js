@@ -8,6 +8,7 @@ import sanitizeHtml from "sanitize-html";
 import { MAIL_SERVER } from "../config.js";
 import { generalLogger as logger } from "../logger.js";
 import { getUser } from "../plugins/auth.plugin.js";
+import { createPool } from "./imap-pool.service.js";
 import { getDisplayName } from "./profile.service.js";
 
 // Builds an IMAP client bound to the authenticated user's mailbox. No global
@@ -27,15 +28,10 @@ export function buildImapClient({ mailbox, password }, options = {}) {
 	});
 }
 
-async function withImap(user, fn) {
-	const client = buildImapClient(user);
-	try {
-		await client.connect();
-		return await fn(client);
-	} finally {
-		await client.logout().catch(() => {});
-	}
-}
+const pool = createPool(buildImapClient);
+export const closeImapPool = () => pool.closeIdle();
+
+const withImap = (user, fn) => pool.use(user, fn);
 
 async function withClient(user, status, fn) {
 	if (!user?.mailbox || !user?.password) {
@@ -43,17 +39,12 @@ async function withClient(user, status, fn) {
 			? status(401, { success: false, message: "Unauthorized" })
 			: { success: false, message: "Unauthorized" };
 	}
-	const client = buildImapClient(user);
 	try {
-		await client.connect();
-		const result = await fn(client);
-		return { success: true, data: result };
+		return { success: true, data: await pool.use(user, fn) };
 	} catch (err) {
 		logImapError(err);
 		const body = { success: false, message: "Mail command failed" };
 		return status ? status(502, body) : body;
-	} finally {
-		await client.logout().catch(() => {});
 	}
 }
 
@@ -112,24 +103,23 @@ async function findSpecialFolder(client, use, namePattern) {
 }
 const TRASH_NAMES = /^(trash|bin|deleted( items| messages)?)$/i;
 const SENT_NAMES = /^sent( items| mail| messages)?$/i;
+const ARCHIVE_NAMES = /^(archive|archives|all mail)$/i;
 
 // Saves a copy of a sent message to the account's Sent folder. Most IMAP
 // servers (docker-mailserver/Dovecot included) don't do this on SMTP submit.
 // Set SAVE_SENT=false for servers that already do (e.g. Gmail) to avoid dupes.
 async function saveToSent(user, raw) {
 	if (process.env.SAVE_SENT === "false") return false;
-	const client = buildImapClient(user);
 	try {
-		await client.connect();
-		const sent = await findSpecialFolder(client, "\\Sent", SENT_NAMES);
-		if (!sent) return false;
-		await client.append(sent, raw, ["\\Seen"]);
-		return true;
+		return await withImap(user, async (client) => {
+			const sent = await findSpecialFolder(client, "\\Sent", SENT_NAMES);
+			if (!sent) return false;
+			await client.append(sent, raw, ["\\Seen"]);
+			return true;
+		});
 	} catch (err) {
 		logImapError(err);
 		return false;
-	} finally {
-		await client.logout().catch(() => {});
 	}
 }
 
@@ -269,6 +259,29 @@ function toFlagsArray(flags) {
 		return [...flags];
 	}
 	return [];
+}
+
+// Fresh INBOX unseen count for the response, or undefined when the server
+// can't say (the client keeps its current badge).
+async function currentInboxUnseen(client) {
+	try {
+		return Number((await client.status("INBOX", { unseen: true }))?.unseen) || 0;
+	} catch {
+		return undefined;
+	}
+}
+
+async function changeFlags(method, cookie, body, status) {
+	const user = await getUser(cookie);
+	if (!user?.mailbox || !user?.password)
+		return status(401, { success: false, message: "Unauthorized" });
+	const { folder, uids, flags } = body;
+	return withClient(user, status, async (client) => {
+		const lock = await client.getMailboxLock(folder);
+		try { await client[method](uids, flags, { uid: true }); }
+		finally { lock.release(); }
+		return { uids, flags, inboxUnseen: await currentInboxUnseen(client) };
+	});
 }
 
 export const MailService = {
@@ -437,21 +450,16 @@ export const MailService = {
 			}));
 
 			// Extra display headers for the toggleable detail panel.
-			const hdrs = parsed?.headers || {};
-			const replyTo =
-				parsed?.replyTo?.text ||
-				"" ||
-				(hdrs.get?.("reply-to")?.[0]?.value ?? "");
-			const mailedBy =
-				(hdrs.get?.("x-mailer")?.[0]?.value ?? "") ||
-				(hdrs.get?.("user-agent")?.[0]?.value ?? "");
-			const signedBy = hdrs.get?.("x-dkim-signature")
-				? (() => {
-						const raw = hdrs.get("x-dkim-signature")?.[0]?.value || "";
-						const m = raw.match(/d=([^\s;]+)/i);
-						return m ? m[1] : "";
-					})()
-				: "";
+			const hdrs = parsed?.headers;
+			// mailparser returns plain strings for most headers, objects for structured ones.
+			const header = (name) => {
+				const raw = hdrs?.get?.(name);
+				const first = Array.isArray(raw) ? raw[0] : raw;
+				return typeof first === "string" ? first : String(first?.value ?? "");
+			};
+			const replyTo = parsed?.replyTo?.text || "";
+			const mailedBy = header("x-mailer") || header("user-agent");
+			const signedBy = header("x-dkim-signature").match(/d=([^\s;]+)/i)?.[1] || "";
 
 			return {
 				uid: msg.uid,
@@ -511,7 +519,8 @@ export const MailService = {
 			const query = terms.length > 1 ? { or: terms } : terms[0];
 
 			const sent = await findSpecialFolder(client, "\\Sent", SENT_NAMES);
-			const boxes = [...new Set(["INBOX", folder, sent].filter(Boolean))];
+			const archive = await findSpecialFolder(client, "\\Archive", ARCHIVE_NAMES);
+			const boxes = [...new Set(["INBOX", folder, sent, archive].filter(Boolean))];
 			const items = [];
 			for (const box of boxes) {
 				const lock = await client.getMailboxLock(box);
@@ -579,49 +588,9 @@ export const MailService = {
 		});
 	},
 
-	// --- set flags (read/unread/delete) ---
-	setFlags: async ({ cookie, body, status }) => {
-		const user = await getUser(cookie);
-		if (!user?.mailbox || !user?.password)
-			return status(401, { success: false, message: "Unauthorized" });
-		const { folder, uids, flags } = body;
-		return withClient(user, status, async (client) => {
-			const lock = await client.getMailboxLock(folder);
-			try { await client.messageFlagsAdd(uids, flags, { uid: true }); }
-			finally { lock.release(); }
-			// Piggyback fresh INBOX unseen on the same connection (no extra
-			// request from the client).
-			let inboxUnseen;
-			try {
-				const s = await client.status("INBOX", { unseen: true });
-				inboxUnseen = Number(s?.unseen) || 0;
-			} catch {
-				// leave undefined — client keeps its current badge
-			}
-			return { uids: uids, flags: flags, inboxUnseen };
-		});
-	},
-
-	clearFlags: async ({ cookie, body, status }) => {
-		const user = await getUser(cookie);
-		if (!user?.mailbox || !user?.password)
-			return status(401, { success: false, message: "Unauthorized" });
-		const { folder, uids, flags } = body;
-		return withClient(user, status, async (client) => {
-			const lock = await client.getMailboxLock(folder);
-			try { await client.messageFlagsRemove(uids, flags, { uid: true }); }
-			finally { lock.release(); }
-			// Piggyback fresh INBOX unseen on the same connection.
-			let inboxUnseen;
-			try {
-				const s = await client.status("INBOX", { unseen: true });
-				inboxUnseen = Number(s?.unseen) || 0;
-			} catch {
-				// leave undefined — client keeps its current badge
-			}
-			return { uids: uids, flags: flags, inboxUnseen };
-		});
-	},
+	// --- set / clear flags (read/unread/delete) ---
+	setFlags: ({ cookie, body, status }) => changeFlags("messageFlagsAdd", cookie, body, status),
+	clearFlags: ({ cookie, body, status }) => changeFlags("messageFlagsRemove", cookie, body, status),
 
 	// --- move message ---
 	moveMessage: async ({ cookie, body, status }) => {
@@ -640,14 +609,7 @@ export const MailService = {
 			} finally {
 				lock.release();
 			}
-			// Piggyback fresh INBOX unseen on the same connection.
-			let inboxUnseen;
-			try {
-				const s = await client.status("INBOX", { unseen: true });
-				inboxUnseen = Number(s?.unseen) || 0;
-			} catch {
-				// leave undefined — client keeps its current badge
-			}
+			const inboxUnseen = await currentInboxUnseen(client);
 			return { uids: targetUids, from: from, to: to, inboxUnseen, movedUids };
 		});
 	},
@@ -662,8 +624,12 @@ export const MailService = {
 		const targetUids = Array.isArray(uids) ? uids.map(Number) : uids;
 		return withClient(user, status, async (client) => {
 			// Outside Trash a delete is a move to Trash; inside it, permanent.
-			const trash =
-				(await findSpecialFolder(client, "\\Trash", TRASH_NAMES)) || "Trash";
+			let trash = await findSpecialFolder(client, "\\Trash", TRASH_NAMES);
+			if (!trash && folder !== "Trash") {
+				// Some mailboxes have no Trash yet; create it rather than failing the delete.
+				trash = "Trash";
+				await client.mailboxCreate(trash).catch(() => {});
+			}
 			const lock = await client.getMailboxLock(folder);
 			try {
 				if (folder !== trash) {
@@ -674,14 +640,7 @@ export const MailService = {
 			} finally {
 				lock.release();
 			}
-			// Piggyback fresh INBOX unseen on the same connection.
-			let inboxUnseen;
-			try {
-				const s = await client.status("INBOX", { unseen: true });
-				inboxUnseen = Number(s?.unseen) || 0;
-			} catch {
-				// leave undefined — client keeps its current badge
-			}
+			const inboxUnseen = await currentInboxUnseen(client);
 			return { uids: targetUids, folder: folder, inboxUnseen };
 		});
 	},

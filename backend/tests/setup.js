@@ -10,6 +10,7 @@ process.env.DB_PATH = path.join(TMP, "test.db");
 process.env.MAIL_DATA_DIR = path.join(TMP, "mail");
 process.env.TOTP_ENC_KEY = "test-totp-key";
 process.env.LLM_SERVER = "http://llm.test";
+process.env.IMAP_POOL_IDLE_MS = "0"; // pool tests opt in explicitly
 
 const { FakeImapFlow } = await import("./helpers/fake-imap.js");
 const { fakeNodemailer } = await import("./helpers/fake-smtp.js");

@@ -1,6 +1,7 @@
 import { ImapFlow } from "imapflow";
 import { MAIL_SERVER } from "../config.js";
 import { getUser, SESSION_COOKIE } from "../plugins/auth.plugin.js";
+import { REQUEST_TIMEOUTS } from "./imap-pool.service.js";
 import { isLLMPresent } from "./llm.service.js";
 import { generalLogger as logger } from "../logger.js";
 import {
@@ -75,6 +76,7 @@ async function verifyImap(mailbox, password) {
 		secure: MAIL_SERVER.imapSecure,
 		auth: { user: mailbox, pass: password },
 		logger: false,
+		...REQUEST_TIMEOUTS,
 	});
 	try {
 		await client.connect();

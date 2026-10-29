@@ -85,6 +85,10 @@ export class FakeImapFlow extends EventEmitter {
 		imap.clients.push(this);
 	}
 
+	get usable() {
+		return !this.loggedOut;
+	}
+
 	async connect() {
 		if (this.options.auth?.pass !== PASSWORD) {
 			const err = new Error("Authentication failed");
