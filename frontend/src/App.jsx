@@ -1,9 +1,12 @@
 import { Routes, Route, Navigate } from "react-router";
+import { SWRConfig } from "swr";
 import { AuthProvider, useAuth } from "./context/auth.jsx";
 import { ThemeProvider } from "./context/theme.jsx";
 import LoginPage from "./pages/LoginPage.jsx";
 import MailPage from "./pages/MailPage.jsx";
 import RequireAuth from "./components/RequireAuth.jsx";
+
+const mailboxCache = { provider: () => new Map() };
 
 function Gate() {
 	const { user, loading } = useAuth();
@@ -31,7 +34,9 @@ export default function App() {
 						path="/mail/*"
 						element={
 							<RequireAuth>
-								<MailPage />
+								<SWRConfig value={mailboxCache}>
+									<MailPage />
+								</SWRConfig>
 							</RequireAuth>
 						}
 					/>
