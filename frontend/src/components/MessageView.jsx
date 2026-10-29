@@ -138,6 +138,7 @@ export default function MessageView({
 	const [msg, setMsg] = useState(initialMsg || null);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState("");
+	const [retryCount, setRetryCount] = useState(0);
 	const [showDetails, setShowDetails] = useState(false);
 
 	// True when the loaded HTML contains externally-hosted images (http(s)://),
@@ -174,7 +175,7 @@ export default function MessageView({
 			})
 			.finally(() => { if (!controller.signal.aborted) setLoading(false); });
 		return () => controller.abort();
-	}, [thisFolder, uid, onLoaded, setShowRemote]);
+	}, [thisFolder, uid, onLoaded, setShowRemote, retryCount]);
 
 	// Conversation (Message-ID / References), fetched once the message is in.
 	const [thread, setThread] = useState([]);
@@ -238,6 +239,7 @@ export default function MessageView({
 				<div className="rounded-lg border border-danger/20 bg-danger/10 p-4 text-sm text-danger">
 					{error}
 				</div>
+					<button type="button" onClick={() => setRetryCount((n) => n + 1)} className="text-sm text-accent underline">Retry</button>
 				<button
 					type="button"
 					onClick={onBack}
