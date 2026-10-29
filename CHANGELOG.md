@@ -4,16 +4,20 @@ All notable changes to ezmail are recorded here. The format follows [Keep a Chan
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-10-30
+
+### Breaking
+- **Breaking filter configuration:** filters now use ManageSieve instead of writing under `MAIL_DATA_DIR`. Configure `SIEVE_HOST`, `SIEVE_PORT`, and `SIEVE_TLS`; existing files are retained for manual recovery and are not migrated automatically.
+- **TOTP codes are single-use:** a code (or one from an earlier time step) is rejected after a successful login or recovery. Re-using the same code within its window now returns 401.
+- **Attachment indexes now follow IMAP body-structure order.** Previously saved forwarding drafts may need to be recreated. Downloads and forwarded attachments are limited to 25 MiB.
+- Message list sorting now uses mailbox arrival order, including across pages, instead of sorting each page by date. API consumers relying on per-page date ordering should adjust.
+
 ### Changed
 - IMAP connections are reused for up to 30 s per mailbox (`IMAP_POOL_IDLE_MS`, `0` to disable) and connects now time out after 15 s. Folder-list polling slows to every two minutes while live updates are connected.
 - **Login throttling is per client:** with `TRUST_PROXY=true` password and discovery limits key on client address + mailbox, so one person's failures no longer lock a mailbox for everyone; a mailbox-wide ceiling of 100 failures remains. Without `TRUST_PROXY` all clients behind a proxy share one address, as before. Successful logins reset the discovery count.
-- **TOTP codes are single-use:** a code (or one from an earlier time step) is rejected after a successful login or recovery. Re-using the same code within its window now returns 401.
 - Deleting a message in a mailbox without a Trash folder creates one instead of failing. Conversation view also searches Archive.
-- **Breaking filter configuration:** filters now use ManageSieve instead of writing under `MAIL_DATA_DIR`. Configure `SIEVE_HOST`, `SIEVE_PORT`, and `SIEVE_TLS`; existing files are retained for manual recovery and are not migrated automatically.
 - HTTP request bodies are limited to 32 MiB, including the base64 representation of outgoing attachments.
 - Message display downloads headers and text parts instead of the full MIME source; displayable text is limited to 8 MiB per message.
-- **Attachment indexes now follow IMAP body-structure order.** Previously saved forwarding drafts may need to be recreated. Downloads and forwarded attachments are limited to 25 MiB.
-- Message list sorting now uses mailbox arrival order, including across pages, instead of sorting each page by date. API consumers relying on per-page date ordering should adjust.
 - Login discovery is rate limited, and password attempts are counted before IMAP verification.
 
 ### Added

@@ -4,6 +4,7 @@ import { cookie } from "@elysiajs/cookie";
 import { openapi } from "@elysiajs/openapi";
 import staticPlugin from "@elysiajs/static";
 import { Elysia, file } from "elysia";
+import pkg from "./package.json" with { type: "json" };
 import { CLIENT_DIR, MAIL_SERVER } from "./config.js";
 import { getSetting, setSetting } from "./db.js";
 import { generalLogger as logger } from "./logger.js";
@@ -116,7 +117,7 @@ if (process.env.NODE_ENV === "development") {
 			documentation: {
 				info: {
 					title: "ezmail API 💌",
-					version: "0.1.0",
+					version: pkg.version,
 					description:
 						"A modern webmail client backed by imapflow + nodemailer, proxying docker-mailserver.",
 					contact: {
