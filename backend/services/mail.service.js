@@ -183,6 +183,40 @@ async function loadAttachment(client, uid, part) {
 	return content;
 }
 
+// Fetch only displayable text parts; attachment bodies are downloaded on demand.
+async function loadDisplayBodies(client, uid, structure, attachments) {
+	const attachmentIds = new Set(attachments.map((part) => part.part));
+	const candidates = { "text/plain": [], "text/html": [] };
+	function visit(node) {
+		if (!node || attachmentIds.has(node.part)) return;
+		const type = String(node.type || "").toLowerCase();
+		if (candidates[type] && node.part) candidates[type].push(node.part);
+		for (const child of node.childNodes || []) visit(child);
+	}
+	visit(structure);
+	const bodies = { text: "", html: "" };
+	let total = 0;
+	for (const [type, key] of [["text/plain", "text"], ["text/html", "html"]]) {
+		for (const part of candidates[type]) {
+			const result = await client.download(Number(uid), part, { uid: true, maxBytes: 8 * 1024 * 1024 + 1 });
+			if (!result?.content) throw new Error("Message body part not found");
+			const chunks = [];
+			let size = 0;
+			for await (const chunk of result.content) {
+				size += chunk.length;
+				total += chunk.length;
+				if (total > 8 * 1024 * 1024) {
+					result.content.destroy();
+					throw new Error("Message body exceeds 8 MiB limit");
+				}
+				chunks.push(chunk);
+			}
+			bodies[key] += Buffer.concat(chunks, size).toString("utf8");
+		}
+	}
+	return bodies;
+}
+
 const attachmentUrl = (folder, uid, index) =>
 	`/api/v1/mail/message/${encodeURIComponent(folder)}/${uid}/attachment/${index}`;
 
@@ -362,7 +396,7 @@ export const MailService = {
 					envelope: true,
 					flags: true,
 					internalDate: true,
-					source: true,
+					headers: true,
 					bodyStructure: true,
 				},
 				{ uid: true },
@@ -375,11 +409,10 @@ export const MailService = {
 				return null;
 			}
 
-			// Parse the raw source with mailparser: handles multipart,
-			// quoted-printable/base64, HTML+text alternatives, attachments.
+			// Parse headers independently so the message body need not include attachments.
 			let parsed;
 			try {
-				parsed = await simpleParser(msg.source, { keepCidLinks: true });
+				parsed = await simpleParser(Buffer.concat([msg.headers || Buffer.alloc(0), Buffer.from("\r\n")]), { keepCidLinks: true });
 			} catch (err) {
 				logger.error(`[MAIL] 💥[parse] ${err.message}`);
 				parsed = null;
@@ -387,6 +420,7 @@ export const MailService = {
 
 			// Metadata only — bytes come from the attachment endpoint on demand.
 			const rawAttachments = attachmentParts(msg.bodyStructure);
+			const bodies = await loadDisplayBodies(client, uid, msg.bodyStructure, rawAttachments);
 			const attachments = rawAttachments.map((a, index) => ({
 				index,
 				filename: a.filename || "attachment",
@@ -438,9 +472,9 @@ export const MailService = {
 				mailedBy,
 				signedBy,
 				html:
-					rewriteCidLinks(parsed?.html, rawAttachments, folder || "INBOX", msg.uid) ||
+					rewriteCidLinks(bodies.html, rawAttachments, folder || "INBOX", msg.uid) ||
 					"",
-				text: parsed?.text || "",
+				text: bodies.text,
 				attachments,
 			};
 		});

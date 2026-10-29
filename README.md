@@ -56,7 +56,9 @@ externally. New scripts use new names; ezmail keeps the previous managed
 version and removes older recognized ezmail history after a successful save.
 The old `MAIL_DATA_DIR` files remain on disk and are not migrated automatically;
 back them up and migrate them manually with a ManageSieve client if needed.
-Avoid concurrent external edits while saving filters in ezmail.
+Avoid concurrent external edits while saving filters in ezmail. ManageSieve
+does not provide an atomic compare-and-swap for the active script: ezmail
+rechecks before activation, but cannot prevent a change in the final interval.
 
 ### LLM summaries (optional)
 

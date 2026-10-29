@@ -63,7 +63,7 @@ ezmail/
 - Every request builds its own `ImapFlow`/nodemailer client from the session's credentials (`buildImapClient`). There is no shared account.
 - **Special folders** are resolved by RFC 6154 special-use flag first, then by name (`findSpecialFolder`, `TRASH_NAMES`, `SENT_NAMES`). The frontend mirrors this in `utils/folders.js`.
 - **Listing** fetches the requested page in sequence/UID arrival order. Unread counts for all folders come from `LIST-STATUS`.
-- **Attachments:** body-structure traversal defines indexes for display, download and forwarding. Downloads and forwarding fetch individual parts, with a 25 MiB limit. The message view still parses the full source. The attachment endpoint uses `no-store`, `Content-Disposition: attachment`, `nosniff` and a sandbox CSP. `cid:` links use that endpoint.
+- **Attachments:** body-structure traversal defines indexes for display, download and forwarding. Downloads and forwarding fetch individual parts, with a 25 MiB limit. The message view fetches headers and displayable text parts, capped at 8 MiB total. The attachment endpoint uses `no-store`, `Content-Disposition: attachment`, `nosniff` and a sandbox CSP. `cid:` links use that endpoint.
 - **Send:** MIME is built before SMTP submission and the same bytes are appended to Sent. `savedToSent` reports filing success; `sentSavingDisabled` distinguishes `SAVE_SENT=false` from a failure after delivery.
 - **Moves/deletes** return `movedUids` (UIDPLUS) so the client can undo.
 - **Threads:** `GET /mail/message/:folder/:uid/thread` searches INBOX and Sent by `Message-ID` / `References`. A matching subject alone never links messages.

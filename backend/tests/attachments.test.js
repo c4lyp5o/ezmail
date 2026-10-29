@@ -41,7 +41,7 @@ beforeEach(async () => {
 			] },
 			{ part: "2", type: "application/pdf", disposition: "attachment", dispositionParameters: { filename: "report ü.pdf" }, size: PDF.length },
 		] },
-		parts: { "1.2": PNG, "2": PDF },
+		parts: { "1.1": Buffer.from('<p>logo: <img src="cid:logo@x"></p>'), "1.2": PNG, "2": PDF },
 	});
 	const atts = (await get(`/message/INBOX/${uid}`)).json.data.attachments;
 	pdfIndex = atts.find((a) => a.filename === "report ü.pdf").index;
@@ -58,6 +58,7 @@ async function getRaw(path) {
 
 describe("message payload", () => {
 	test("lists attachment metadata without the bytes", async () => {
+		imap.calls = [];
 		const res = await get(`/message/INBOX/${uid}`);
 		const atts = res.json.data.attachments;
 		expect(atts.map((a) => a.index)).toEqual([0, 1]);
@@ -68,12 +69,23 @@ describe("message payload", () => {
 		});
 		expect(atts[logoIndex]).toMatchObject({ filename: "logo.png", related: true });
 		expect(JSON.stringify(res.json)).not.toContain(PDF.toString("base64"));
+		expect(imap.calls.some((call) => call.query?.source)).toBe(false);
+		expect(imap.calls).toContainEqual({ cmd: "downloadBody", uid: true, part: "1.1" });
 	});
 
 	test("cid: images point at the attachment endpoint, not inline base64", async () => {
 		const { html } = (await get(`/message/INBOX/${uid}`)).json.data;
 		expect(html).toContain(`src="/api/v1/mail/message/INBOX/${uid}/attachment/${logoIndex}"`);
 		expect(html).not.toContain("data:image");
+	});
+
+	test("large text bodies are rejected without fetching attachment data", async () => {
+		const msg = imap.boxes.get("INBOX").messages.find((m) => m.uid === uid);
+		msg.parts["1.1"] = Buffer.alloc(8 * 1024 * 1024 + 1, 65);
+		imap.calls = [];
+		const response = await get(`/message/INBOX/${uid}`);
+		expect(response.status).toBe(502);
+		expect(imap.calls.some((call) => call.cmd === "download")).toBe(false);
 	});
 });
 

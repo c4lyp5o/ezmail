@@ -7,6 +7,7 @@ All notable changes to ezmail are recorded here. The format follows [Keep a Chan
 ### Changed
 - **Breaking filter configuration:** filters now use ManageSieve instead of writing under `MAIL_DATA_DIR`. Configure `SIEVE_HOST`, `SIEVE_PORT`, and `SIEVE_TLS`; existing files are retained for manual recovery and are not migrated automatically.
 - HTTP request bodies are limited to 32 MiB, including the base64 representation of outgoing attachments.
+- Message display downloads headers and text parts instead of the full MIME source; displayable text is limited to 8 MiB per message.
 - **Attachment indexes now follow IMAP body-structure order.** Previously saved forwarding drafts may need to be recreated. Downloads and forwarded attachments are limited to 25 MiB.
 - Message list sorting now uses mailbox arrival order, including across pages, instead of sorting each page by date. API consumers relying on per-page date ordering should adjust.
 - Login discovery is rate limited, and password attempts are counted before IMAP verification.
