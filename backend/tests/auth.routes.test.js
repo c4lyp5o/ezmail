@@ -141,6 +141,39 @@ describe("TOTP login", () => {
 		expect(locked.status).toBe(429);
 	});
 
+	test("recovery requires both a valid code and mailbox password", async () => {
+		const mailbox = fresh();
+		const { secret } = await enroll(mailbox);
+		const code = totpCode(mailbox, secret);
+		const wrongCode = code === "000000" ? "111111" : "000000";
+		for (const body of [
+			{ mailbox, code: wrongCode, password: PASSWORD },
+			{ mailbox, code, password: "wrong" },
+		]) {
+			const response = await call("POST", "/api/v1/totp/recover", { body });
+			expect(response.status).toBe(401);
+		}
+		const response = await call("POST", "/api/v1/totp/recover", {
+			body: { mailbox, code, password: PASSWORD },
+		});
+		expect(response.status).toBe(200);
+		const loginResponse = await call("POST", "/api/v1/login/code", { body: { mailbox, code } });
+		expect(loginResponse.status).toBe(200);
+	});
+
+	test("a pending re-enrollment leaves the existing code usable", async () => {
+		const mailbox = fresh();
+		const { secret, cookie } = await enroll(mailbox);
+		const begin = await call("POST", "/api/v1/totp/begin", {
+			body: { mailbox, password: PASSWORD }, cookie,
+		});
+		expect(begin.status).toBe(200);
+		const response = await call("POST", "/api/v1/login/code", {
+			body: { mailbox, code: totpCode(mailbox, secret) },
+		});
+		expect(response.status).toBe(200);
+	});
+
 	test("disable falls back to password login", async () => {
 		const mailbox = fresh();
 		const { cookie } = await enroll(mailbox);

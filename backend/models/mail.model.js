@@ -210,7 +210,7 @@ export const MailModel = {
 	sendMessageResponse: t.Object({
 		success: t.Boolean(),
 		message: t.String(),
-		data: t.Optional(t.Object({ savedToSent: t.Boolean() })),
+		data: t.Optional(t.Object({ savedToSent: t.Boolean(), sentSavingDisabled: t.Optional(t.Boolean()) })),
 	}),
 
 	threadResponse: t.Object({

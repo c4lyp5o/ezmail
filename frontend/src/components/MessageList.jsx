@@ -406,7 +406,7 @@ export default function MessageList({
 				<button
 					type="button"
 					onClick={() => setSort(sort === "desc" ? "asc" : "desc")}
-					title={`Sort by date: ${sort === "desc" ? "Newest first" : "Oldest first"}`}
+					title={`Sort by arrival: ${sort === "desc" ? "Newest first" : "Oldest first"}`}
 					className="flex items-center gap-1 rounded-md border border-hair px-2 py-1.5 text-ink-muted transition hover:bg-hover hover:text-ink-2"
 				>
 					{sort === "desc" ? (

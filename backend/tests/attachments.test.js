@@ -32,7 +32,17 @@ beforeEach(async () => {
 	})
 		.compile()
 		.build();
-	uid = imap.addMessage("INBOX", { source: raw.toString() });
+	uid = imap.addMessage("INBOX", {
+		source: raw.toString(),
+		bodyStructure: { type: "multipart/mixed", childNodes: [
+			{ type: "multipart/related", childNodes: [
+				{ part: "1.1", type: "text/html" },
+				{ part: "1.2", type: "image/png", disposition: "inline", dispositionParameters: { filename: "logo.png" }, id: "<logo@x>", size: PNG.length },
+			] },
+			{ part: "2", type: "application/pdf", disposition: "attachment", dispositionParameters: { filename: "report ü.pdf" }, size: PDF.length },
+		] },
+		parts: { "1.2": PNG, "2": PDF },
+	});
 	const atts = (await get(`/message/INBOX/${uid}`)).json.data.attachments;
 	pdfIndex = atts.find((a) => a.filename === "report ü.pdf").index;
 	logoIndex = atts.find((a) => a.filename === "logo.png").index;
@@ -69,6 +79,7 @@ describe("message payload", () => {
 
 describe("attachment endpoint", () => {
 	test("serves the bytes as a sandboxed download", async () => {
+		imap.calls = [];
 		const res = await getRaw(`/message/INBOX/${uid}/attachment/${pdfIndex}`);
 		expect(res.status).toBe(200);
 		expect(Buffer.from(await res.arrayBuffer())).toEqual(PDF);
@@ -78,6 +89,9 @@ describe("attachment endpoint", () => {
 		);
 		expect(res.headers.get("x-content-type-options")).toBe("nosniff");
 		expect(res.headers.get("content-security-policy")).toContain("sandbox");
+		expect(res.headers.get("cache-control")).toBe("no-store");
+		expect(imap.calls).toContainEqual({ cmd: "download", uid: true, part: "2" });
+		expect(imap.calls.some((call) => call.query?.source)).toBe(false);
 	});
 
 	test("unknown index → 404, no session → 401", async () => {
@@ -85,10 +99,18 @@ describe("attachment endpoint", () => {
 		const anon = await call("GET", `/api/v1/mail/message/INBOX/${uid}/attachment/0`);
 		expect(anon.status).toBe(401);
 	});
+
+	test("inline and regular attachments retain distinct part identities", async () => {
+		const image = await getRaw(`/message/INBOX/${uid}/attachment/${logoIndex}`);
+		expect(Buffer.from(await image.arrayBuffer())).toEqual(PNG);
+		const pdf = await getRaw(`/message/INBOX/${uid}/attachment/${pdfIndex}`);
+		expect(Buffer.from(await pdf.arrayBuffer())).toEqual(PDF);
+	});
 });
 
 describe("forwarding", () => {
 	test("attachments are copied from the original server-side", async () => {
+		imap.calls = [];
 		const res = await call("POST", "/api/v1/mail/send", {
 			cookie,
 			body: {
@@ -102,6 +124,8 @@ describe("forwarding", () => {
 		const [att] = smtp.sent[0].mail.attachments;
 		expect(att.filename).toBe("report ü.pdf");
 		expect(Buffer.from(att.content)).toEqual(PDF);
+		expect(imap.calls).toContainEqual({ cmd: "download", uid: true, part: "2" });
+		expect(imap.calls.some((call) => call.query?.source)).toBe(false);
 	});
 
 	test("a bad index is a 400 and nothing is sent", async () => {

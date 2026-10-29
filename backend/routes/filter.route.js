@@ -18,7 +18,7 @@ export const FilterRoutes = new Elysia({ prefix: "/api/v1/filters" })
 		detail: {
 			summary: "Save mail filters",
 			description:
-				"Replaces all filter rules. Rules apply at delivery time via Dovecot Sieve; disabling removes the sieve script but keeps rules for later.",
+				"Validates and saves generated rules using ManageSieve; disabling retains the rules without an active script.",
 			tags: ["Filters"],
 		},
 	})
@@ -27,7 +27,7 @@ export const FilterRoutes = new Elysia({ prefix: "/api/v1/filters" })
 		detail: {
 			summary: "Delete all mail filters",
 			description:
-				"Removes every filter rule and the sieve script for the account.",
+				"Deactivates ezmail filters and saves an empty rule set; previous scripts are retained.",
 			tags: ["Filters"],
 		},
 	});

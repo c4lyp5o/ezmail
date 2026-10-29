@@ -159,7 +159,11 @@ const startServer = async () => {
 		await probeAndRecordLLM();
 		// idleTimeout (s): Elysia's default 30 would cut LLM summaries (up to
 		// 40s); SSE heartbeats (20s) keep event streams alive regardless.
-		app.listen({ port: Number(process.env.PORT) || 5000, idleTimeout: 120 });
+		app.listen({
+			port: Number(process.env.PORT) || 5000,
+			idleTimeout: 120,
+			maxRequestBodySize: 32 * 1024 * 1024,
+		});
 		process.env.NODE_ENV === "development" &&
 			logger.info("[SERVER] 📘 ezmail OpenAPI UI enabled at /openapi");
 		logger.info(

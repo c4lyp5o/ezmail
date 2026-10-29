@@ -10,7 +10,11 @@ const EMPTY_FORM = { to: "", cc: "", subject: "", text: "", markdown: false };
 // references, so they are.
 function loadDraft(key) {
 	try {
-		return JSON.parse(localStorage.getItem(key)) || null;
+		const draft = JSON.parse(localStorage.getItem(key)) || null;
+		if (draft && draft.attachmentIndexVersion !== 2 && draft.attachments?.some((a) => a.forward)) {
+			return { ...draft, attachments: draft.attachments.filter((a) => !a.forward), outdatedAttachments: true };
+		}
+		return draft;
 	} catch {
 		return null;
 	}
@@ -42,8 +46,9 @@ export default function ComposeView({ onBack, initial, onSent }) {
 	const [meta] = useState(start.meta || {}); // inReplyTo / references
 	const [attachments, setAttachments] = useState(start.attachments || []); // {filename, contentType, content(base64)}
 	const [busy, setBusy] = useState(false);
-	const [error, setError] = useState("");
+	const [error, setError] = useState(start.outdatedAttachments ? "Forwarded attachments from this older draft were removed. Add them again before sending." : "");
 	const [sent, setSent] = useState(false);
+	const [sentWarning, setSentWarning] = useState("");
 	const [draftSaved, setDraftSaved] = useState(false);
 	const fileRef = useRef(null);
 
@@ -54,13 +59,14 @@ export default function ComposeView({ onBack, initial, onSent }) {
 		const hasContent = ["to", "cc", "subject", "text"].some((k) =>
 			form[k]?.trim(),
 		);
-		if (!hasContent) return;
+		if (!hasContent) { clearDraft(draftKey); return; }
 		const id = setTimeout(() => {
 			try {
 				localStorage.setItem(
 					draftKey,
 					JSON.stringify({
 						title: start.title,
+						attachmentIndexVersion: 2,
 						form,
 						meta,
 						attachments: attachments.filter((a) => a.forward),
@@ -73,6 +79,13 @@ export default function ComposeView({ onBack, initial, onSent }) {
 		}, 800);
 		return () => clearTimeout(id);
 	}, [form, meta, attachments, draftKey, sent, start.title]);
+
+	const saveBeforeBack = () => {
+		if (!sent && ["to", "cc", "subject", "text"].some((k) => form[k]?.trim())) {
+			try { localStorage.setItem(draftKey, JSON.stringify({ title: start.title, attachmentIndexVersion: 2, form, meta, attachments: attachments.filter((a) => a.forward) })); } catch { /* storage unavailable */ }
+		} else if (!sent) clearDraft(draftKey);
+		onBack?.();
+	};
 
 	const discard = () => {
 		clearDraft(draftKey);
@@ -108,7 +121,7 @@ export default function ComposeView({ onBack, initial, onSent }) {
 		setError("");
 		try {
 			const forwarded = attachments.filter((a) => a.forward);
-			await apiCall.post("/mail/send", {
+			const result = await apiCall.post("/mail/send", {
 				...form,
 				...meta,
 				attachments: attachments.filter((a) => !a.forward),
@@ -120,6 +133,7 @@ export default function ComposeView({ onBack, initial, onSent }) {
 						}
 					: undefined,
 			});
+			if (result.data?.savedToSent === false && !result.data?.sentSavingDisabled) setSentWarning("The message was sent, but could not be saved to Sent.");
 			clearDraft(draftKey);
 			setSent(true);
 			onSent?.();
@@ -134,9 +148,10 @@ export default function ComposeView({ onBack, initial, onSent }) {
 		return (
 			<div className="flex h-full flex-col items-center justify-center gap-4 p-8 text-ink-muted">
 				<p className="text-ink-2">Message sent ✅</p>
+				{sentWarning && <p role="alert">{sentWarning}</p>}
 				<button
 					type="button"
-					onClick={onBack}
+					onClick={saveBeforeBack}
 					className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white transition hover:bg-accent"
 				>
 					Back to inbox
@@ -151,7 +166,7 @@ export default function ComposeView({ onBack, initial, onSent }) {
 			<div className="flex items-center gap-2 border-b border-hair py-3 pl-14 pr-4 md:pl-4">
 				<button
 					type="button"
-					onClick={onBack}
+					onClick={saveBeforeBack}
 					className="flex items-center gap-1 rounded-lg px-2 py-1 text-sm text-ink-muted transition hover:bg-hover hover:text-ink-2"
 				>
 					<ArrowLeft className="h-4 w-4" />

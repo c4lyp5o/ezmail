@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router";
 import { useAuth } from "../context/auth.jsx";
 import { Mail, ShieldCheck, ArrowLeft, Loader2 } from "lucide-react";
+import { apiCall } from "../utils/apiCall.js";
 import ThemeToggle from "../components/ThemeToggle.jsx";
 
 const inputCls =
@@ -17,6 +18,7 @@ export default function LoginPage() {
 	const [busy, setBusy] = useState(false);
 	const [needsCode, setNeedsCode] = useState(false);
 	const [code, setCode] = useState("");
+	const [recovering, setRecovering] = useState(false);
 
 	const submit = async (e) => {
 		e.preventDefault();
@@ -46,6 +48,7 @@ export default function LoginPage() {
 		setBusy(true);
 		setError("");
 		try {
+			if (recovering) await apiCall.post("/totp/recover", { mailbox: mailbox.trim(), code, password });
 			await loginWithCode(mailbox.trim(), code, rememberMe);
 			navigate("/mail", { replace: true });
 		} catch (err) {
@@ -105,6 +108,8 @@ export default function LoginPage() {
 							/>
 						</div>
 
+						{recovering && <input aria-label="Current mailbox password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} className={inputCls} placeholder="Current mailbox password" required />}
+						<button type="button" onClick={() => setRecovering(!recovering)} className="text-sm text-accent">{recovering ? "Use code only" : "Mailbox password changed?"}</button>
 						{error && (
 							<div className="rounded-lg border border-danger/20 bg-danger/10 px-3 py-2 text-sm text-danger">
 								{error}

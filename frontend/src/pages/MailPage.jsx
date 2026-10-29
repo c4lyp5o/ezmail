@@ -317,7 +317,7 @@ export default function MailPage() {
 				.then((res) => applyInboxUnseen(res.data?.inboxUnseen));
 			afterMutation();
 		} catch (err) {
-			console.error(`Failed to update flags (${action})`, err);
+			showToast({ text: err.message || "Failed to update flags" });
 		} finally {
 			setBulkBusy(false);
 		}
@@ -388,7 +388,8 @@ export default function MailPage() {
 			clearSelection();
 			afterMutation();
 		} catch (err) {
-			console.error("Failed to empty trash:", err.message);
+			showToast({ text: err.message || "Failed to empty trash" });
+			throw err;
 		} finally {
 			setEmptyTrashBusy(false);
 		}

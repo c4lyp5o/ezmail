@@ -42,9 +42,20 @@ Everything is set in `backend/.env` (see [`backend/.env.example`](backend/.env.e
 | `TOTP_ENC_KEY` | generated | Key that encrypts stored mailbox passwords (sessions and TOTP). Set a stable random 64-char string in production. Changing it signs everyone out and invalidates TOTP enrolments. |
 | `JWT_SECRET` | — | Legacy fallback for `TOTP_ENC_KEY`. |
 | `SAVE_SENT` | `true` | Append sent mail to the Sent folder. Set `false` if your server already does (e.g. Gmail). |
-| `MAIL_DATA_DIR` | `/var/mail` | Mail store root, bind-mounted read-write, for server-side filters (Dovecot Sieve). Filters are unavailable without it. |
+| `SIEVE_HOST` | `IMAP_HOST` | ManageSieve server hostname. |
+| `SIEVE_PORT` | `4190` | ManageSieve server port. |
+| `SIEVE_TLS` | `starttls` | ManageSieve TLS mode: `starttls` or `implicit`. |
 | `LLM_SERVER` / `LLM_SERVER_APIKEY` / `LLM_MODEL` | — | Optional Ollama or OpenAI-compatible server for summaries. |
 | `DB_PATH` | `backend/data/ezmail.db` | SQLite file. |
+
+Filters use ManageSieve with the signed-in mailbox credentials. The server must
+offer TLS and `CHECKSCRIPT`; mail remains usable if ManageSieve is unavailable.
+Active scripts are editable only when they exactly match ezmail's generated
+template. Other active scripts are shown read-only and must be managed
+externally. New scripts use new names, preserving older scripts on the server.
+The old `MAIL_DATA_DIR` files remain on disk and are not migrated automatically;
+back them up and migrate them manually with a ManageSieve client if needed.
+Avoid concurrent external edits while saving filters in ezmail.
 
 ### LLM summaries (optional)
 

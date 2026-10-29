@@ -23,6 +23,9 @@ export default function FiltersTab({ mailbox, folders = [] }) {
 	const [enabled, setEnabled] = useState(true);
 	const idRef = useRef(0);
 	const [loaded, setLoaded] = useState(false);
+	const [loadFailed, setLoadFailed] = useState(false);
+	const [conflict, setConflict] = useState(false);
+	const [source, setSource] = useState("");
 	const [busy, setBusy] = useState(false);
 	const [removing, setRemoving] = useState(false);
 	const [error, setError] = useState("");
@@ -35,9 +38,11 @@ export default function FiltersTab({ mailbox, folders = [] }) {
 				(res.data?.rules || []).map((r) => ({ ...r, id: ++idRef.current })),
 			);
 			setEnabled(res.data?.enabled ?? true);
-		} catch {
-			setRules([]);
-			setEnabled(true);
+			setConflict(!!res.data?.conflict);
+			setSource(res.data?.sieveSource || "");
+		} catch (err) {
+			setLoadFailed(true);
+			setError(err.message || "Could not load filters. Check the mail server connection.");
 		} finally {
 			setLoaded(true);
 		}
@@ -49,6 +54,9 @@ export default function FiltersTab({ mailbox, folders = [] }) {
 			setError("");
 			setSaved(false);
 			setLoaded(false);
+			setLoadFailed(false);
+			setConflict(false);
+			setSource("");
 			load();
 		}
 	}, [mailbox]);
@@ -129,6 +137,8 @@ export default function FiltersTab({ mailbox, folders = [] }) {
 				</div>
 			</div>
 
+			{conflict && <div role="alert" className="mt-3 text-sm text-danger">The active script is not an ezmail-generated script. It is read-only here; manage it externally.<pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap">{source}</pre></div>}
+			<fieldset disabled={conflict || loadFailed}>
 			<label className="mt-3 flex cursor-pointer items-center gap-2 text-sm text-ink-2">
 				<input
 					type="checkbox"
@@ -229,7 +239,7 @@ export default function FiltersTab({ mailbox, folders = [] }) {
 				<button
 					type="button"
 					onClick={removeAll}
-					disabled={removing || (!rules.length && !loaded)}
+					disabled={removing || loadFailed || !loaded}
 					title="Delete all filters"
 					className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm text-danger transition hover:bg-danger/10 disabled:opacity-40"
 				>
@@ -243,12 +253,13 @@ export default function FiltersTab({ mailbox, folders = [] }) {
 				<button
 					type="button"
 					onClick={save}
-					disabled={busy}
+					disabled={busy || loadFailed || !loaded}
 					className="flex items-center gap-1.5 rounded-lg bg-accent px-4 py-1.5 text-sm font-medium text-white transition hover:bg-accent disabled:opacity-50"
 				>
 					{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Save"}
 				</button>
 			</div>
+			</fieldset>
 		</div>
 	);
 }

@@ -228,6 +228,16 @@ describe("send", () => {
 		}
 	});
 
+	test("an accepted message reports a missing Sent folder without suggesting failure", async () => {
+		imap.reset();
+		imap.addBox("INBOX", "\\Inbox");
+		const res = await post("/send", { to: "bob@x.io", subject: "hello", text: "body" });
+		expect(res.status).toBe(200);
+		expect(res.json.data).toEqual({ savedToSent: false, sentSavingDisabled: false });
+		expect(smtp.sent).toHaveLength(1);
+		expect(Buffer.isBuffer(smtp.sent[0].mail.raw)).toBe(true);
+	});
+
 	test("SMTP failure is a 502 so the UI doesn't claim it was sent", async () => {
 		smtp.failNext = "relay denied";
 		const res = await post("/send", mail);

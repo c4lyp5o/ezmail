@@ -140,6 +140,50 @@ async function fetchParsed(client, folder, uid) {
 	return { msg, parsed: await simpleParser(msg.source, { keepCidLinks: true }) };
 }
 
+// A single traversal defines the indexes exposed by the message API and used
+// for both downloads and forwarding. Do not descend into attached messages.
+function attachmentParts(structure) {
+	const parts = [];
+	function visit(node, related = false) {
+		if (!node) return;
+		const disposition = String(node.disposition || "").toLowerCase();
+		const attached = disposition === "attachment" || disposition === "inline" ||
+			!!node.dispositionParameters?.filename || !!node.parameters?.name ||
+			(related && !!node.id);
+		if (attached && node.part) {
+			parts.push({
+				part: node.part,
+				filename: node.dispositionParameters?.filename || node.parameters?.name || "attachment",
+				contentType: node.type || "application/octet-stream",
+				size: node.size || 0,
+				contentId: node.id || undefined,
+				related: related && !!node.id,
+			});
+			return;
+		}
+		for (const child of node.childNodes || []) visit(child, related || String(node.type).toLowerCase() === "multipart/related");
+	}
+	visit(structure);
+	return parts;
+}
+
+const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+async function loadAttachment(client, uid, part) {
+	const download = await client.download(Number(uid), part.part, { uid: true });
+	if (!download?.content) throw new Error("Attachment not found");
+	const chunks = [];
+	let size = 0;
+	for await (const chunk of download.content) {
+		size += chunk.length;
+		if (size > MAX_ATTACHMENT_BYTES) {
+			download.content.destroy();
+			throw new Error("Attachment exceeds 25 MiB limit");
+		}
+		chunks.push(chunk);
+	}
+	return Buffer.concat(chunks, size);
+}
+
 const attachmentUrl = (folder, uid, index) =>
 	`/api/v1/mail/message/${encodeURIComponent(folder)}/${uid}/attachment/${index}`;
 
@@ -306,12 +350,8 @@ export const MailService = {
 					}
 				}
 
-				// 5. Sort the page by date
-				pageItems.sort((a, b) => {
-					const da = new Date(a.internalDate || a.date || 0).getTime();
-					const db = new Date(b.internalDate || b.date || 0).getTime();
-					return sort === "asc" ? da - db : db - da;
-				});
+				// IMAP returns sequence/UID order; reverse for newest arrival first.
+				if (sort !== "asc") pageItems.reverse();
 				const messages = pageItems.map((msg) => mapEnvelope(msg));
 
 				return { messages, total, page, pageSize: size, sort, search };
@@ -337,6 +377,7 @@ export const MailService = {
 					flags: true,
 					internalDate: true,
 					source: true,
+					bodyStructure: true,
 				},
 				{ uid: true },
 			);
@@ -359,14 +400,14 @@ export const MailService = {
 			}
 
 			// Metadata only — bytes come from the attachment endpoint on demand.
-			const rawAttachments = parsed?.attachments || [];
+			const rawAttachments = attachmentParts(msg.bodyStructure);
 			const attachments = rawAttachments.map((a, index) => ({
 				index,
 				filename: a.filename || "attachment",
 				contentType: a.contentType || "application/octet-stream",
-				size: a.size || a.content?.length || 0,
+				size: a.size || 0,
 				contentId: a.contentId || undefined,
-				related: !!a.related,
+				related: a.related,
 			}));
 
 			// Extra display headers for the toggleable detail panel.
@@ -484,12 +525,18 @@ export const MailService = {
 		const { folder, uid, index } = params;
 		let found;
 		try {
-			found = await withImap(user, (client) => fetchParsed(client, folder, uid));
+			found = await withImap(user, async (client) => {
+				await client.mailboxOpen(folder || "INBOX");
+				const msg = await client.fetchOne(Number(uid), { bodyStructure: true }, { uid: true });
+				const part = attachmentParts(msg?.bodyStructure)[Number(index)];
+				if (!part) return null;
+				return { ...part, content: await loadAttachment(client, uid, part) };
+			});
 		} catch (err) {
 			logImapError(err);
 			return status(502, { success: false, message: "Mail command failed" });
 		}
-		const a = found?.parsed?.attachments?.[Number(index)];
+		const a = found;
 		if (!a) return status(404, { success: false, message: "Not Found" });
 
 		// Served from our own origin, so never let it render as a page:
@@ -501,7 +548,7 @@ export const MailService = {
 				"Content-Length": String(a.content.length),
 				"X-Content-Type-Options": "nosniff",
 				"Content-Security-Policy": "default-src 'none'; sandbox",
-				"Cache-Control": "private, max-age=3600",
+				"Cache-Control": "no-store",
 			},
 		});
 	},
@@ -514,8 +561,8 @@ export const MailService = {
 		const { folder, uids, flags } = body;
 		return withClient(user, status, async (client) => {
 			const lock = await client.getMailboxLock(folder);
-			await client.messageFlagsAdd(uids, flags, { uid: true });
-			lock.release();
+			try { await client.messageFlagsAdd(uids, flags, { uid: true }); }
+			finally { lock.release(); }
 			// Piggyback fresh INBOX unseen on the same connection (no extra
 			// request from the client).
 			let inboxUnseen;
@@ -536,8 +583,8 @@ export const MailService = {
 		const { folder, uids, flags } = body;
 		return withClient(user, status, async (client) => {
 			const lock = await client.getMailboxLock(folder);
-			await client.messageFlagsRemove(uids, flags, { uid: true });
-			lock.release();
+			try { await client.messageFlagsRemove(uids, flags, { uid: true }); }
+			finally { lock.release(); }
 			// Piggyback fresh INBOX unseen on the same connection.
 			let inboxUnseen;
 			try {
@@ -672,24 +719,25 @@ export const MailService = {
 			// so the browser never has to download and re-upload them.
 			const fwd = body.forwardAttachments;
 			if (fwd?.indexes?.length) {
-				const original = await withImap(user, (client) =>
-					fetchParsed(client, fwd.folder, fwd.uid),
-				);
-				const parts = original?.parsed?.attachments || [];
-				for (const i of fwd.indexes) {
-					const a = parts[i];
-					if (!a) {
-						return status(400, {
-							success: false,
-							message: "Forwarded attachment not found",
-						});
+				if (fwd.indexes.length > 100) return status(400, { success: false, message: "Too many forwarded attachments" });
+				const forwarded = await withImap(user, async (client) => {
+					await client.mailboxOpen(fwd.folder || "INBOX");
+					const original = await client.fetchOne(Number(fwd.uid), { bodyStructure: true }, { uid: true });
+					const parts = attachmentParts(original?.bodyStructure);
+					if (fwd.indexes.some((i) => !parts[i])) return null;
+					const result = [];
+					let total = 0;
+					for (const i of fwd.indexes) {
+						const a = parts[i];
+						const content = await loadAttachment(client, fwd.uid, a);
+						total += content.length;
+						if (total > MAX_ATTACHMENT_BYTES) throw new Error("Forwarded attachments exceed 25 MiB limit");
+						result.push({ filename: a.filename, contentType: a.contentType, content });
 					}
-					attachments.push({
-						filename: a.filename || "attachment",
-						contentType: a.contentType,
-						content: a.content,
-					});
-				}
+					return result;
+				});
+				if (!forwarded) return status(400, { success: false, message: "Forwarded attachment not found" });
+				attachments.push(...forwarded);
 			}
 
 			const domain = user.mailbox.split("@")[1] || "localhost";
@@ -711,12 +759,18 @@ export const MailService = {
 				messageId: `<${crypto.randomUUID()}@${domain}>`,
 				date: new Date(),
 			};
-			await transporter.sendMail(mail);
-			logger.info(`[MAIL] ${user.mailbox} sent message to ${body.to}`);
-
+			// Complete MIME construction before SMTP accepts the message.
 			const raw = await new MailComposer(mail).compile().build();
-			const savedToSent = await saveToSent(user, raw);
-			return { success: true, message: "Sent", data: { savedToSent } };
+			await transporter.sendMail({ ...mail, raw });
+			logger.info(`[MAIL] ${user.mailbox} sent message to ${body.to}`);
+			const sentSavingDisabled = process.env.SAVE_SENT === "false";
+			let savedToSent = false;
+			try {
+				savedToSent = await saveToSent(user, raw);
+			} catch (err) {
+				logger.error(`[MAIL] Sent copy failed: ${err.message}`);
+			}
+			return { success: true, message: "Sent", data: { savedToSent, sentSavingDisabled } };
 		} catch (err) {
 			logger.error(`[MAIL] 💥[smtp] ${err.message}`);
 			return status(502, { success: false, message: err.message });

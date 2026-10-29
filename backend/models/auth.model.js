@@ -8,6 +8,8 @@ export const AuthModel = {
 		rememberMe: t.Optional(t.Boolean()),
 	}),
 
+	recoverBody: t.Object({ mailbox: t.String({ minLength: 1 }), code: t.String({ minLength: 1 }), password: t.String({ minLength: 1 }) }),
+
 	loginCodeBody: t.Object({
 		mailbox: t.String(),
 		code: t.String(),

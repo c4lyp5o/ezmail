@@ -1,6 +1,6 @@
 import * as OTPAuth from "otpauth";
 import encodeQR from "qr";
-import { getSetting, setSetting, deleteSetting } from "../db.js";
+import { db, getSetting, setSetting, deleteSetting } from "../db.js";
 import { decryptSecret, encryptSecret } from "./crypto.service.js";
 
 export { decryptSecret, encryptSecret };
@@ -23,6 +23,8 @@ const keyFor = (mailbox) => {
 		enabled: `totp:enabled:${k}`,
 		passEnc: `totp:passEnc:${k}`,
 		verifyMailbox: `totp:mailbox:${k}`,
+		pendingSecret: `totp:pending-secret:${k}`,
+		pendingPass: `totp:pending-pass:${k}`,
 	};
 };
 
@@ -51,9 +53,9 @@ function toQRDataUri(otpauthUri) {
 export function beginEnroll(mailbox, password) {
 	const k = keyFor(mailbox);
 	const secret = makeSecret().base32;
-	setSetting(k.secret, secret);
+	setSetting(k.pendingSecret, secret);
 	if (typeof password === "string" && password.length > 0) {
-		setSetting(k.passEnc, encryptSecret(password));
+		setSetting(k.pendingPass, encryptSecret(password));
 	}
 	const uri = totpFor(mailbox, secret).toString();
 	return { secret, qrCode: toQRDataUri(uri), otpauthUri: uri };
@@ -63,14 +65,21 @@ export function beginEnroll(mailbox, password) {
 // success, mark TOTP enabled for this mailbox. Returns { ok, message }.
 export function completeEnroll(mailbox, token) {
 	const k = keyFor(mailbox);
-	const secret = getSetting(k.secret);
+	const secret = getSetting(k.pendingSecret) || (getSetting(k.enabled) !== "true" ? getSetting(k.secret) : null);
 	if (!secret) return { ok: false, message: "No pending enrollment. Restart enrollment." };
 
 	const delta = totpFor(mailbox, secret).validate({ token, window: 1 });
 	if (delta === null) return { ok: false, message: "Invalid code. Check your authenticator and try again." };
 
-	setSetting(k.enabled, "true");
-	setSetting(k.verifyMailbox, mailbox.toLowerCase().trim());
+	db.transaction(() => {
+		setSetting(k.secret, secret);
+		const pendingPass = getSetting(k.pendingPass);
+		if (pendingPass) setSetting(k.passEnc, pendingPass);
+		setSetting(k.enabled, "true");
+		setSetting(k.verifyMailbox, mailbox.toLowerCase().trim());
+		deleteSetting(k.pendingSecret);
+		deleteSetting(k.pendingPass);
+	})();
 	return { ok: true };
 }
 
@@ -80,7 +89,7 @@ export function totpStatus(mailbox) {
 	const k = keyFor(mailbox);
 	return {
 		enabled: getSetting(k.enabled) === "true",
-		enrolled: Boolean(getSetting(k.secret)),
+		enrolled: Boolean(getSetting(k.secret) || getSetting(k.pendingSecret)),
 	};
 }
 
@@ -104,10 +113,16 @@ export function verifyLoginCode(mailbox, token) {
 // the encrypted mailbox password, so the mailbox falls back to password login.
 // Deleting the secret also resets the enrollment state (totpStatus.enrolled = false),
 // so a later re-enroll starts clean and rotates to a fresh secret.
+export function updateTotpPassword(mailbox, password) {
+	setSetting(keyFor(mailbox).passEnc, encryptSecret(password));
+}
+
 export function disableTotp(mailbox) {
 	const k = keyFor(mailbox);
 	setSetting(k.enabled, "false");
 	deleteSetting(k.secret);
 	deleteSetting(k.passEnc);
 	deleteSetting(k.verifyMailbox);
+	deleteSetting(k.pendingSecret);
+	deleteSetting(k.pendingPass);
 }

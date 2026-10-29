@@ -2,6 +2,23 @@
 
 All notable changes to ezmail are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Changed
+- **Breaking filter configuration:** filters now use ManageSieve instead of writing under `MAIL_DATA_DIR`. Configure `SIEVE_HOST`, `SIEVE_PORT`, and `SIEVE_TLS`; existing files are retained for manual recovery and are not migrated automatically.
+- HTTP request bodies are limited to 32 MiB, including the base64 representation of outgoing attachments.
+- **Attachment indexes now follow IMAP body-structure order.** Previously saved forwarding drafts may need to be recreated. Downloads and forwarded attachments are limited to 25 MiB.
+- Message list sorting now uses mailbox arrival order, including across pages, instead of sorting each page by date. API consumers relying on per-page date ordering should adjust.
+- Login discovery is rate limited, and password attempts are counted before IMAP verification.
+
+### Added
+- TOTP users can update a changed mailbox password using their authenticator code and current password via `POST /api/v1/totp/recover`.
+- Send responses indicate when saving to Sent is disabled; the composer warns when saving fails.
+
+### Fixed
+- Pending TOTP re-enrollment preserves the active credentials until confirmation.
+- Preserve drafts when leaving the composer, report failed bulk actions, and release mailbox locks on flag errors.
+
 ## [2.0.0] - 2026-10-21
 
 ### Breaking

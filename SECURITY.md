@@ -26,4 +26,5 @@ Only the latest release (the `master` branch and the `calypso666/ezmail:latest` 
 
 - Run behind HTTPS with `NODE_ENV=production`.
 - Set a stable, random `TOTP_ENC_KEY` (64 characters) and keep it out of the image.
-- Keep the backend on a trusted network path to your mail server (IMAPS / SMTP with STARTTLS).
+- Keep the backend on a trusted network path to your mail server (IMAPS, SMTP with STARTTLS, and ManageSieve with TLS).
+- Apply per-IP limits at the reverse proxy. ezmail's per-mailbox limits are process-local and are not shared between instances.

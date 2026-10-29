@@ -1,60 +1,6 @@
-import {
-	chownSync,
-	mkdirSync,
-	readFileSync,
-	rmSync,
-	writeFileSync,
-} from "node:fs";
-import path from "node:path";
-import { generalLogger as logger } from "../logger.js";
+import { Client } from "sievelib-ts";
+import { MAIL_SERVER } from "../config.js";
 import { getUser } from "../plugins/auth.plugin.js";
-
-// ---------------------------------------------------------------------------
-// Server-side mail filters (Gmail-style) backed by Dovecot Sieve.
-//
-// The IMAP mail store (docker-mailserver's /var/mail) is bind-mounted into
-// this container read-write at MAIL_DATA_DIR. Each account's sieve script
-// lives at <domain>/<local>/home/.dovecot.sieve — exactly the path Dovecot's
-// active config resolves for `sieve = ~/.dovecot.sieve` (userdb derives
-// home=/var/mail/%d/%u/home/). Writing the file is all that's needed: Dovecot
-// recompiles on mtime change at the next LMTP delivery.
-//
-// The mailbox ALWAYS comes from the session (verified against IMAP at login) —
-// never from client-supplied request data — and is additionally sanitized
-// before being used in a path.
-// ---------------------------------------------------------------------------
-
-function mailDataDir() {
-	// Read lazily (not module scope) so tests can redirect the mail store root.
-	return process.env.MAIL_DATA_DIR || "/var/mail";
-}
-
-const SIEVE_FILE = ".dovecot.sieve";
-const SIEVE_BIN = ".dovecot.svbin";
-const SIEVE_LOG = ".dovecot.sieve.log";
-const RULES_FILE = ".ezmail-filters.json";
-
-// Split "local@domain" into path-safe halves. Rejects traversal (".."),
-// separators and anything outside the charset docker-mailserver account
-// names actually use.
-export function mailboxParts(mailbox) {
-	const at = String(mailbox || "").lastIndexOf("@");
-	if (at <= 0 || at === mailbox.length - 1) return null;
-	const local = mailbox.slice(0, at);
-	const domain = mailbox.slice(at + 1);
-	const safe = /^[A-Za-z0-9._-]+$/;
-	if (!safe.test(local) || !safe.test(domain)) return null;
-	if (local.includes("..") || domain.includes("..")) return null;
-	return { local, domain };
-}
-
-function homeDir(mailbox) {
-	const parts = mailboxParts(mailbox);
-	if (!parts) return null;
-	return path.join(mailDataDir(), parts.domain, parts.local, "home");
-}
-
-export { homeDir };
 
 // Sieve string literal escaping (backslash + double quote).
 function sieveEscape(s) {
@@ -74,6 +20,9 @@ function validRule(rule) {
 	if (typeof rule.value !== "string" || rule.value.trim().length === 0)
 		return false;
 	if (rule.value.length > 256) return false;
+	// Sieve quoted strings cannot contain control characters. In particular,
+	// line breaks must not be allowed to escape the generated rule or comment.
+	if ([...rule.value].some((c) => c.charCodeAt(0) < 32 || c.charCodeAt(0) === 127)) return false;
 	return typeof rule.folder === "string" && validFolderName(rule.folder);
 }
 
@@ -106,139 +55,105 @@ export function generateSieveScript(rules) {
 	return lines.join("\n");
 }
 
-// Validated write: rules array -> JSON sidecar + sieve script. Returns the
-// number of rules written. enabled=false removes the sieve script (rules are
-// kept so the UI can re-enable later without retyping).
-export function writeFilters(mailbox, rules, enabled) {
-	const dir = homeDir(mailbox);
-	if (!dir) throw new Error("invalid mailbox");
-	mkdirSync(dir, { recursive: true });
-
-	const cleanRules = rules.filter(validRule);
-	if (cleanRules.length !== rules.length) {
-		throw new Error("Invalid filter rule(s)");
+// Only exact output from the generator is editable. A marker alone is not
+// sufficient: arbitrary scripts may contain it alongside hand-written rules.
+export function parseGeneratedScript(source) {
+	if (typeof source !== "string" || source.length > 131072) return null;
+	source = source.replace(/\r\n/g, "\n");
+	const lines = source.split("\n");
+	const rules = [];
+	const decodeSieve = (s) => s.replace(/\\([\\"])/g, "$1");
+	for (const line of lines) {
+		if (!line.startsWith("# ") || line.startsWith("# Generated") || line.startsWith("# Applies")) continue;
+		const match = line.match(/^# (from|to|subject) (contains|is) "((?:\\[\\"]|[^"\\])*)"$/);
+		if (!match) return null;
+		rules.push({ field: match[1], match: match[2], value: decodeSieve(match[3]) });
 	}
-
-	writeFileSync(
-		path.join(dir, RULES_FILE),
-		JSON.stringify({ enabled: !!enabled, rules: cleanRules }, null, "\t"),
-		{ encoding: "utf8", mode: 0o644 },
-	);
-
-	const sievePath = path.join(dir, SIEVE_FILE);
-	if (enabled && cleanRules.length > 0) {
-		writeFileSync(sievePath, generateSieveScript(cleanRules), {
-			encoding: "utf8",
-			mode: 0o644,
-		});
-	} else {
-		// Disabled or empty: remove script + compiled artifacts so Dovecot
-		// falls back to plain delivery.
-		for (const f of [SIEVE_FILE, SIEVE_BIN, SIEVE_LOG]) {
-			try {
-				rmSafe(path.join(dir, f));
-			} catch {
-				// best effort
-			}
-		}
-	}
-
-	// In production this container runs as root; hand the files to the mail
-	// user (docker-mailserver uses uid/gid 5000 "docker"). Local dev ignores
-	// failures (non-root cannot chown) — files are 0644 so Dovecot still reads them.
-	try {
-		chownSync(dir, 5000, 5000);
-	} catch {
-		// non-root dev environment
-	}
-	for (const f of [RULES_FILE, SIEVE_FILE]) {
-		try {
-			chownSync(path.join(dir, f), 5000, 5000);
-		} catch {
-			// file may not exist (disabled) or non-root — ignore
-		}
-	}
-
-	logger.info(
-		`[FILTERS] wrote ${cleanRules.length} rule(s) for ${mailbox} (enabled=${!!enabled})`,
-	);
-	return cleanRules.length;
+	const folders = [...source.matchAll(/^\tfileinto :create "((?:\\[\\"]|[^"\\])*)";$/gm)];
+	if (folders.length !== rules.length) return null;
+	for (let i = 0; i < rules.length; i++) rules[i].folder = decodeSieve(folders[i][1]);
+	if (rules.some((rule) => !validRule(rule))) return null;
+	return generateSieveScript(rules) === source ? rules : null;
 }
 
-function rmSafe(p) {
+const prefix = "ezmail-";
+const failure = (client, stage) => new Error(`${stage}: ${client.errmsg || client.errcode || "ManageSieve command failed"}`);
+
+async function withSieve(user, fn) {
+	const client = new Client(MAIL_SERVER.sieveHost, MAIL_SERVER.sievePort);
 	try {
-		rmSync(p, { force: true });
-	} catch {
-		// ignore
+		const tls = MAIL_SERVER.sieveTls;
+		if (!["starttls", "implicit"].includes(tls)) throw new Error("SIEVE_TLS must be starttls or implicit");
+		if (!(await client.connect(user.mailbox, user.password, "", tls === "starttls", tls === "implicit", "PLAIN")))
+			throw failure(client, "ManageSieve connection or authentication failed");
+		return await fn(client);
+	} finally {
+		if (client.authenticated) await client.logout().catch(() => {});
+		else client.socket?.destroy();
 	}
 }
 
-function readFilters(mailbox) {
-	const dir = homeDir(mailbox);
-	if (!dir) return { enabled: false, rules: [], sieveSource: undefined };
-	let state = { enabled: false, rules: [] };
-	try {
-		const raw = readFileSync(path.join(dir, RULES_FILE), "utf8");
-		const parsed = JSON.parse(raw);
-		if (Array.isArray(parsed?.rules)) {
-			state = {
-				enabled: !!parsed.enabled,
-				rules: parsed.rules.filter(validRule),
-			};
-		}
-	} catch {
-		// no sidecar yet — treat as unconfigured
+export async function filterState(client) {
+	const scripts = await client.listscripts();
+	if (!scripts) throw failure(client, "Could not list scripts");
+	const [active, others] = scripts;
+	if (active) {
+		const source = await client.getscript(active);
+		if (source === null) throw failure(client, "Could not read active script");
+		const rules = parseGeneratedScript(source);
+		return { active, enabled: true, rules: rules || [], sieveSource: source, conflict: rules === null };
 	}
-	let sieveSource;
-	if (state.enabled && state.rules.length > 0) {
-		try {
-			sieveSource = readFileSync(path.join(dir, SIEVE_FILE), "utf8");
-		} catch {
-			// script missing (e.g. written by hand); report rules without source
-		}
+	for (const name of others.filter((n) => n.startsWith(prefix)).sort().reverse()) {
+		const source = await client.getscript(name);
+		if (source === null) throw failure(client, "Could not read saved script");
+		const rules = parseGeneratedScript(source);
+		if (rules !== null) return { active: undefined, enabled: false, rules, sieveSource: source, conflict: false };
 	}
-	return { ...state, sieveSource };
+	return { active: undefined, enabled: false, rules: [], conflict: false };
+}
+
+export async function saveFilters(client, rules, enabled) {
+	if (rules.some((rule) => !validRule(rule))) throw new Error("Invalid filter rule(s)");
+	const current = await filterState(client);
+	if (current.conflict) throw new Error("The active script is not managed by ezmail; edit it externally.");
+	const script = generateSieveScript(rules);
+	if (!(await client.checkscript(script))) throw failure(client, "Script validation failed");
+	const name = `${prefix}${Date.now()}-${crypto.randomUUID()}`;
+	if (!(await client.putscript(name, script))) throw failure(client, "Script upload failed");
+	if (enabled) {
+		if (!(await client.setactive(name))) {
+			const err = failure(client, "Script activation failed");
+			// Remove only the newly uploaded script; never alter the prior script.
+			await client.deletescript(name).catch(() => {});
+			throw err;
+		}
+	} else if (current.active && !(await client.setactive(""))) throw failure(client, "Script deactivation failed");
 }
 
 export const FilterService = {
 	get: async ({ cookie, status }) => {
 		const user = await getUser(cookie);
-		if (!user?.mailbox || !user?.password)
-			return status(401, { success: false, message: "Unauthorized" });
-		const state = readFilters(user.mailbox);
-		return {
-			success: true,
-			data: { mailbox: user.mailbox, ...state },
-		};
+		if (!user?.mailbox || !user?.password) return status(401, { success: false, message: "Unauthorized" });
+		try {
+			const data = await withSieve(user, filterState);
+			return { success: true, data: { mailbox: user.mailbox, ...data } };
+		} catch (err) { return status(502, { success: false, message: err.message }); }
 	},
-
 	put: async ({ cookie, body, status }) => {
 		const user = await getUser(cookie);
-		if (!user?.mailbox || !user?.password)
-			return status(401, { success: false, message: "Unauthorized" });
+		if (!user?.mailbox || !user?.password) return status(401, { success: false, message: "Unauthorized" });
+		if (body.rules.some((rule) => !validRule(rule))) return status(400, { success: false, message: "Invalid filter rule(s)" });
 		try {
-			const ruleCount = writeFilters(user.mailbox, body.rules, body.enabled);
-			return {
-				success: true,
-				data: { ruleCount, enabled: !!body.enabled },
-			};
-		} catch (err) {
-			logger.error(`[FILTERS] 💥 write failed: ${err.message}`);
-			return { success: false, message: err.message || "Filter save failed" };
-		}
+			await withSieve(user, (client) => saveFilters(client, body.rules, body.enabled));
+			return { success: true, data: { ruleCount: body.rules.length, enabled: body.enabled } };
+		} catch (err) { return status(502, { success: false, message: err.message }); }
 	},
-
 	remove: async ({ cookie, status }) => {
 		const user = await getUser(cookie);
-		if (!user?.mailbox || !user?.password)
-			return status(401, { success: false, message: "Unauthorized" });
-		const dir = homeDir(user.mailbox);
-		if (dir) {
-			for (const f of [RULES_FILE, SIEVE_FILE, SIEVE_BIN, SIEVE_LOG]) {
-				rmSafe(path.join(dir, f));
-			}
-			logger.info(`[FILTERS] removed all filters for ${user.mailbox}`);
-		}
-		return { success: true, data: { removed: true } };
+		if (!user?.mailbox || !user?.password) return status(401, { success: false, message: "Unauthorized" });
+		try {
+			await withSieve(user, (client) => saveFilters(client, [], false));
+			return { success: true, data: { removed: true } };
+		} catch (err) { return status(502, { success: false, message: err.message }); }
 	},
 };

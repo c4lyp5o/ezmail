@@ -19,6 +19,7 @@ export const FilterModel = {
 				enabled: t.Boolean(),
 				rules: t.Array(FilterRule),
 				sieveSource: t.Optional(t.String()),
+				conflict: t.Optional(t.Boolean()),
 			}),
 		),
 	}),

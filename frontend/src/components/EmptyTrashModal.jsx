@@ -6,10 +6,9 @@ export default function EmptyTrashModal({ open, onClose, emptyTrash, busy }) {
 	const handleConfirm = async () => {
 		try {
 			await emptyTrash?.();
-		} catch (err) {
-			console.error("Failed to empty trash:", err);
-		} finally {
 			onClose();
+		} catch {
+			// Parent displays the failure; keep the confirmation open.
 		}
 	};
 

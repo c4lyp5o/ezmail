@@ -56,21 +56,22 @@ ezmail/
 - Single-password model: the mailbox password is used for both web login and IMAP/SMTP. Login is verified with a real IMAP connect, and failures return the generic `Username or password is incorrect`.
 - On success, `createSession` stores `{ mailbox, encrypted password, expiry }` in the `sessions` table. The row is keyed by the **SHA-256 of a random 32-byte token**, and the token itself goes in the `ezmail_session` cookie (HttpOnly, SameSite=Strict). `getUser(cookie)` resolves it, and logout deletes the row.
 - The encryption key comes from `TOTP_ENC_KEY`, then `JWT_SECRET`, then a generated `jwtSecret` setting. Changing it invalidates every session and TOTP enrolment.
-- **TOTP (passwordless):** `POST /login` returns `{ totp: true }` for enrolled mailboxes, and the client then calls `/login/code`. Enrolment stores the encrypted mailbox password, which is decrypted into the session on a valid code.
-- **Rate limits** (`rate-limit.service.js`): 10 password attempts and 5 code attempts per mailbox per 15 minutes, held in memory. Excess attempts get `429` with `Retry-After`.
+- **TOTP (passwordless):** `POST /login` returns `{ totp: true }` for enrolled mailboxes, and the client then calls `/login/code`. Pending enrolments are separate from active credentials. `POST /totp/recover` requires a valid code and current IMAP password to refresh the encrypted password.
+- **Rate limits** (`rate-limit.service.js`): 10 password attempts, 5 code/recovery attempts and 30 discovery attempts per mailbox per 15 minutes, held in memory. In-flight IMAP checks reserve slots. Excess attempts get `429` with `Retry-After`; limits reset on restart and are not shared across instances.
 
 ### Mail
 - Every request builds its own `ImapFlow`/nodemailer client from the session's credentials (`buildImapClient`). There is no shared account.
 - **Special folders** are resolved by RFC 6154 special-use flag first, then by name (`findSpecialFolder`, `TRASH_NAMES`, `SENT_NAMES`). The frontend mirrors this in `utils/folders.js`.
-- **Listing** fetches only the requested page's sequence range. Unread counts for all folders come from `LIST-STATUS`.
-- **Attachments:** the message payload carries metadata only (`index`, `related`). `GET /mail/message/:folder/:uid/attachment/:index` serves the bytes with `Content-Disposition: attachment`, `nosniff` and a sandbox CSP. `cid:` links in HTML are rewritten to this endpoint. Forwarding sends `forwardAttachments { folder, uid, indexes }`, and the server copies the parts.
-- **Send:** the From name comes from the profile (`getDisplayName`), never the client. Unless `SAVE_SENT=false`, a copy is appended to Sent.
+- **Listing** fetches the requested page in sequence/UID arrival order. Unread counts for all folders come from `LIST-STATUS`.
+- **Attachments:** body-structure traversal defines indexes for display, download and forwarding. Downloads and forwarding fetch individual parts, with a 25 MiB limit. The message view still parses the full source. The attachment endpoint uses `no-store`, `Content-Disposition: attachment`, `nosniff` and a sandbox CSP. `cid:` links use that endpoint.
+- **Send:** MIME is built before SMTP submission and the same bytes are appended to Sent. `savedToSent` reports filing success; `sentSavingDisabled` distinguishes `SAVE_SENT=false` from a failure after delivery.
 - **Moves/deletes** return `movedUids` (UIDPLUS) so the client can undo.
 - **Threads:** `GET /mail/message/:folder/:uid/thread` searches INBOX and Sent by `Message-ID` / `References`. A matching subject alone never links messages.
+- **Filters:** ManageSieve uses the signed-in mailbox credentials and TLS. Only scripts exactly matching ezmail's template are editable. Scripts are checked before upload, older scripts are retained, and custom active scripts are read-only. See the README for configuration and migration.
 
 ### Live updates
 - `push.service.js` keeps **one IDLE connection per mailbox**, shared by all of that user's SSE subscribers, and closes it when the last subscriber leaves. `GET /api/v1/mail/events` streams events, with a 20s heartbeat.
-- `index.js` listens with `idleTimeout: 120`. Bun's default of 30s would cut off slow LLM summaries.
+- `index.js` listens with `idleTimeout: 120` and a 32 MiB request-body limit. Bun's default idle timeout of 30s would cut off slow LLM summaries.
 
 ### Gotchas
 - **Elysia** path params arrive inside `{ params }`, the body in `{ body }`, the query in `{ query }`.
@@ -90,13 +91,13 @@ ezmail/
 - **MailPage** owns view state, selection, global shortcuts, the undo toast, the EventSource and notifications (`ezmail_notify` in localStorage).
 - **MessageList** handles list navigation keys, Shift range selection, and swipe (`useSwipe`; `swipeAction` comes from MailPage).
 - **MessageView:** HTML bodies render in a sandboxed `srcDoc` iframe wrapped by `emailDoc`, with a `<meta>` CSP from `emailCsp` that blocks remote content until the user opts in. The frame auto-sizes to its content. Text bodies that look like Markdown render through `marked` + DOMPurify.
-- **ComposeView:** prefilled by `utils/reply.js` `buildDraft`. Auto-saves to `ezmail_draft:<mailbox>`; uploaded files aren't saved, but forwarded attachment references are.
+- **ComposeView:** prefilled by `utils/reply.js` `buildDraft`. Auto-saves to `ezmail_draft:<mailbox>` and flushes on exit; uploaded files aren't saved. Old forwarding references without the current index version are removed with a warning.
 - **Shortcuts** are ignored while typing (`utils/keyboard.js` `isTypingTarget`).
 - **Resizable list column** width is persisted in `ezmail_list_width`.
 
 ## Tests
 
-- **Backend:** `bun test` in `backend/`. `bunfig.toml` preloads `tests/setup.js`, which mocks `imapflow` and `nodemailer` with `tests/helpers/fake-imap.js` / `fake-smtp.js` and points `DB_PATH` at a temporary file. `tests/helpers/http.js` calls the Elysia app in-process. Extend the fake IMAP when a feature needs a new command (header/`or` searches, `LIST-STATUS` and IDLE already exist).
+- **Backend:** `bun test` in `backend/`. `bunfig.toml` preloads `tests/setup.js`, which mocks `imapflow` and `nodemailer` with `tests/helpers/fake-imap.js` / `fake-smtp.js` and points `DB_PATH` at a temporary file. `tests/helpers/http.js` calls the Elysia app in-process. Filter operations use a service-level fake; real ManageSieve and MIME workflows need manual server checks.
 - **Frontend:** Vitest + happy-dom + Testing Library. `src/test/fetch.js` `mockApi` stubs `/api` responses, and `src/test/event-source.js` fakes SSE. happy-dom can't enforce CSP or real Notifications, so check those in a browser.
 
 ## Docker & CI

@@ -9,8 +9,9 @@ import {
 	verifyLoginCode,
 	totpStatus,
 	disableTotp,
+	updateTotpPassword,
 } from "./totp.service.js";
-import { codeLimiter, limitKey, loginLimiter } from "./rate-limit.service.js";
+import { codeLimiter, discoveryLimiter, limitKey, loginLimiter } from "./rate-limit.service.js";
 import { createSession, deleteSession } from "./session.service.js";
 
 // Secure is forced ON in production so the session cookie is never sent over
@@ -97,6 +98,10 @@ export const AuthService = {
 			return status(400, { success: false, message: "Mailbox is required" });
 		}
 
+		const discoveryKey = limitKey(mailbox);
+		const discoveryWait = discoveryLimiter.retryAfter(discoveryKey);
+		if (discoveryWait) return tooManyAttempts(status, set, discoveryWait);
+		discoveryLimiter.fail(discoveryKey);
 		const st = totpStatus(mailbox);
 		if (st.enabled) {
 			// Passwordless mailbox: the client should prompt for a code instead and
@@ -112,18 +117,16 @@ export const AuthService = {
 		}
 
 		const key = limitKey(mailbox);
-		const wait = loginLimiter.retryAfter(key);
-		if (wait) return tooManyAttempts(status, set, wait);
-
+		const attempt = loginLimiter.reserve(key);
+		if (attempt.wait) return tooManyAttempts(status, set, attempt.wait);
 		const ok = await verifyImap(mailbox, password);
+		attempt.settle(ok);
 		if (!ok) {
-			loginLimiter.fail(key);
 			return status(401, {
 				success: false,
 				message: "Username or password is incorrect",
 			});
 		}
-		loginLimiter.reset(key);
 
 		startSession({ cookie, mailbox, password, rememberMe: !!rememberMe });
 		return {
@@ -177,6 +180,26 @@ export const AuthService = {
 			success: true,
 			data: { mailbox, llmPresent: isLLMPresent() },
 		};
+	},
+
+	// Refresh stored IMAP credentials only after verifying both factors.
+	recover: async ({ body, status, set }) => {
+		const { mailbox, code, password } = body;
+		const key = limitKey(mailbox);
+		const attempt = codeLimiter.reserve(key);
+		if (attempt.wait) return tooManyAttempts(status, set, attempt.wait);
+		const result = verifyLoginCode(mailbox, String(code));
+		if (!result.ok || !(await verifyImap(mailbox, password))) {
+			attempt.settle(false);
+			return status(401, { success: false, message: "Invalid code or mailbox password" });
+		}
+		if (!verifyLoginCode(mailbox, String(code)).ok) {
+			attempt.settle(false);
+			return status(401, { success: false, message: "Invalid code or mailbox password" });
+		}
+		updateTotpPassword(mailbox, password);
+		attempt.settle(true);
+		return { success: true };
 	},
 
 	// Enroll — step 1: verify the mailbox password against IMAP (so we know it
