@@ -157,6 +157,7 @@ export default function MessageView({
 		setError("");
 	}, [uid, thisFolder]);
 
+	// biome-ignore lint/correctness/useExhaustiveDependencies: retryCount explicitly restarts a failed request
 	useEffect(() => {
 		const controller = new AbortController();
 		setLoading(true);
