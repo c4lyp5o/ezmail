@@ -19,6 +19,10 @@ export const FilterModel = {
 				enabled: t.Boolean(),
 				rules: t.Array(FilterRule),
 				sieveSource: t.Optional(t.String()),
+				conflict: t.Optional(t.Boolean()),
+				mode: t.Optional(t.Union([t.Literal("sieve"), t.Literal("imap"), t.Literal("unavailable")])),
+				lastError: t.Optional(t.String()),
+				lastCheck: t.Optional(t.Number()),
 			}),
 		),
 	}),
@@ -26,6 +30,7 @@ export const FilterModel = {
 	putBody: t.Object({
 		rules: t.Array(FilterRule, { maxItems: 50 }),
 		enabled: t.Boolean(),
+		mode: t.Optional(t.Union([t.Literal("sieve"), t.Literal("imap")])),
 	}),
 
 	putResponse: t.Object({

@@ -59,7 +59,19 @@ export const MailModel = {
 				from: t.String(),
 				fromName: t.String(),
 				to: t.String(),
+				cc: t.Optional(t.String()),
 				replyTo: t.Optional(t.String()),
+				messageId: t.Optional(t.String()),
+				references: t.Optional(t.String()),
+				// Bare addresses for building reply / reply-all recipients.
+				addresses: t.Optional(
+					t.Object({
+						from: t.Array(t.String()),
+						replyTo: t.Array(t.String()),
+						to: t.Array(t.String()),
+						cc: t.Array(t.String()),
+					}),
+				),
 				date: t.Any(),
 				mailedBy: t.Optional(t.String()),
 				signedBy: t.Optional(t.String()),
@@ -67,11 +79,13 @@ export const MailModel = {
 				text: t.String(),
 				attachments: t.Array(
 					t.Object({
+						index: t.Integer(),
 						filename: t.String(),
 						contentType: t.String(),
 						size: t.Integer(),
-						content: t.Optional(t.String()),
 						contentId: t.Optional(t.String()),
+						// inline part referenced from the HTML (cid:)
+						related: t.Boolean(),
 					}),
 				),
 			}),
@@ -91,6 +105,7 @@ export const MailModel = {
 			t.Object({
 				uids: uidArray,
 				flags: t.Array(t.String()),
+				inboxUnseen: t.Optional(t.Integer()),
 			}),
 		),
 	}),
@@ -108,6 +123,7 @@ export const MailModel = {
 			t.Object({
 				uids: uidArray,
 				flags: t.Array(t.String()),
+				inboxUnseen: t.Optional(t.Integer()),
 			}),
 		),
 	}),
@@ -126,6 +142,9 @@ export const MailModel = {
 				uids: uidArray,
 				from: t.String(),
 				to: t.String(),
+				inboxUnseen: t.Optional(t.Integer()),
+				// Destination UIDs (UIDPLUS) — lets the client undo the move.
+				movedUids: t.Optional(t.Array(t.Integer())),
 			}),
 		),
 	}),
@@ -146,6 +165,16 @@ export const MailModel = {
 		),
 	}),
 
+	createFolderBody: t.Object({
+		name: t.String({ minLength: 1, maxLength: 64 }),
+	}),
+
+	createFolderResponse: t.Object({
+		success: t.Boolean(),
+		message: t.Optional(t.String()),
+		data: t.Optional(t.Object({ path: t.String() })),
+	}),
+
 	expungeFolderBody: t.Object({
 		folder: t.String(),
 	}),
@@ -163,10 +192,21 @@ export const MailModel = {
 	sendMessageBody: t.Object({
 		to: t.String(),
 		cc: t.Optional(t.String()),
+		bcc: t.Optional(t.String()),
 		subject: t.Optional(t.String()),
 		text: t.Optional(t.String()),
 		html: t.Optional(t.String()),
 		markdown: t.Optional(t.Boolean()),
+		inReplyTo: t.Optional(t.String()),
+		references: t.Optional(t.String()),
+		// Attachments of an existing message to include (forwarding).
+		forwardAttachments: t.Optional(
+			t.Object({
+				folder: t.String(),
+				uid: t.Union([t.Integer(), t.String()]),
+				indexes: t.Array(t.Integer()),
+			}),
+		),
 		attachments: t.Optional(
 			t.Array(
 				t.Object({
@@ -181,6 +221,25 @@ export const MailModel = {
 	sendMessageResponse: t.Object({
 		success: t.Boolean(),
 		message: t.String(),
+		data: t.Optional(t.Object({ savedToSent: t.Boolean(), sentSavingDisabled: t.Optional(t.Boolean()) })),
+	}),
+
+	threadResponse: t.Object({
+		success: t.Boolean(),
+		message: t.Optional(t.String()),
+		data: t.Optional(
+			t.Array(
+				t.Object({
+					folder: t.String(),
+					uid: t.Integer(),
+					subject: t.String(),
+					from: t.String(),
+					fromName: t.String(),
+					date: t.Any(),
+					seen: t.Boolean(),
+				}),
+			),
+		),
 	}),
 
 	summarizeBody: t.Object({

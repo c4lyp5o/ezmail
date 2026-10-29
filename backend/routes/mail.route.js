@@ -2,13 +2,37 @@ import { Elysia, t } from "elysia";
 import { MailModel } from "../models/mail.model.js";
 import { MailService } from "../services/mail.service.js";
 import { summarizeText } from "../services/llm.service.js";
+import { PushService } from "../services/push.service.js";
 
 export const MailRoutes = new Elysia({ prefix: "/api/v1/mail" })
+	.get("/events", PushService.events, {
+		detail: {
+			summary: "Live mailbox events (SSE)",
+			description:
+				"Server-Sent Events fed by IMAP IDLE on INBOX: {type: ready|new|changed|closed|error}. Hints only — clients refetch.",
+			tags: ["Mail"],
+		},
+	})
 	.get("/folders", MailService.listFolders, {
 		response: MailModel.listFoldersResponse,
 		detail: {
 			summary: "List mail folders",
 			description: "Lists all IMAP folders/mailboxes for the account.",
+			tags: ["Mail"],
+		},
+	})
+	.post("/folders", MailService.createFolder, {
+		body: MailModel.createFolderBody,
+		response: {
+			200: MailModel.createFolderResponse,
+			400: MailModel.createFolderResponse,
+			409: MailModel.createFolderResponse,
+			502: MailModel.createFolderResponse,
+		},
+		detail: {
+			summary: "Create a folder",
+			description:
+				"Creates a top-level folder. Names use letters, numbers, spaces, dashes and underscores so filters can target them. 409 when it already exists.",
 			tags: ["Mail"],
 		},
 	})
@@ -29,6 +53,29 @@ export const MailRoutes = new Elysia({ prefix: "/api/v1/mail" })
 		detail: {
 			summary: "Get a single message",
 			description: "Fetches full body (text/html) + flags for one message.",
+			tags: ["Mail"],
+		},
+	})
+	.get("/message/:folder/:uid/thread", MailService.getThread, {
+		params: t.Object({ folder: t.String(), uid: t.String() }),
+		response: MailModel.threadResponse,
+		detail: {
+			summary: "Conversation for a message",
+			description:
+				"Messages in INBOX and Sent linked to this one by Message-ID / References / In-Reply-To, oldest first (includes the message itself).",
+			tags: ["Mail"],
+		},
+	})
+	.get("/message/:folder/:uid/attachment/:index", MailService.getAttachment, {
+		params: t.Object({
+			folder: t.String(),
+			uid: t.String(),
+			index: t.String(),
+		}),
+		detail: {
+			summary: "Download an attachment",
+			description:
+				"Streams one attachment's bytes (also backs inline cid: images). Always served as a download with a sandboxing CSP.",
 			tags: ["Mail"],
 		},
 	})

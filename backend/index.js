@@ -1,7 +1,6 @@
 import crypto from "node:crypto";
 import path from "node:path";
 import { cookie } from "@elysiajs/cookie";
-import { jwt } from "@elysiajs/jwt";
 import { openapi } from "@elysiajs/openapi";
 import staticPlugin from "@elysiajs/static";
 import { Elysia, file } from "elysia";
@@ -15,15 +14,14 @@ import { AuthRoutes } from "./routes/auth.route.js";
 import { FilterRoutes } from "./routes/filter.route.js";
 import { HealthRoute } from "./routes/health.route.js";
 import { MailRoutes } from "./routes/mail.route.js";
+import { ProfileRoutes } from "./routes/profile.route.js";
 import { probeAndRecordLLM } from "./services/llm.service.js";
+import { startFallbackWorker } from "./services/filter-fallback.service.js";
 
-let JWT_SECRET = process.env.JWT_SECRET;
-if (!JWT_SECRET) {
-	JWT_SECRET = getSetting("jwtSecret");
-	if (!JWT_SECRET) {
-		JWT_SECRET = crypto.randomBytes(32).toString("hex");
-		setSetting("jwtSecret", JWT_SECRET);
-	}
+// Fallback at-rest encryption secret (crypto.service.js) when neither
+// TOTP_ENC_KEY nor JWT_SECRET is set: generated once, persisted in sqlite.
+if (!process.env.JWT_SECRET && !getSetting("jwtSecret")) {
+	setSetting("jwtSecret", crypto.randomBytes(32).toString("hex"));
 }
 
 export const app = new Elysia()
@@ -49,12 +47,6 @@ export const app = new Elysia()
 
 	.use(cookie())
 
-	.use(
-		jwt({
-			name: "jwt",
-			secret: JWT_SECRET,
-		}),
-	)
 
 	// Security headers for every response (CSP, clickjacking, feature policy).
 	.onAfterHandle(({ set }) => {
@@ -77,7 +69,8 @@ export const app = new Elysia()
 			.use(AuthPlugin)
 			.use(ProtectorPlugin)
 			.use(MailRoutes)
-			.use(FilterRoutes),
+			.use(FilterRoutes)
+			.use(ProfileRoutes),
 	)
 
 	.use(
@@ -165,7 +158,14 @@ const startServer = async () => {
 	}
 	try {
 		await probeAndRecordLLM();
-		app.listen(process.env.PORT || 5000);
+		// idleTimeout (s): Elysia's default 30 would cut LLM summaries (up to
+		// 40s); SSE heartbeats (20s) keep event streams alive regardless.
+		app.listen({
+			port: Number(process.env.PORT) || 5000,
+			idleTimeout: 120,
+			maxRequestBodySize: 32 * 1024 * 1024,
+		});
+		startFallbackWorker();
 		process.env.NODE_ENV === "development" &&
 			logger.info("[SERVER] 📘 ezmail OpenAPI UI enabled at /openapi");
 		logger.info(
@@ -177,4 +177,5 @@ const startServer = async () => {
 	}
 };
 
-startServer();
+// `bun test` sets NODE_ENV=test and imports `app` directly (app.handle).
+if (process.env.NODE_ENV !== "test") startServer();

@@ -43,7 +43,7 @@ export default function SummaryColumn({ message, onClose }) {
 					? "This email contains no text to summarize (images only)."
 					: "",
 			);
-			setSummarizing(true);
+			setSummarizing(false);
 			return;
 		}
 
@@ -64,7 +64,7 @@ export default function SummaryColumn({ message, onClose }) {
 					setError(err?.message || "Summarization failed");
 				}
 			})
-			.finally(() => setSummarizing(false));
+			.finally(() => { if (!controller.signal.aborted) setSummarizing(false); });
 
 		return () => controller.abort();
 	}, [message]);
@@ -76,9 +76,13 @@ export default function SummaryColumn({ message, onClose }) {
 				<span className="text-sm font-semibold">Summary</span>
 				<div className="flex-1" />
 				<button
+					type="button"
 					onClick={onClose}
+					aria-label="Close summary"
+					title="Close summary"
 					className="rounded-lg p-1 text-ink-muted transition hover:bg-hover hover:text-ink-2"
 				>
+					<X className="h-4 w-4" />
 				</button>
 			</div>
 

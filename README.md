@@ -1,97 +1,145 @@
 # ezmail 💌
 
-A self-hosted webmail client — a Bun + Elysia backend that proxies IMAP/SMTP, and a React 19 + Vite + Tailwind 4 frontend. Part of the `ez-*` family alongside ezhost and eziarr.
+A self-hosted webmail client. A Bun + Elysia backend talks IMAP/SMTP to your mail server; a React 19 + Vite + Tailwind 4 frontend runs in the browser. Part of the `ez-*` family alongside ezhost and eziarr.
 
-## Architecture
+## Features
 
-Monorepo with two workspaces:
+- **Any mailbox can sign in.** Credentials are checked directly against your IMAP server; there are no ezmail accounts.
+- **Reading:** server-side pagination, search, sort, and unread counts on every folder. Conversation view built from `Message-ID` / `References` across INBOX and Sent.
+- **Live updates:** new mail arrives over IMAP IDLE, streamed to the browser with server-sent events. Optional desktop notifications and an unread count in the tab title.
+- **Writing:** compose, reply, reply-all and forward (attachments are copied on the server). Optional Markdown body. One draft per mailbox auto-saves locally; uploaded files must be added again after leaving. A copy of each sent message is saved to Sent. Ctrl/⌘+Enter sends.
+- **Organising:** bulk select with checkboxes or Shift+arrows, move, archive, delete, mark read. Undo for moves and deletes. Swipe left on mobile to archive.
+- **Safe rendering:** HTML mail is sanitised and shown in a sandboxed iframe with a strict Content-Security-Policy. Remote images, CSS backgrounds, fonts and media stay blocked until you allow them for that message. Attachments download on demand.
+- **Security:** server-side sessions, optional passwordless TOTP login, rate-limited login and code attempts.
+- **Extras:** per-mailbox display name, server-side filters (Dovecot Sieve), optional LLM summaries, light/dark theme, keyboard shortcuts.
 
-- **`backend/`** — Bun + Elysia. Sits between the browser and your mail server over IMAP (993) / SMTP (587). Mail flow: `imapflow` (reads) + `nodemailer` (sends) + `mailparser` (MIME/HTML body parsing).
-- **`frontend/`** — React 19 + Vite + Tailwind 4 + React Router. Vite dev server proxies `/api` → backend.
+## Quick start
 
+Requires [Bun](https://bun.sh) 1.4+.
+
+```bash
+bun install                         # installs root, backend and frontend deps
+cp backend/.env.example backend/.env
+# edit backend/.env: at least IMAP_HOST and SMTP_HOST
+bun dev                             # backend :5000 + Vite :5173
 ```
-ezmail/
-├── backend/     # Elysia API, IMAP/SMTP services, JWT auth
-├── frontend/    # React SPA
-├── ecosystem.config.js   # pm2 ("server", PORT 5000)
-└── logs/        # ezmail.log (deadslog)
-```
 
-## Multi-user login
-
-ezmail is **not anchored to one account**. Any user logs in with their own mailbox + password:
-
-- The backend authenticates the mailbox + password **directly against the IMAP server** at login.
-- Wrong mailbox **or** wrong password returns a generic `Username or password is incorrect` (no leaking which one failed).
-- On success a JWT (HttpOnly + SameSite=Strict cookie) carries the mailbox identity.
-- Every mail operation (folders, messages, send, flags) builds its IMAP/SMTP client from the **logged-in user's** credentials — no global account.
+Open http://localhost:5173 and sign in with any mailbox on your server and its password.
 
 ## Configuration
 
-IMAP/SMTP host/port/secure come **only** from `backend/.env` (infra config, never user-editable).
+Everything is set in `backend/.env` (see [`backend/.env.example`](backend/.env.example)). Server settings are never editable from the UI.
 
-```env
-IMAP_HOST=mail.example.com
-IMAP_PORT=993
-IMAP_SECURE=true
-SMTP_HOST=mail.example.com
-SMTP_PORT=587
-SMTP_SECURE=false
-```
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `IMAP_HOST` | — (required) | IMAP server. The backend refuses to start while this is unset. |
+| `IMAP_PORT` / `IMAP_SECURE` | `993` / `true` | IMAP port and implicit TLS. |
+| `SMTP_HOST` | — | SMTP submission server. |
+| `SMTP_PORT` / `SMTP_SECURE` | `587` / `false` | `false` means STARTTLS on 587; use `465` / `true` for implicit TLS. |
+| `PORT` | `5000` | HTTP port. |
+| `NODE_ENV` | — | `production` hides `/openapi` and error details, and forces Secure cookies. |
+| `COOKIE_SECURE` | auto | Force the Secure cookie flag (e.g. TLS terminated at a reverse proxy). |
+| `TOTP_ENC_KEY` | generated | Key that encrypts stored mailbox passwords (sessions and TOTP). Set a stable random 64-char string in production. Changing it signs everyone out and invalidates TOTP enrolments. |
+| `JWT_SECRET` | — | Legacy fallback for `TOTP_ENC_KEY`. |
+| `TRUST_PROXY` | `false` | Set `true` behind a reverse proxy (e.g. Traefik) so login throttling is per client address from `X-Forwarded-For`; otherwise all users share the proxy's address. |
+| `IMAP_POOL_IDLE_MS` | `30000` | How long an idle IMAP connection is kept for reuse. `0` disables reuse. |
+| `SAVE_SENT` | `true` | Append sent mail to the Sent folder. Set `false` if your server already does (e.g. Gmail). |
+| `SIEVE_HOST` | `IMAP_HOST` | ManageSieve server hostname. |
+| `SIEVE_PORT` | `4190` | ManageSieve server port. |
+| `SIEVE_TLS` | `starttls` | ManageSieve TLS mode: `starttls` or `implicit`. |
+| `LLM_SERVER` / `LLM_SERVER_APIKEY` / `LLM_MODEL` | — | Optional Ollama or OpenAI-compatible server for summaries. |
+| `DB_PATH` | `backend/data/ezmail.db` | SQLite file. |
 
-The DB stores only the JWT signing secret — no mail credentials are persisted.
+Filters normally use ManageSieve with the signed-in mailbox credentials. The
+server must offer TLS and `CHECKSCRIPT`. If it is unavailable, select **Use
+ezmail filtering** to opt into the IMAP fallback instead. The fallback checks
+the inbox about once a minute while ezmail is running, including after logout;
+it catches up after a restart, but cannot run while ezmail is stopped. It moves
+only messages arriving after the rules are enabled, with the first match winning.
+Existing server-side rules can still run and are not imported or disabled.
+The Filters panel shows which method is active and, for the fallback, the last
+successful check and any current error.
+The fallback stores the mailbox password encrypted in ezmail's database until
+the fallback is disabled or deleted. Keep the database and `TOTP_ENC_KEY` secure;
+after changing the mailbox password, sign in with the new credentials (or use
+TOTP recovery) to refresh the worker's stored password.
+Rules are listed in priority order and can be reordered; a **Test your rules**
+box shows which rule a sample sender, recipient or subject would match without
+moving mail.
+Active scripts are editable only when they exactly match ezmail's generated
+template. Other active scripts are shown read-only and must be managed
+externally. New scripts use new names; ezmail keeps the previous managed
+version and removes older recognized ezmail history after a successful save.
+The old `MAIL_DATA_DIR` files remain on disk and are not migrated automatically;
+back them up and migrate them manually with a ManageSieve client if needed.
+Avoid concurrent external edits while saving filters in ezmail. ManageSieve
+does not provide an atomic compare-and-swap for the active script: ezmail
+rechecks before activation, but cannot prevent a change in the final interval.
 
-## LLM email summarization (optional)
+### LLM summaries (optional)
 
-ezmail can summarize emails with a local LLM (ollama or any OpenAI-compatible server):
-
-1. Set `LLM_SERVER` (+ optional `LLM_SERVER_APIKEY`) in `backend/.env`.
-2. On boot the backend probes the server (`/v1/models` or `/api/tags`). If reachable, it stores `LLM_PRESENT=true` in sqlite.
-3. When `LLM_PRESENT` is true, opening an email shows a third, slidable **Summary** column that summarizes the message text via `POST /mail/summarize`. Switching messages cancels the in-flight request (AbortController).
-
-Presence is checked at boot only — if the server is down at boot, summarization stays off until restart.
-
-**Currently wired to 9router** (`LLM_SERVER=http://localhost:20128`, `LLM_MODEL=ZeroCost`) for testing. ZeroCost routes to a reasoning model — must send `stream:false` or 9router streams NDJSON and the non-stream JSON parse fails.
-
-## Bulk selection & actions (Google-style)
-
-- Checkboxes on each message; selection persists across opening a message (stored in parent state).
-- When messages are selected, an action bar appears beside the folder name: **mark as read**, **move to** (popup listing folders), and **delete** (move to Trash).
-
-## Getting started
-
-```bash
-# backend
-cd backend
-bun install
-cp .env.example .env   # set your IMAP/SMTP host
-NODE_ENV=development bun index.js   # PORT 5000
-
-# frontend (separate terminal)
-cd frontend
-bun install
-bun run dev            # Vite on 5173, /api proxied to 5000
-```
-
-Open http://localhost:5173 and sign in with any mailbox + its password.
+Set `LLM_SERVER` (and `LLM_MODEL`, plus `LLM_SERVER_APIKEY` if needed). At boot the backend probes the server (`/v1/models` or `/api/tags`). If it answers, opening a message shows a slide-out **Summary** column. Presence is only checked at boot, so restart after bringing the LLM server up.
 
 ## Production
 
+### Docker
+
 ```bash
-pm2 start ecosystem.config.js   # runs backend on PORT 5000
+docker build -t ezmail .
+docker run -d -p 5000:5000 \
+  --env-file backend/.env -e NODE_ENV=production \
+  -v ezmail-data:/app/backend/data \
+  ezmail
 ```
 
-Set `NODE_ENV` (production hides the `/openapi` spec and error details). The OpenAPI UI is dev-only.
+Mount `/app/backend/data` so sessions, TOTP enrolments and settings survive restarts. Published images: `calypso666/ezmail:<version>` and `:latest`.
 
-## Security notes
+### pm2
 
-- The JWT carries the mailbox password (needed for the IMAP/SMTP proxy). It's HttpOnly + SameSite=Strict. For stronger hardening, swap to a short-lived token or a server-side session store — recommended before public exposure.
-- Mail credentials are never written to disk in the DB.
+```bash
+bun run build:client
+bun start            # pm2-runtime, NODE_ENV=production, PORT 5000
+```
 
-## Key gotchas
+### Behind a reverse proxy
 
-- **Elysia path params arrive as `{ params: { ... } }`**, not top-level — destructure `params` in route handlers (`getMessage`, `listMessages`).
-- **imapflow** `fetchOne` first arg is a sequence number unless `{ uid: true }` is passed as the third arg.
-- **imapflow** `flags`/`delimiter`/`specialUse` can be `undefined`/`{}` — always normalize with `Array.isArray` / null-guards.
-- **mailparser** handles multipart, quoted-printable/base64, and attachments — prefer it over hand-rolling MIME walking.
-- **imapflow errors** are rich objects — log `cmd`/`resp`/`status` (see `logImapError` in `mail.service.js`), not just `err.message`.
+- Terminate TLS at the proxy and set `COOKIE_SECURE=true` (implied by `NODE_ENV=production`).
+- `GET /api/v1/mail/events` is a long-lived server-sent events stream. Disable response buffering and allow long read timeouts for it. ezmail sends `X-Accel-Buffering: no`, which covers nginx; other proxies may need their own setting.
+- Each signed-in user with an open tab holds one extra IMAP connection for live updates. Dovecot's default `mail_max_userip_connections` is 10, so raise it if users keep many tabs or devices open.
+
+## Keyboard shortcuts
+
+Press `?` in the app for the full list.
+
+| Key | Action |
+| --- | --- |
+| `j` / `k`, `↓` / `↑` | Next / previous message |
+| `Shift` + arrows, `PgUp` / `PgDn`, `Home` / `End` | Extend selection |
+| `Enter` / `o` | Open message |
+| `x` | Toggle selection |
+| `c` | Compose |
+| `r` / `a` / `f` | Reply / reply all / forward |
+| `e` | Archive |
+| `#` / `Delete` | Delete |
+| `z` | Undo |
+| `/` | Search |
+| `Esc` | Clear selection or close |
+
+## Security model
+
+- Login is verified against IMAP. Errors are generic and never say whether the mailbox or the password was wrong.
+- The browser holds only an opaque session token in an HttpOnly, SameSite=Strict cookie. The mailbox password is kept server-side, encrypted with `TOTP_ENC_KEY`, so IMAP/SMTP can be proxied. Logging out deletes the session.
+- With TOTP enabled, a mailbox signs in with a 6-digit code instead of its password.
+- See [SECURITY.md](SECURITY.md) for reporting vulnerabilities and known limitations.
+
+## Documentation
+
+- [DEVELOPERS.md](DEVELOPERS.md): architecture, internals, gotchas
+- [CONTRIBUTING.md](CONTRIBUTING.md): workflow, tests, commit style
+- [AGENTS.md](AGENTS.md): instructions for AI coding agents
+- [SECURITY.md](SECURITY.md): security policy
+- [CHANGELOG.md](CHANGELOG.md): release notes
+
+## License
+
+See [LICENSE.md](LICENSE.md).

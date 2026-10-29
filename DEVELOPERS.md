@@ -1,106 +1,111 @@
 # DEVELOPERS.md — ezmail
 
-Developer guide for contributing to **ezmail**, a self-hosted webmail client. Companion to `README.md` (user-facing); this file is for people running/editing the code.
+Architecture and internals for people editing the code. Setup and workflow are covered in [CONTRIBUTING.md](CONTRIBUTING.md); user-facing documentation is in [README.md](README.md).
 
 ## Stack & conventions
 
 Follow the surrounding `ez-*` family style (`ezhost`, `eziarr`):
 
-- **Runtime** — Bun 1.3.14 (`~/.bun/bin/bun`; not on PATH by default — prefix `export PATH="$HOME/.bun/bin:$PATH"`).
-- **Backend** — Bun + **Elysia**, `deadslog` logging, `bun:sqlite` for settings, ESM with explicit `.js` extensions.
-- **Frontend** — React 19 + **Vite** + **Tailwind 4** + **React Router** + `lucide-react`; SWR for data.
-- **Envelope** — APIs return `{ success, message, data }`. Backend routes declare a model on `body`/`query`/`response` for OpenAPI + runtime validation.
-- **Formatting** — tabs, double quotes, semicolons, kebab-case filenames.
+- **Runtime:** Bun 1.4.3, the same version as CI and Docker. If `bun` isn't on PATH, run `export PATH="$HOME/.bun/bin:$PATH"`.
+- **Backend:** Bun + **Elysia**, `imapflow` (IMAP), `nodemailer` (SMTP), `mailparser` (MIME), `bun:sqlite`, `deadslog` logging. ESM with explicit `.js` extensions.
+- **Frontend:** React 19 + **Vite 8** + **Tailwind 4** + **react-router 8** (import from `"react-router"`, not `react-router-dom`) + SWR + `lucide-react`.
+- **Envelope:** APIs return `{ success, message, data }`. Routes declare `body`/`query`/`params`/`response` models for OpenAPI and runtime validation.
+- **Style:** tabs, double quotes, semicolons, kebab-case backend filenames, PascalCase React components. Lint with Biome (`biome.json`).
 
-## Monorepo layout
+## Layout
 
 ```
 ezmail/
-├── backend/          # Elysia API + IMAP/SMTP proxy
-│   ├── index.js      # app bootstrap (probes LLM before listen)
-│   ├── config.js     # CLIENT_DIR, DATA_DIR, MAIL_SERVER, LLM from env
-│   ├── db.js         # bun:sqlite settings store
-│   ├── routes/       # auth.route.js, mail.route.js
-│   ├── services/     # auth.service.js, mail.service.js, llm.service.js
-│   ├── models/       # mail.model.js (Elysia TypeBox schemas)
-│   ├── plugins/      # auth.plugin.js, protector.plugin.js (JWT guard)
-│   └── .env          # infra + LLM config (git-ignored)
-├── frontend/         # React SPA
-│   ├── vite.config.js    # dev proxy /api + /openapi → :5000
+├── backend/
+│   ├── index.js          # bootstrap: LLM probe, plugins, routes, listen (skipped when NODE_ENV=test)
+│   ├── config.js         # paths, MAIL_SERVER, DB_PATH, LLM from env
+│   ├── db.js             # bun:sqlite: settings, sessions, totp, profiles
+│   ├── logger.js         # deadslog → logs/ezmail.log
+│   ├── routes/           # auth, mail, filter, profile, health
+│   ├── services/
+│   │   ├── auth.service.js        # login, TOTP login/enrol, me, logout
+│   │   ├── session.service.js     # server-side session store
+│   │   ├── crypto.service.js      # AES-GCM for stored passwords
+│   │   ├── totp.service.js        # TOTP secrets + verification
+│   │   ├── rate-limit.service.js  # in-memory login/code limiters
+│   │   ├── mail.service.js        # IMAP/SMTP operations
+│   │   ├── push.service.js        # IMAP IDLE → SSE fan-out
+│   │   ├── profile.service.js     # display name
+│   │   ├── filter.service.js      # Dovecot Sieve filters
+│   │   └── llm.service.js         # summaries (Ollama / OpenAI-compatible)
+│   ├── models/           # Elysia TypeBox schemas
+│   ├── plugins/          # auth.plugin.js (getUser, SESSION_COOKIE), protector
+│   └── tests/            # bun test; helpers/ has fake IMAP/SMTP
+├── frontend/
+│   ├── vite.config.js    # dev proxy /api + /openapi → :5000; vitest config
 │   └── src/
-│       ├── App.jsx           # routes; /mail wrapped in RequireAuth
-│       ├── RequireAuth.jsx   # redirects to /login when unauthenticated
-│       ├── pages/            # MailPage, LoginPage
-│       ├── components/       # MessageList, MessageView, ComposeView, SummaryColumn, FolderList
-│       ├── context/auth.jsx
-│       └── utils/apiCall.js  # fetch wrapper (Envelope, AbortController)
-├── ecosystem.config.js   # pm2 ("server", PORT 5000)
-├── Dockerfile            # multi-stage: frontend build → backend prod image
-└── .github/workflows/docker-publish.yml
+│       ├── App.jsx, RequireAuth.jsx
+│       ├── pages/        # MailPage (state hub, shortcuts, SSE), LoginPage
+│       ├── components/   # MessageList, MessageView, ComposeView, SummaryColumn, FolderList, SettingsModal + tabs
+│       ├── context/      # auth, theme
+│       ├── utils/        # apiCall, reply (buildDraft), folders (specialFolder), keyboard
+│       └── test/         # vitest setup, mockApi, fake EventSource
+├── .github/workflows/    # test.yml (CI), docker-publish.yml
+├── Dockerfile            # frontend build → backend prod image (pm2)
+└── ecosystem.config.js   # pm2 app "server", PORT 5000
 ```
-
-## Local dev
-
-```bash
-# one-time
-bun install                      # installs backend + frontend deps
-
-# backend
-cd backend && cp .env.example .env   # set IMAP/SMTP host + LLM if desired
-bun install
-NODE_ENV=development bun index.js    # API on :5000, OpenAPI at /openapi
-
-# frontend (separate terminal)
-cd frontend
-bun install
-bun run dev                          # Vite on :5173, proxies /api → :5000
-```
-
-Open http://localhost:5173 — sign in with any mailbox + its password. The OpenAPI spec/UI (`/openapi`) is **dev-only** (hidden when `NODE_ENV=production`).
 
 ## Backend internals
 
-### Auth model
-- **Single-password Roundcube model**: the same mailbox password is used for web login **and** IMAP/SMTP.
-- At login the backend authenticates the mailbox + password **directly against the IMAP server**; wrong mailbox **or** password returns the generic `Username or password is incorrect`.
-- A JWT (`HttpOnly`, `SameSite=Strict`) carries `{ mailbox, password }`; secret lives in sqlite (`getSetting("jwtSecret")`). No mail credentials are persisted to disk.
+### Auth and sessions
+- Single-password model: the mailbox password is used for both web login and IMAP/SMTP. Login is verified with a real IMAP connect, and failures return the generic `Username or password is incorrect`.
+- On success, `createSession` stores `{ mailbox, encrypted password, expiry }` in the `sessions` table. The row is keyed by the **SHA-256 of a random 32-byte token**, and the token itself goes in the `ezmail_session` cookie (HttpOnly, SameSite=Strict). `getUser(cookie)` resolves it, and logout deletes the row.
+- The encryption key comes from `TOTP_ENC_KEY`, then `JWT_SECRET`, then a generated `jwtSecret` setting. Changing it invalidates every session and TOTP enrolment.
+- **TOTP (passwordless):** `POST /login` returns `{ totp: true }` for enrolled mailboxes, and the client then calls `/login/code`. Pending enrolments are separate from active credentials. `POST /totp/recover` requires a valid code and current IMAP password to refresh the encrypted password.
+- **Rate limits** (`rate-limit.service.js`): per 15 minutes, 10 password attempts and 30 discovery attempts per client address + mailbox (address from `X-Forwarded-For` only when `TRUST_PROXY=true`), a mailbox-wide ceiling of 100 failed passwords, and 5 code/recovery attempts per mailbox, held in memory. In-flight IMAP checks reserve slots. Excess attempts get `429` with `Retry-After`; limits reset on restart and are not shared across instances.
 
-### Every mail op mints its own client
-Each request builds an `ImapFlow`/`nodemailer` client from the **logged-in user's** credentials. There is no shared/global account.
+### Mail
+- Requests use an `ImapFlow` client built from the session's credentials (`buildImapClient`); there is no shared account. `imap-pool.service.js` keeps up to three idle connections per mailbox for `IMAP_POOL_IDLE_MS` (30 s) and hands each to one caller at a time; a connection whose command threw is discarded, so release mailbox locks in `finally`. Connects time out after 15 s and idle sockets after 60 s (`REQUEST_TIMEOUTS`). The IDLE watcher and filter worker keep their own connections. Tests set `IMAP_POOL_IDLE_MS=0`; `tests/imap-pool.test.js` opts in.
+- **Special folders** are resolved by RFC 6154 special-use flag first, then by name (`findSpecialFolder`, `TRASH_NAMES`, `SENT_NAMES`). The frontend mirrors this in `utils/folders.js`.
+- **Listing** fetches the requested page in sequence/UID arrival order. Unread counts for all folders come from `LIST-STATUS`.
+- **Attachments:** body-structure traversal defines indexes for display, download and forwarding. Downloads and forwarding fetch individual parts, with a 25 MiB limit. The message view fetches headers and displayable text parts, capped at 8 MiB total. The attachment endpoint uses `no-store`, `Content-Disposition: attachment`, `nosniff` and a sandbox CSP. `cid:` links use that endpoint.
+- **Send:** MIME is built before SMTP submission and the same bytes are appended to Sent. `savedToSent` reports filing success; `sentSavingDisabled` distinguishes `SAVE_SENT=false` from a failure after delivery.
+- **Folders:** `POST /mail/folders` creates a top-level folder (letters, digits, spaces, dashes, underscores — the set Sieve filters accept); 409 if it exists in any case. Deleting with no Trash folder creates one.
+- **TOTP codes** are single-use: the last consumed 30 s step is stored per mailbox (`totp:last-step:*`) and login or recovery must present a newer one.
+- **Moves/deletes** return `movedUids` (UIDPLUS) so the client can undo.
+- **Threads:** `GET /mail/message/:folder/:uid/thread` searches INBOX, the open folder, Sent and Archive by `Message-ID` / `References`. A matching subject alone never links messages.
+- **Filters:** ManageSieve uses the signed-in mailbox credentials and TLS. Only scripts matching ezmail's template are editable. Scripts are checked before upload, the previous managed version is retained, and custom active scripts are read-only. See the README for configuration and migration.
+- **IMAP filter fallback:** explicit per-mailbox opt-in stores rules and an encrypted password in `fallback_filters`. A process-local scheduler polls enabled accounts; SQLite leases coordinate workers sharing a database. UIDVALIDITY and a per-message UID cursor prevent processing old mail on first enable and permit retries after failures. A changed UIDVALIDITY skips existing messages and raises a status warning. Each run that completes without error stores `last_success` (returned as `lastCheck`); it is cleared when the fallback is re-enabled. Disabling or deleting rules removes the stored password. Tests use fake IMAP; verify delivery and moves against a real server.
+- **Filters UI:** `FiltersTab` tracks a saved baseline and reports unsaved edits to `SettingsModal` through `onDirtyChange`; the modal then confirms before closing or switching sections. `ConfirmPanel` handles Escape and Tab itself so the host dialog's handlers don't also fire. The "Test your rules" preview is client-side (`utils/filterRules.js`) and mirrors the server matcher in `filter-match.service.js`; keep the two in step.
 
-### key gotchas (backend)
-- **Elysia** (v1) path params arrive inside `{ params }`; POST body inside `{ body }`; query inside `{ query }`. Destructure them in route handlers.
-- **imapflow** `fetchOne(seq, opts)` uses a sequence number unless `{ uid: true }` is the third arg. `fetch(from:to)` ranges are sequence numbers too — keep `{ uid: false }`, while `msg.uid` is still the real UID.
-- **`messageMove`/`messageCopy` do NOT take a source option** — they operate on the currently-open mailbox. You MUST `await client.mailboxOpen(from)` before a MOVE, or it silently matches nothing.
-- **`bodyStructure` has no flat `attachments` array** — walk `childNodes` recursively and count nodes with `disposition` matching `/attachment|inline/i`.
-- **imapflow** flags are a `Set` — normalize with the `toFlagsArray()` helper. `flags`/`delimiter`/`specialUse` can be `undefined`/`{}` — always null-guard.
-- **Response validation rejects `null`** on `t.Optional(...)` fields — Elysia/TypeBox allows `undefined`, not `null`. Return `field || undefined`, never `field || null`, or the route 400s as `Bad request`.
-- **UIDVALIDITY is not stable** across moves — never assume UIDs persist; verify moves by subject not original UID.
-- **LLM**: `llm.service.js` sends `stream:false` (9router streams NDJSON otherwise); 15s timeout. Probe at boot → `LLM_PRESENT` in sqlite.
+### Live updates
+- `push.service.js` keeps **one IDLE connection per mailbox**, shared by all of that user's SSE subscribers, and closes it when the last subscriber leaves. `GET /api/v1/mail/events` streams events, with a 20s heartbeat.
+- `index.js` listens with `idleTimeout: 120` and a 32 MiB request-body limit. Bun's default idle timeout of 30s would cut off slow LLM summaries.
+
+### Gotchas
+- **Elysia** path params arrive inside `{ params }`, the body in `{ body }`, the query in `{ query }`.
+- **Elysia strips response fields not declared in the model.** Add new fields to `models/` or they silently vanish.
+- **Response validation rejects `null`** on `t.Optional(...)`. Return `field || undefined`.
+- **imapflow** `fetchOne(seq, opts)` takes a sequence number unless `{ uid: true }` is the third argument. `fetch(from:to)` ranges are sequence numbers; `msg.uid` is still the real UID.
+- **`messageMove`/`messageCopy` act on the open mailbox.** `await client.mailboxOpen(from)` first, or nothing matches.
+- **`bodyStructure`** has no flat attachments list; walk `childNodes`.
+- **imapflow** flags are a `Set` (use `toFlagsArray()`). `specialUse`, `delimiter` and `flags` may be `undefined`.
+- **imapflow errors** are rich objects; log via `logImapError` (`cmd`/`resp`/`status`).
+- **UIDs are not stable across moves.** Use `movedUids`, never the original UID.
+- **LLM:** `llm.service.js` sends `stream:false` and auto-detects Ollama vs OpenAI-compatible endpoints.
 
 ## Frontend internals
 
-- **SWR** is the data layer: `useSWR` keyed by folder, `refreshInterval: 10000`, `revalidateOnFocus: false`, paused on background tabs.
-- **Pagination**: page-based, 50/page, fixed bottom bar with numbered buttons (server-side slice — no load-more accumulation).
-- **HTML email bodies** render inside a **sandboxed iframe** (`sandbox="allow-same-origin"`, `srcDoc`) so email CSS cannot bleed into app styling. Text-only bodies render as markdown via `marked` when they look like markdown (see `looksLikeMarkdown`).
-- **Attachments**: compose sends files as base64 `content` (nodemailer attachment array). Viewer downloads via `atob` → Blob → objectURL → `<a download>`.
-- **Resizable list column**: drag the separator edge (pattern from `c4lyp5o/rip`) — `listWidth` state, `document` mousemove/up listeners, persisted to `localStorage` key `ezmail_list_width`.
-- **RequireAuth** wraps `/mail`; `/login` is public.
+- **SWR** is the data layer. INBOX refreshes every 10s, or 60s while the SSE stream is live. Polling pauses in background tabs, and `revalidateOnFocus` is off.
+- **MailPage** owns view state, selection, global shortcuts, the undo toast, the EventSource and notifications (`ezmail_notify` in localStorage).
+- **MessageList** handles list navigation keys, Shift range selection, and swipe (`useSwipe`; `swipeAction` comes from MailPage).
+- **MessageView:** HTML bodies render in a sandboxed `srcDoc` iframe wrapped by `emailDoc`, with a `<meta>` CSP from `emailCsp` that blocks remote content until the user opts in. The frame auto-sizes to its content. Text bodies that look like Markdown render through `marked` + DOMPurify.
+- **ComposeView:** prefilled by `utils/reply.js` `buildDraft`. Auto-saves to `ezmail_draft:<mailbox>` and flushes on exit; uploaded files aren't saved. Old forwarding references without the current index version are removed with a warning.
+- **Shortcuts** are ignored while typing (`utils/keyboard.js` `isTypingTarget`).
+- **Resizable list column** width is persisted in `ezmail_list_width`.
 
-## Docker
+## Tests
 
-`Dockerfile` is multi-stage:
-1. **builder** — `oven/bun:1.3.14-alpine`, installs frontend deps, `bun run build` → `/app/frontend/dist`.
-2. **prod** — `oven/bun:1.3.14-alpine` + `tzdata` + `curl`, installs `pm2`, runs `backend`, copies built client to `/app/frontend/dist`.
+- **Backend:** `bun test` in `backend/`. `bunfig.toml` preloads `tests/setup.js`, which mocks `imapflow` and `nodemailer` with `tests/helpers/fake-imap.js` / `fake-smtp.js` and points `DB_PATH` at a temporary file. `tests/helpers/http.js` calls the Elysia app in-process. Filter operations use a service-level fake; real ManageSieve and MIME workflows need manual server checks.
+- **Frontend:** Vitest + happy-dom + Testing Library. `src/test/fetch.js` `mockApi` stubs `/api` responses, and `src/test/event-source.js` fakes SSE. happy-dom can't enforce CSP or real Notifications, so check those in a browser.
 
-The backend's `config.js` sets `CLIENT_DIR = <root>/frontend/dist` and serves it via `@elysiajs/static`. **If you move the build output, keep `frontend/dist` in the image** or the app serves nothing.
+## Docker & CI
 
-`.github/workflows/docker-publish.yml` builds on push to `main` (and manual dispatch), tags `calypso666/ezmail:<version>` + `:latest`, pushes to Docker Hub, then ntfy-notifies. Requires repo secrets: `DOCKER_USERNAME`, `DOCKER_PASSWORD`, `NTFY_URL`.
-
-## Conventions checklist before a PR
-
-- [ ] Backend routes declare request/response models (OpenAPI gate passes in dev).
-- [ ] Returns the `{ success, message, data }` envelope.
-- [ ] No `null` on optional-typed response fields.
-- [ ] Frontend builds clean: `cd frontend && bun run build`.
-- [ ] Mail ops that move between folders `mailboxOpen` the source first.
+- `Dockerfile`: stage 1 builds the frontend (`oven/bun:1.4.3-alpine`, frozen lockfile). Stage 2 installs backend production deps, copies the backend and `frontend/dist`, and runs `bun start` (pm2-runtime). `config.js` serves `frontend/dist`, so keep that path. `.dockerignore` excludes tests.
+- `.github/workflows/test.yml` runs on every push and PR: frozen installs, `biome lint`, backend tests, frontend tests, build.
+- `.github/workflows/docker-publish.yml` runs on pushes to `master`. It tags `calypso666/ezmail:<package.json version>` and `:latest`, then sends an ntfy notification. It needs the secrets `DOCKER_USERNAME`, `DOCKER_PASSWORD` and `NTFY_URL`.

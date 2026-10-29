@@ -2,6 +2,13 @@ import { LLM } from "../config.js";
 import { getSetting, setSetting } from "../db.js";
 import { generalLogger as logger } from "../logger.js";
 
+// Tracks which API shape the probed server speaks, so summarizeText hits the
+// right endpoint: 9router/OpenAI-compatible vs Ollama.
+let LLM_MODE = "ollama";
+export function getLLMMode() {
+	return LLM_MODE;
+}
+
 // Probes the configured LLM server at boot and records LLM_PRESENT in sqlite.
 // Supports both standard OpenAI-compatible (GET {server}/v1/models with Bearer
 // key) and ollama (GET {server}/api/tags). Returns true/false.
@@ -13,8 +20,10 @@ export async function probeAndRecordLLM() {
 	}
 
 	const attempts = [
-		{ url: `${LLM.server.replace(/\/$/, "")}/v1/models`, auth: true },
+		// Ollama first: it also serves /v1/models, so probing that first would
+		// misdetect Ollama as OpenAI and drop `think: false`.
 		{ url: `${LLM.server.replace(/\/$/, "")}/api/tags`, auth: false },
+		{ url: `${LLM.server.replace(/\/$/, "")}/v1/models`, auth: true },
 	];
 
 	for (const { url, auth } of attempts) {
@@ -26,9 +35,10 @@ export async function probeAndRecordLLM() {
 				signal: AbortSignal.timeout(4000),
 			});
 			if (res.ok) {
+				LLM_MODE = url.includes("/v1/models") ? "openai" : "ollama";
 				setSetting("LLM_PRESENT", "true");
 				logger.info(
-					`[LLM] ✅ LLM is present at ${LLM.server} — email summarization enabled`,
+					`[LLM] ✅ LLM is present at ${LLM.server} — email summarization enabled (${LLM_MODE})`,
 				);
 				return true;
 			}
@@ -47,7 +57,8 @@ export function isLLMPresent() {
 	return getSetting("LLM_PRESENT") === "true";
 }
 
-// Summarizes a message body via the configured LLM (OpenAI-compatible chat).
+// Summarizes a message body via the configured LLM (Ollama /api/chat or
+// OpenAI-compatible /v1/chat/completions, per the mode detected at probe).
 export async function summarizeText(text) {
 	if (!isLLMPresent() || !LLM.server) {
 		return { success: false, message: "LLM not available" };
@@ -59,7 +70,8 @@ export async function summarizeText(text) {
 	}
 
 	const base = LLM.server.replace(/\/$/, "");
-	const url = `${base}/api/chat`;
+	const isOpenAI = getLLMMode() === "openai";
+	const url = isOpenAI ? `${base}/v1/chat/completions` : `${base}/api/chat`;
 	const body = {
 		model: process.env.LLM_MODEL || "qwen2.5",
 		messages: [
@@ -70,8 +82,8 @@ export async function summarizeText(text) {
 			},
 			{ role: "user", content: clean },
 		],
-		think: false,
 		stream: false,
+		...(isOpenAI ? {} : { think: false }),
 	};
 
 	try {
@@ -89,7 +101,9 @@ export async function summarizeText(text) {
 			return { success: false, message: `LLM returned ${res.status}` };
 		}
 		const data = await res.json();
-		const summary = data?.message?.content;
+		const summary = isOpenAI
+			? data?.choices?.[0]?.message?.content
+			: data?.message?.content;
 		if (!summary) {
 			return { success: false, message: "LLM returned no summary" };
 		}

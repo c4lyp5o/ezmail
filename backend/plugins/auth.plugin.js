@@ -1,25 +1,16 @@
 import { Elysia } from "elysia";
+import { getSession } from "../services/session.service.js";
 
-// Decodes the authenticated mailbox from the JWT cookie. Handlers call this
-// directly (mirroring eziarr's AuthService.me, which reads jwt + cookie itself
-// rather than trusting a derived value).
-export async function getUser(jwt, cookie) {
-	try {
-		const token = cookie.ezmail_access?.value;
-		if (!token) return null;
-		const payload = await jwt.verify(token);
-		if (!payload?.mailbox || !payload?.password) return null;
-		return { mailbox: payload.mailbox, password: payload.password };
-	} catch {
-		return null;
-	}
+export const SESSION_COOKIE = "ezmail_session";
+
+// Resolves the authenticated user ({ mailbox, password }) from the session
+// cookie, or null. Handlers call this directly rather than trusting a
+// derived value.
+export function getUser(cookie) {
+	return getSession(cookie?.[SESSION_COOKIE]?.value);
 }
 
-// Derives the authenticated user for guard hooks (ProtectorPlugin). Same
-// pattern as eziarr's AuthPlugin deriving isAdmin.
+// Derives the authenticated user for guard hooks (ProtectorPlugin).
 export const AuthPlugin = new Elysia({ name: "AuthPlugin" }).derive(
-	async ({ jwt, cookie: c }) => {
-		const user = await getUser(jwt, c);
-		return { user };
-	},
+	({ cookie }) => ({ user: getUser(cookie) }),
 );
