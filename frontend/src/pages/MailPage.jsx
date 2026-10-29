@@ -98,6 +98,7 @@ export default function MailPage() {
 	const [movePopup, setMovePopup] = useState(false);
 	const [bulkBusy, setBulkBusy] = useState(false);
 	const [composeBusy, setComposeBusy] = useState(false);
+	const [composeHasUploads, setComposeHasUploads] = useState(false);
 	const [emptyTrashOpen, setEmptyTrashOpen] = useState(false);
 	const [emptyTrashBusy, setEmptyTrashBusy] = useState(false);
 	const [settingsOpen, setSettingsOpen] = useState(false);
@@ -276,6 +277,7 @@ export default function MailPage() {
 
 	const handleLogout = async () => {
 		if (composeBusy) return;
+		if (view.type === "compose" && composeHasUploads && !window.confirm("Uploaded files are not saved in drafts. Leave anyway?")) return;
 		await logout();
 		navigate("/login", { replace: true });
 	};
@@ -414,6 +416,7 @@ export default function MailPage() {
 	// ---- folder / message selection ----
 	const selectFolder = (f) => {
 		if (composeBusy) return;
+		if (view.type === "compose" && composeHasUploads && !window.confirm("Uploaded files are not saved in drafts. Leave anyway?")) return;
 		if (f !== activeFolder) clearSelection();
 		setActiveFolder(f);
 		setView({ type: "folder" });
@@ -432,6 +435,7 @@ export default function MailPage() {
 	// remounts ComposeView so each open starts from its own initial state.
 	const openCompose = (mode, msg) => {
 		if (composeBusy) return;
+		if (view.type === "compose" && composeHasUploads && !window.confirm("Uploaded files are not saved in drafts. Leave anyway?")) return;
 		setView({
 			type: "compose",
 			key: Date.now(),
@@ -460,11 +464,12 @@ export default function MailPage() {
 
 	const openMessageWithBody = useCallback((folder, uid, msg) => {
 		if (composeBusy) return;
+		if (view.type === "compose" && composeHasUploads && !window.confirm("Uploaded files are not saved in drafts. Leave anyway?")) return;
 		setFullMessage(null); // clear previous body so no stale summary
 		setView({ type: "message", folder, uid, msg });
 		setMobilePane("reader");
 		setMobileSidebar(false);
-	}, [composeBusy]);
+	}, [composeBusy, composeHasUploads, view.type]);
 
 	// ---- global shortcuts (list navigation lives in MessageList) ----
 	const modalOpen = settingsOpen || movePopup || emptyTrashOpen || helpOpen;
@@ -947,6 +952,7 @@ export default function MailPage() {
 						onBack={handleBack}
 						onSent={() => loadFolders()}
 						onBusyChange={setComposeBusy}
+						onUploadsChange={setComposeHasUploads}
 					/>
 				)}
 				{view.type === "message" && (

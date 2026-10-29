@@ -38,13 +38,14 @@ const readBase64 = (file) =>
 
 // `initial` (from utils/reply.js) prefills a reply/forward; without it a saved
 // draft is restored.
-export default function ComposeView({ onBack, initial, onSent, onBusyChange }) {
+export default function ComposeView({ onBack, initial, onSent, onBusyChange, onUploadsChange }) {
 	const { user } = useAuth();
 	const draftKey = `ezmail_draft:${user?.mailbox || ""}`;
 	const [start] = useState(() => initial || loadDraft(draftKey) || {});
 	const [form, setForm] = useState({ ...EMPTY_FORM, ...start.form });
 	const [meta] = useState(start.meta || {}); // inReplyTo / references
 	const [attachments, setAttachments] = useState(start.attachments || []); // {filename, contentType, content(base64)}
+	useEffect(() => { onUploadsChange?.(attachments.some((a) => !a.forward)); }, [attachments, onUploadsChange]);
 	const [busy, setBusy] = useState(false);
 	useEffect(() => { onBusyChange?.(busy); }, [busy, onBusyChange]);
 	const [error, setError] = useState(start.outdatedAttachments ? "Forwarded attachments from this older draft were removed. Add them again before sending." : "");
@@ -98,6 +99,7 @@ export default function ComposeView({ onBack, initial, onSent, onBusyChange }) {
 	}, [form, meta, attachments, draftKey, sent, start.title]);
 
 	const saveBeforeBack = () => {
+		if (!sent && attachments.some((a) => !a.forward) && !window.confirm("Uploaded files are not saved in drafts. Leave anyway?")) return;
 		if (!sent && ["to", "cc", "subject", "text"].some((k) => form[k]?.trim())) {
 			try { localStorage.setItem(draftKey, JSON.stringify({ title: start.title, attachmentIndexVersion: 2, form, meta, attachments: attachments.filter((a) => a.forward) })); } catch { /* storage unavailable */ }
 		} else if (!sent) clearDraft(draftKey);
