@@ -1,5 +1,4 @@
 import { EventEmitter } from "node:events";
-import { Readable } from "node:stream";
 
 // Minimal in-memory IMAP server implementing the slice of the imapflow API
 // ezmail uses. Sequence numbers are positions in a mailbox's message array;
@@ -146,11 +145,12 @@ export class FakeImapFlow extends EventEmitter {
 		return this.select(uid, opts)[0] || false;
 	}
 
-	async download(uid, part, opts = {}) {
+	async downloadMany(uid, parts, opts = {}) {
+		const part = parts[0];
 		imap.calls.push({ cmd: "download", uid: !!opts.uid, part });
 		const message = this.select(uid, opts)[0];
 		const data = message?.parts?.[part];
-		return data ? { content: Readable.from([data]) } : {};
+		return data ? { [part]: { content: data } } : {};
 	}
 
 	// Supports { text }, { header: { name: value } } (substring, like IMAP

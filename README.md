@@ -52,7 +52,8 @@ Filters use ManageSieve with the signed-in mailbox credentials. The server must
 offer TLS and `CHECKSCRIPT`; mail remains usable if ManageSieve is unavailable.
 Active scripts are editable only when they exactly match ezmail's generated
 template. Other active scripts are shown read-only and must be managed
-externally. New scripts use new names, preserving older scripts on the server.
+externally. New scripts use new names; ezmail keeps the previous managed
+version and removes older recognized ezmail history after a successful save.
 The old `MAIL_DATA_DIR` files remain on disk and are not migrated automatically;
 back them up and migrate them manually with a ManageSieve client if needed.
 Avoid concurrent external edits while saving filters in ezmail.

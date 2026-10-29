@@ -11,6 +11,7 @@ describe("generated Sieve scripts", () => {
 		const script = generateSieveScript(rules);
 		expect(script).toContain('fileinto :create "Finance";');
 		expect(parseGeneratedScript(script)).toEqual(rules);
+		expect(parseGeneratedScript(script.slice(0, -1))).toEqual(rules);
 		expect(parseGeneratedScript(generateSieveScript([]))).toEqual([]);
 	});
 
@@ -33,7 +34,7 @@ function fakeSieve(active, scripts = {}) {
 	return {
 		active, scripts: { ...scripts }, calls: [], fail: "", errmsg: "server refused",
 		async listscripts() { return [this.active, Object.keys(this.scripts).filter((n) => n !== this.active)]; },
-		async getscript(name) { return this.scripts[name] ?? null; },
+		async getscript(name) { return this.scripts[name]?.replace(/\n$/, "") ?? null; },
 		async checkscript() { this.calls.push("check"); return this.fail !== "check"; },
 		async putscript(name, source) { this.calls.push("put"); if (this.fail === "put") return false; this.scripts[name] = source; return true; },
 		async deletescript(name) { delete this.scripts[name]; return true; },
@@ -48,6 +49,22 @@ describe("ManageSieve filter operations", () => {
 		await expect(saveFilters(client, rules, true)).rejects.toThrow("not managed");
 		expect(client.calls).toEqual([]);
 		expect(client.scripts.custom).toBe("keep;");
+	});
+
+	test("refuses activation if another client changes the active script", async () => {
+		const client = fakeSieve("original", { original: generateSieveScript([]), custom: "keep;" });
+		client.putscript = async (name, source) => { client.scripts[name] = source; client.active = "custom"; return true; };
+		await expect(saveFilters(client, rules, true)).rejects.toThrow("active script changed");
+		expect(client.active).toBe("custom");
+	});
+
+	test("prunes older generated history without touching custom scripts", async () => {
+		const old = generateSieveScript(rules);
+		const client = fakeSieve("ezmail-100-a", { "ezmail-100-a": old, "ezmail-099-b": old, "ezmail-098-c": "keep;" });
+		await saveFilters(client, [], true);
+		expect(client.scripts["ezmail-100-a"]).toBe(old);
+		expect(client.scripts["ezmail-099-b"]).toBeUndefined();
+		expect(client.scripts["ezmail-098-c"]).toBe("keep;");
 	});
 
 	for (const stage of ["check", "put", "activate"]) {

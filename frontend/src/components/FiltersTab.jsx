@@ -97,7 +97,7 @@ export default function FiltersTab({ mailbox, folders = [] }) {
 				enabled,
 			});
 			if (!res.success) throw new Error(res.message || "Save failed");
-			setRules(clean);
+			// Keep the stable client IDs used as React keys.
 			setSaved(true);
 		} catch (err) {
 			setError(err.message);
@@ -222,7 +222,7 @@ export default function FiltersTab({ mailbox, folders = [] }) {
 			{error && <p className="mt-2 text-sm text-danger">{error}</p>}
 			{saved && !error && (
 				<p className="mt-2 text-sm text-accent">
-					Saved — filters are live for new mail.
+					{enabled ? "Saved — filters are live for new mail." : "Saved — filtering is disabled."}
 				</p>
 			)}
 

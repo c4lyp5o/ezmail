@@ -67,7 +67,7 @@ ezmail/
 - **Send:** MIME is built before SMTP submission and the same bytes are appended to Sent. `savedToSent` reports filing success; `sentSavingDisabled` distinguishes `SAVE_SENT=false` from a failure after delivery.
 - **Moves/deletes** return `movedUids` (UIDPLUS) so the client can undo.
 - **Threads:** `GET /mail/message/:folder/:uid/thread` searches INBOX and Sent by `Message-ID` / `References`. A matching subject alone never links messages.
-- **Filters:** ManageSieve uses the signed-in mailbox credentials and TLS. Only scripts exactly matching ezmail's template are editable. Scripts are checked before upload, older scripts are retained, and custom active scripts are read-only. See the README for configuration and migration.
+- **Filters:** ManageSieve uses the signed-in mailbox credentials and TLS. Only scripts matching ezmail's template are editable. Scripts are checked before upload, the previous managed version is retained, and custom active scripts are read-only. See the README for configuration and migration.
 
 ### Live updates
 - `push.service.js` keeps **one IDLE connection per mailbox**, shared by all of that user's SSE subscribers, and closes it when the last subscriber leaves. `GET /api/v1/mail/events` streams events, with a 20s heartbeat.

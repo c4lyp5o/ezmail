@@ -73,11 +73,27 @@ export function parseGeneratedScript(source) {
 	if (folders.length !== rules.length) return null;
 	for (let i = 0; i < rules.length; i++) rules[i].folder = decodeSieve(folders[i][1]);
 	if (rules.some((rule) => !validRule(rule))) return null;
-	return generateSieveScript(rules) === source ? rules : null;
+	const expected = generateSieveScript(rules);
+	return expected === source || expected.slice(0, -1) === source ? rules : null;
 }
 
 const prefix = "ezmail-";
 const failure = (client, stage) => new Error(`${stage}: ${client.errmsg || client.errcode || "ManageSieve command failed"}`);
+const writes = new Map();
+
+async function serializeWrite(mailbox, fn) {
+	const key = mailbox.trim().toLowerCase();
+	const previous = writes.get(key) || Promise.resolve();
+	let release;
+	const current = new Promise((resolve) => { release = resolve; });
+	writes.set(key, current);
+	await previous;
+	try { return await fn(); }
+	finally {
+		release();
+		if (writes.get(key) === current) writes.delete(key);
+	}
+}
 
 async function withSieve(user, fn) {
 	const client = new Client(MAIL_SERVER.sieveHost, MAIL_SERVER.sievePort);
@@ -120,6 +136,11 @@ export async function saveFilters(client, rules, enabled) {
 	if (!(await client.checkscript(script))) throw failure(client, "Script validation failed");
 	const name = `${prefix}${Date.now()}-${crypto.randomUUID()}`;
 	if (!(await client.putscript(name, script))) throw failure(client, "Script upload failed");
+	const latest = await filterState(client);
+	if (latest.active !== current.active || (current.active && latest.sieveSource !== current.sieveSource)) {
+		await client.deletescript(name).catch(() => {});
+		throw new Error("The active script changed while saving; reload and try again.");
+	}
 	if (enabled) {
 		if (!(await client.setactive(name))) {
 			const err = failure(client, "Script activation failed");
@@ -127,7 +148,27 @@ export async function saveFilters(client, rules, enabled) {
 			await client.deletescript(name).catch(() => {});
 			throw err;
 		}
-	} else if (current.active && !(await client.setactive(""))) throw failure(client, "Script deactivation failed");
+	} else if (current.active && !(await client.setactive(""))) {
+		const err = failure(client, "Script deactivation failed");
+		await client.deletescript(name).catch(() => {});
+		throw err;
+	}
+	// Retain the new version and the immediately previous ezmail-managed one.
+	// Never delete a script unless both its name and its contents are ours.
+	try {
+		const listing = await client.listscripts();
+		if (listing) {
+			const [active, other] = listing;
+			const managed = other.filter((n) => n.startsWith(prefix) && n !== name && n !== current.active).sort().reverse();
+			const keep = current.active?.startsWith(prefix) ? 0 : 1;
+			for (const old of managed.slice(keep)) {
+				const source = await client.getscript(old);
+				if (old !== active && source !== null && parseGeneratedScript(source) !== null) await client.deletescript(old);
+			}
+		}
+	} catch {
+		// Filing succeeded; a later save can retry history cleanup.
+	}
 }
 
 export const FilterService = {
@@ -144,7 +185,7 @@ export const FilterService = {
 		if (!user?.mailbox || !user?.password) return status(401, { success: false, message: "Unauthorized" });
 		if (body.rules.some((rule) => !validRule(rule))) return status(400, { success: false, message: "Invalid filter rule(s)" });
 		try {
-			await withSieve(user, (client) => saveFilters(client, body.rules, body.enabled));
+			await serializeWrite(user.mailbox, () => withSieve(user, (client) => saveFilters(client, body.rules, body.enabled)));
 			return { success: true, data: { ruleCount: body.rules.length, enabled: body.enabled } };
 		} catch (err) { return status(502, { success: false, message: err.message }); }
 	},
@@ -152,7 +193,7 @@ export const FilterService = {
 		const user = await getUser(cookie);
 		if (!user?.mailbox || !user?.password) return status(401, { success: false, message: "Unauthorized" });
 		try {
-			await withSieve(user, (client) => saveFilters(client, [], false));
+			await serializeWrite(user.mailbox, () => withSieve(user, (client) => saveFilters(client, [], false)));
 			return { success: true, data: { removed: true } };
 		} catch (err) { return status(502, { success: false, message: err.message }); }
 	},

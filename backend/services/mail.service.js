@@ -168,20 +168,19 @@ function attachmentParts(structure) {
 }
 
 const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+const MAX_ENCODED_ATTACHMENT_BYTES = 36 * 1024 * 1024;
 async function loadAttachment(client, uid, part) {
-	const download = await client.download(Number(uid), part.part, { uid: true });
-	if (!download?.content) throw new Error("Attachment not found");
-	const chunks = [];
-	let size = 0;
-	for await (const chunk of download.content) {
-		size += chunk.length;
-		if (size > MAX_ATTACHMENT_BYTES) {
-			download.content.destroy();
-			throw new Error("Attachment exceeds 25 MiB limit");
-		}
-		chunks.push(chunk);
-	}
-	return Buffer.concat(chunks, size);
+	if (!Number.isFinite(part.size) || part.size > MAX_ENCODED_ATTACHMENT_BYTES)
+		throw new Error("Attachment exceeds the encoded size limit");
+	// downloadMany decodes transfer encoding without charset or flowed-text
+	// transformations, preserving the original attachment bytes.
+	const result = await client.downloadMany(Number(uid), [part.part], {
+		uid: true, maxBytes: MAX_ENCODED_ATTACHMENT_BYTES + 1,
+	});
+	const content = result?.[part.part]?.content;
+	if (!Buffer.isBuffer(content)) throw new Error("Attachment not found");
+	if (content.length > MAX_ATTACHMENT_BYTES) throw new Error("Attachment exceeds 25 MiB limit");
+	return content;
 }
 
 const attachmentUrl = (folder, uid, index) =>
@@ -218,21 +217,8 @@ function mapEnvelope(msg) {
 		date: msg.envelope?.date || msg.internalDate,
 		flags,
 		seen: flags.includes("\\Seen"),
-		attachments: countAttachments(msg.bodyStructure),
+		attachments: attachmentParts(msg.bodyStructure).length,
 	};
-}
-
-// imapflow's bodyStructure nests parts in childNodes; attachments carry a
-// disposition of "attachment"/"inline". Count them recursively.
-function countAttachments(bs) {
-	let count = 0;
-	const walk = (n) => {
-		if (!n) return;
-		if (n.disposition && /attachment|inline/i.test(n.disposition)) count++;
-		(n.childNodes || []).forEach(walk);
-	};
-	walk(bs?.childNodes ? { childNodes: bs.childNodes } : null);
-	return count;
 }
 
 // imapflow returns message flags as a Set (not an Array). Normalize to a
