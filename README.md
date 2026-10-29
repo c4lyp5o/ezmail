@@ -7,7 +7,7 @@ A self-hosted webmail client. A Bun + Elysia backend talks IMAP/SMTP to your mai
 - **Any mailbox can sign in.** Credentials are checked directly against your IMAP server; there are no ezmail accounts.
 - **Reading:** server-side pagination, search, sort, and unread counts on every folder. Conversation view built from `Message-ID` / `References` across INBOX and Sent.
 - **Live updates:** new mail arrives over IMAP IDLE, streamed to the browser with server-sent events. Optional desktop notifications and an unread count in the tab title.
-- **Writing:** compose, reply, reply-all and forward (attachments are copied on the server). Optional Markdown body. Drafts auto-save locally. A copy of each sent message is saved to Sent. Ctrl/⌘+Enter sends.
+- **Writing:** compose, reply, reply-all and forward (attachments are copied on the server). Optional Markdown body. One draft per mailbox auto-saves locally; uploaded files must be added again after leaving. A copy of each sent message is saved to Sent. Ctrl/⌘+Enter sends.
 - **Organising:** bulk select with checkboxes or Shift+arrows, move, archive, delete, mark read. Undo for moves and deletes. Swipe left on mobile to archive.
 - **Safe rendering:** HTML mail is sanitised and shown in a sandboxed iframe with a strict Content-Security-Policy. Remote images, CSS backgrounds, fonts and media stay blocked until you allow them for that message. Attachments download on demand.
 - **Security:** server-side sessions, optional passwordless TOTP login, rate-limited login and code attempts.

@@ -13,10 +13,14 @@ All notable changes to ezmail are recorded here. The format follows [Keep a Chan
 - Login discovery is rate limited, and password attempts are counted before IMAP verification.
 
 ### Added
+- Mail search is debounced and can be cleared; the sidebar shows live-update status. Move notifications remain available for ten seconds and explain when undo is unavailable.
+- Compose warns before leaving uploaded files, shows attachment sizes, and explains the local draft and attachment limits. Failed message, folder, profile, filter, and TOTP status loads offer retry.
 - TOTP users can update a changed mailbox password using their authenticator code and current password via `POST /api/v1/totp/recover`.
 - Send responses indicate when saving to Sent is disabled; the composer warns when saving fails.
 
 ### Fixed
+- Isolate message-list caches between sessions, ignore stale message responses, and surface read-marker and reader errors.
+- Preserve the latest draft on navigation and protect an in-flight send. Settings and mail dialogs manage keyboard focus; authentication labels are associated with inputs.
 - Pending TOTP re-enrollment preserves the active credentials until confirmation.
 - Preserve drafts when leaving the composer, report failed bulk actions, and release mailbox locks on flag errors.
 
