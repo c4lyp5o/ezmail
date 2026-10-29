@@ -68,7 +68,7 @@ const MessageRow = memo(function MessageRow({
 }) {
 	const isUnread = !alwaysRead && !msg.seen;
 	const isFlagged = msg.flags?.includes("\\Flagged");
-	const { dx, swiped, handlers } = useSwipe(swipe?.onSwipe);
+	const { dx, swiped, handlers } = useSwipe(swipe ? () => swipe.onSwipe(msg) : null);
 	const SwipeIcon = swipe?.label === "Archive" ? Archive : Trash2;
 
 	return (
@@ -93,7 +93,7 @@ const MessageRow = memo(function MessageRow({
 						e.preventDefault();
 						return;
 					}
-					onClick(e);
+					onClick(msg);
 				}}
 				{...handlers}
 				data-uid={msg.uid}
@@ -458,15 +458,10 @@ export default function MessageList({
 						isReading={isReading}
 						isCursor={cursor === msg.uid}
 						selected={selected?.has(msg.uid)}
-						onToggle={() => onToggleSelect(msg.uid)}
-						onClick={() => openMessage(msg)}
+						onToggle={onToggleSelect}
+						onClick={openMessage}
 						alwaysRead={alwaysRead}
-						swipe={
-							swipeAction && {
-								label: swipeAction.label,
-								onSwipe: () => swipeAction.onSwipe(msg),
-							}
-						}
+						swipe={swipeAction}
 					/>
 				))}
 			</div>

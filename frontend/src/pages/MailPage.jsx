@@ -470,6 +470,7 @@ export default function MailPage() {
 		setMobilePane("reader");
 		setMobileSidebar(false);
 	}, [composeBusy, composeHasUploads, view.type]);
+	const openListMessage = useCallback((msg) => openMessageWithBody(activeFolder, msg.uid, msg), [activeFolder, openMessageWithBody]);
 
 	// ---- global shortcuts (list navigation lives in MessageList) ----
 	const modalOpen = settingsOpen || movePopup || emptyTrashOpen || helpOpen;
@@ -852,9 +853,7 @@ export default function MailPage() {
 						selected={selected}
 						onToggleSelect={toggleSelect}
 						onToggleAll={toggleAll}
-						onOpenMessage={(msg) =>
-							openMessageWithBody(activeFolder, msg.uid, msg)
-						}
+						onOpenMessage={openListMessage}
 						alwaysRead={activeFolder === sentFolder}
 						onReady={setListState}
 						onMarkedRead={applyInboxUnseen}
