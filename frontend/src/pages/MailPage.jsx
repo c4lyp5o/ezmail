@@ -230,7 +230,7 @@ export default function MailPage() {
 	const showToast = useCallback((next) => {
 		clearTimeout(toastTimer.current);
 		setToast(next);
-		toastTimer.current = setTimeout(() => setToast(null), 6000);
+		toastTimer.current = setTimeout(() => setToast(null), 10000);
 	}, []);
 	useEffect(() => () => clearTimeout(toastTimer.current), []);
 
@@ -341,7 +341,7 @@ export default function MailPage() {
 		afterMutation();
 		const moved = res.data?.movedUids;
 		showToast({
-			text: `${plural(uids.length)} moved to ${to}`,
+			text: `${plural(uids.length)} moved to ${to}${moved?.length ? "" : "; undo unavailable from this server"}`,
 			undo: moved?.length
 				? async () => {
 						setToast(null);
