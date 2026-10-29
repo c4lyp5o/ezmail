@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import FiltersTab from "./FiltersTab.jsx";
 import ProfileTab from "./ProfileTab.jsx";
 import SecurityTab from "./SecurityTab.jsx";
+import { useDialogFocus } from "../utils/useDialogFocus.js";
 
 const TAB_IDS = ["profile", "security", "filters"];
 const pickTab = (t) => (TAB_IDS.includes(t) ? t : "security");
@@ -18,6 +19,7 @@ export default function SettingsModal({
 	initialTab,
 }) {
 	const [tab, setTab] = useState(() => pickTab(initialTab));
+	const dialogRef = useDialogFocus(open, onClose);
 
 	// Re-sync when reopened so MailPage can target a tab.
 	useEffect(() => {
@@ -42,6 +44,11 @@ export default function SettingsModal({
 			{/** biome-ignore lint/a11y/useKeyWithClickEvents: later */}
 			{/** biome-ignore lint/a11y/noStaticElementInteractions: later */}
 			<div
+				ref={dialogRef}
+				role="dialog"
+				aria-modal="true"
+				aria-label="Settings"
+				tabIndex={-1}
 				className="relative flex max-h-[85vh] w-full max-w-2xl flex-col rounded-2xl border border-hair-strong bg-panel p-6 shadow-2xl"
 				onClick={(e) => e.stopPropagation()}
 			>
