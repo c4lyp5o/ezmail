@@ -194,6 +194,7 @@ export default function MessageList({
 	const [searchInput, setSearchInput] = useState("");
 	const [page, setPage] = useState(1);
 	const [isReading, setIsReading] = useState("");
+	const [markError, setMarkError] = useState("");
 	const selectAllRef = useRef(null);
 	const listRef = useRef(null);
 	// Keyboard cursor row (follows clicks). anchorRef holds the Shift-range
@@ -268,7 +269,10 @@ export default function MessageList({
 						if (onMarkedRead) onMarkedRead(res.data?.inboxUnseen);
 						mutate();
 					})
-					.catch(() => {});
+					.catch((err) => {
+						setMarkError(err.message || "Could not mark message read");
+						mutate();
+					});
 			}
 			setCursor(msg.uid);
 			anchorRef.current = null;
@@ -428,6 +432,7 @@ export default function MessageList({
 
 			{/* Message list */}
 			<div ref={listRef} className="flex-1 overflow-y-auto">
+				{markError && <div role="alert" className="m-4 text-sm text-danger">{markError} <button type="button" onClick={() => setMarkError("")} className="underline">Dismiss</button></div>}
 				{isValidating && !messages.length && (
 					<div className="flex flex-col items-center gap-3 p-12 text-ink-muted">
 						<div className="h-6 w-6 animate-spin rounded-full border-2 border-hair-strong border-t-indigo-500" />
