@@ -34,6 +34,7 @@ import { isTypingTarget } from "../utils/keyboard.js";
 import { specialFolder } from "../utils/folders.js";
 import { buildDraft } from "../utils/reply.js";
 import { useDialogFocus } from "../utils/useDialogFocus.js";
+import { useMailEvents } from "../utils/useMailEvents.js";
 
 const SHORTCUTS = [
 	["j / k, ↑ / ↓", "Next / previous message"],
@@ -547,9 +548,8 @@ export default function MailPage() {
 	// ---- live updates: SSE fed by IMAP IDLE on INBOX ----
 	// Events are hints; we refetch. While live, list polling backs off. The
 	// browser's EventSource reconnects on its own after drops.
-	const mailEvent = useRef(null);
 	const liveRefreshTimer = useRef(null);
-	mailEvent.current = (ev) => {
+	const mailEvent = (ev) => {
 		if (ev.type === "ready") setLive(true);
 		else if (ev.type === "closed" || ev.type === "error") setLive(false);
 		else if (ev.type === "new" || ev.type === "changed") {
@@ -579,19 +579,8 @@ export default function MailPage() {
 			}
 		}
 	};
-	useEffect(() => {
-		if (typeof EventSource === "undefined") return;
-		const es = new EventSource("/api/v1/mail/events");
-		es.onmessage = (e) => {
-			try {
-				mailEvent.current(JSON.parse(e.data));
-			} catch {
-				// malformed frame; ignore
-			}
-		};
-		es.onerror = () => setLive(false);
-		return () => { es.close(); clearTimeout(liveRefreshTimer.current); liveRefreshTimer.current = null; };
-	}, []);
+	useMailEvents(mailEvent, () => setLive(false));
+	useEffect(() => () => { clearTimeout(liveRefreshTimer.current); liveRefreshTimer.current = null; }, []);
 
 	return (
 		<div className="flex h-dvh w-full overflow-x-hidden bg-canvas text-ink">
