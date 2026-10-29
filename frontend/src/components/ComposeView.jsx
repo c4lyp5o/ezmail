@@ -77,6 +77,7 @@ export default function ComposeView({ onBack, initial, onSent, onBusyChange, onU
 	}, [draftKey]);
 
 	// Debounced auto-save while typing.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: attachment changes must also schedule persistence
 	useEffect(() => {
 		if (sent) return;
 		setDraftSaved(false);
@@ -86,7 +87,7 @@ export default function ComposeView({ onBack, initial, onSent, onBusyChange, onU
 		if (!hasContent) { clearDraft(draftKey); return; }
 		const id = setTimeout(() => setDraftSaved(persistDraft(draftKey, draftRef.current)), 800);
 		return () => clearTimeout(id);
-	}, [form, meta, attachments, draftKey, sent, start.title]);
+	}, [form, attachments, draftKey, sent]);
 
 	const saveBeforeBack = () => {
 		if (!sent && attachments.some((a) => !a.forward) && !window.confirm("Uploaded files are not saved in drafts. Leave anyway?")) return;

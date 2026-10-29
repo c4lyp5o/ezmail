@@ -1002,7 +1002,6 @@ export default function MailPage() {
 					className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
 					onClick={() => setMovePopup(false)}
 				>
-					{/** biome-ignore lint/a11y/noStaticElementInteractions: later */}
 					{/** biome-ignore lint/a11y/useKeyWithClickEvents: later */}
 					<div
 						ref={moveDialogRef}
@@ -1075,7 +1074,6 @@ export default function MailPage() {
 					className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
 					onClick={() => setHelpOpen(false)}
 				>
-					{/** biome-ignore lint/a11y/noStaticElementInteractions: stop backdrop close */}
 					{/** biome-ignore lint/a11y/useKeyWithClickEvents: no keyboard action */}
 					<div
 						ref={helpDialogRef}
