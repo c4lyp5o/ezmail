@@ -108,14 +108,23 @@ export default function ComposeView({ onBack, initial, onSent, onBusyChange }) {
 
 	const onFiles = async (e) => {
 		const files = Array.from(e.target.files || []);
+		const existingBytes = attachments.filter((a) => !a.forward).reduce((n, a) => n + (a.size || 0), 0);
+		if (existingBytes + files.reduce((n, file) => n + file.size, 0) > 22 * 1024 * 1024) {
+			setError("Uploads exceed 22 MiB. The server limits the encoded request to 32 MiB.");
+			e.target.value = "";
+			return;
+		}
+		try {
 		const added = await Promise.all(
 			files.map(async (file) => ({
 				filename: file.name,
+				size: file.size,
 				contentType: file.type || "application/octet-stream",
 				content: await readBase64(file),
 			})),
 		);
 		setAttachments((prev) => [...prev, ...added]);
+		} catch (err) { setError(err.message || "Could not read attachment"); }
 		e.target.value = ""; // allow re-selecting the same file
 	};
 
@@ -136,7 +145,7 @@ export default function ComposeView({ onBack, initial, onSent, onBusyChange }) {
 			const result = await apiCall.post("/mail/send", {
 				...form,
 				...meta,
-				attachments: attachments.filter((a) => !a.forward),
+				attachments: attachments.filter((a) => !a.forward).map(({ size, ...a }) => a),
 				forwardAttachments: forwarded.length
 					? {
 							folder: forwarded[0].forward.folder,
@@ -256,6 +265,7 @@ export default function ComposeView({ onBack, initial, onSent, onBusyChange }) {
 					{/* Attachment chips */}
 					{attachments.length > 0 && (
 						<div className="flex flex-wrap gap-2 border-b border-hair px-4 py-2">
+							{attachments.some((a) => !a.forward) && <span className="w-full text-xs text-ink-muted">Uploaded files are not saved in drafts; add them again if you leave.</span>}
 							{attachments.map((a, i) => (
 								<span
 									// biome-ignore lint/suspicious/noArrayIndexKey: stateless chips; filenames can repeat
@@ -263,10 +273,12 @@ export default function ComposeView({ onBack, initial, onSent, onBusyChange }) {
 									className="flex items-center gap-1.5 rounded-md border border-hair-strong bg-panel px-2 py-1 text-xs text-ink-2"
 								>
 									<FileText className="h-3.5 w-3.5 text-accent" />
-									<span className="max-w-[180px] truncate">{a.filename}</span>
+										<span className="max-w-[180px] truncate">{a.filename}</span>
+										{typeof a.size === "number" && <span>({(a.size / 1024 / 1024).toFixed(2)} MiB)</span>}
 									<button
 										type="button"
 										onClick={() => removeAttachment(i)}
+											aria-label={`Remove ${a.filename}`}
 										className="text-ink-muted hover:text-danger"
 									>
 										<X className="h-3.5 w-3.5" />
