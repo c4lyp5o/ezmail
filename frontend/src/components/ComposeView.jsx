@@ -54,19 +54,19 @@ export default function ComposeView({ onBack, initial, onSent, onBusyChange, onU
 	const [form, setForm] = useState({ ...EMPTY_FORM, ...start.form });
 	const [meta] = useState(start.meta || {}); // inReplyTo / references
 	const [attachments, setAttachments] = useState(start.attachments || []); // {filename, contentType, content(base64)}
-	useEffect(() => { onUploadsChange?.(attachments.some((a) => !a.forward)); }, [attachments, onUploadsChange]);
 	const [busy, setBusy] = useState(false);
 	useEffect(() => { onBusyChange?.(busy); }, [busy, onBusyChange]);
 	const [error, setError] = useState(start.outdatedAttachments ? "Forwarded attachments from this older draft were removed. Add them again before sending." : "");
 	const [sent, setSent] = useState(false);
+	useEffect(() => { onUploadsChange?.(!sent && attachments.some((a) => !a.forward)); }, [attachments, onUploadsChange, sent]);
 	const [sentWarning, setSentWarning] = useState("");
 	const [draftSaved, setDraftSaved] = useState(false);
 	useEffect(() => {
-		if (!busy && !attachments.some((a) => !a.forward)) return;
+		if (!busy && (sent || !attachments.some((a) => !a.forward))) return;
 		const warn = (event) => { event.preventDefault(); event.returnValue = ""; };
 		window.addEventListener("beforeunload", warn);
 		return () => window.removeEventListener("beforeunload", warn);
-	}, [busy, attachments]);
+	}, [busy, attachments, sent]);
 	const fileRef = useRef(null);
 	const discardRef = useRef(false);
 	const draftRef = useRef(null);
