@@ -141,6 +141,11 @@ async function fetchParsed(client, folder, uid) {
 	return { msg, parsed: await simpleParser(msg.source, { keepCidLinks: true }) };
 }
 
+// imapflow leaves `part` off the root of a single-part message, but the body is
+// still addressable as part "1". Without this such messages open blank.
+const withRootPart = (structure) =>
+	structure && !structure.part && !structure.childNodes?.length ? { ...structure, part: "1" } : structure;
+
 // A single traversal defines the indexes exposed by the message API and used
 // for both downloads and forwarding. Do not descend into attached messages.
 function attachmentParts(structure) {
@@ -164,7 +169,7 @@ function attachmentParts(structure) {
 		}
 		for (const child of node.childNodes || []) visit(child, related || String(node.type).toLowerCase() === "multipart/related");
 	}
-	visit(structure);
+	visit(withRootPart(structure));
 	return parts;
 }
 
@@ -194,7 +199,7 @@ async function loadDisplayBodies(client, uid, structure, attachments) {
 		if (candidates[type] && node.part) candidates[type].push(node.part);
 		for (const child of node.childNodes || []) visit(child);
 	}
-	visit(structure);
+	visit(withRootPart(structure));
 	const bodies = { text: "", html: "" };
 	let total = 0;
 	for (const [type, key] of [["text/plain", "text"], ["text/html", "html"]]) {

@@ -36,6 +36,32 @@ describe("folders", () => {
 	});
 });
 
+describe("single-part messages", () => {
+	// imapflow omits `part` on the root node of a message with no MIME multipart.
+	test("show their body even though the root structure has no part number", async () => {
+		const uid = imap.addMessage("INBOX", {
+			subject: "plain",
+			bodyStructure: { type: "text/plain", size: 5 },
+			parts: { 1: Buffer.from("hello") },
+		});
+		const res = await get(`/message/INBOX/${uid}`);
+		expect(res.status).toBe(200);
+		expect(res.json.data.text).toBe("hello");
+		expect(res.json.data.attachments).toEqual([]);
+	});
+
+	test("a lone attachment is listed and downloadable", async () => {
+		const uid = imap.addMessage("INBOX", {
+			bodyStructure: { type: "application/pdf", size: 4, disposition: "attachment", dispositionParameters: { filename: "a.pdf" } },
+			parts: { 1: Buffer.from("%PDF") },
+		});
+		const res = await get(`/message/INBOX/${uid}`);
+		expect(res.json.data.attachments.map((a) => a.filename)).toEqual(["a.pdf"]);
+		const file = await call("GET", `/api/v1/mail/message/INBOX/${uid}/attachment/0`, { cookie });
+		expect(file.status).toBe(200);
+	});
+});
+
 describe("message list", () => {
 	const fill = (count) => {
 		for (let i = 0; i < count; i++) imap.addMessage("INBOX", { subject: `msg ${i + 1}` });
