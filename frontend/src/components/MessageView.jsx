@@ -147,7 +147,7 @@ export default function MessageView({
 		return /<img[^>]+src=["'](?:\/\/|https?:)?\/\//i.test(msg.html);
 	}, [msg?.html]);
 
-	const thisFolder = decodeURIComponent(folder || "INBOX");
+	const thisFolder = folder || "INBOX";
 
 	// Reset per-message UI (details panel, scroll) whenever a new message opens.
 	// biome-ignore lint/correctness/useExhaustiveDependencies: later
@@ -156,31 +156,25 @@ export default function MessageView({
 		setError("");
 	}, [uid, thisFolder]);
 
-	// biome-ignore lint/correctness/useExhaustiveDependencies: later
-	const load = useCallback(async () => {
+	useEffect(() => {
+		const controller = new AbortController();
 		setLoading(true);
 		setError("");
-		try {
-			const res = await apiCall.get(
-				`/mail/message/${encodeURIComponent(thisFolder)}/${uid}`,
-			);
-			setShowRemote(false);
-			setMsg(res.data || null);
-			onLoaded?.(res.data ? { ...res.data, folder: thisFolder } : null);
-		} catch (err) {
-			setError(err.message || "Failed to load message");
-			if (!initialMsg) setMsg(null);
-		} finally {
-			setLoading(false);
-		}
-	}, [thisFolder, uid, initialMsg, onLoaded]);
-
-	// Always fetch the full message (the list item is only an optimistic
-	// placeholder — it lacks the body/html/text). Without this, the detail
-	// view would show "(no body)".
-	useEffect(() => {
-		load();
-	}, [load]);
+		apiCall.get(`/mail/message/${encodeURIComponent(thisFolder)}/${uid}`, { signal: controller.signal })
+			.then((res) => {
+				if (controller.signal.aborted) return;
+				setShowRemote(false);
+				setMsg(res.data || null);
+				onLoaded?.(res.data ? { ...res.data, folder: thisFolder } : null);
+			})
+			.catch((err) => {
+				if (controller.signal.aborted) return;
+				setError(err.message || "Failed to load message");
+				setMsg(null);
+			})
+			.finally(() => { if (!controller.signal.aborted) setLoading(false); });
+		return () => controller.abort();
+	}, [thisFolder, uid, onLoaded, setShowRemote]);
 
 	// Conversation (Message-ID / References), fetched once the message is in.
 	const [thread, setThread] = useState([]);
@@ -273,6 +267,7 @@ export default function MessageView({
 
 	return (
 		<div className="flex h-full w-full flex-col overflow-y-auto overflow-x-hidden">
+			{error && <div role="alert" className="m-4 rounded-lg border border-danger/20 bg-danger/10 p-3 text-sm text-danger">{error}</div>}
 			{/* Toolbar */}
 			<div className="flex h-14 shrink-0 items-center gap-2 border-b border-hair pl-14 pr-4 md:pl-4">
 				<button
