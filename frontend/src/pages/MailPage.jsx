@@ -33,6 +33,7 @@ import { apiCall } from "../utils/apiCall.js";
 import { isTypingTarget } from "../utils/keyboard.js";
 import { specialFolder } from "../utils/folders.js";
 import { buildDraft } from "../utils/reply.js";
+import { useDialogFocus } from "../utils/useDialogFocus.js";
 
 const SHORTCUTS = [
 	["j / k, ↑ / ↓", "Next / previous message"],
@@ -104,6 +105,8 @@ export default function MailPage() {
 	const [settingsOpen, setSettingsOpen] = useState(false);
 	const [showRemote, setShowRemote] = useState(false);
 	const [helpOpen, setHelpOpen] = useState(false);
+	const moveDialogRef = useDialogFocus(movePopup, () => setMovePopup(false));
+	const helpDialogRef = useDialogFocus(helpOpen, () => setHelpOpen(false));
 	const [toast, setToast] = useState(null); // { text, undo?: fn }
 	const toastTimer = useRef(null);
 	const [live, setLive] = useState(false); // SSE stream connected
@@ -1002,6 +1005,11 @@ export default function MailPage() {
 					{/** biome-ignore lint/a11y/noStaticElementInteractions: later */}
 					{/** biome-ignore lint/a11y/useKeyWithClickEvents: later */}
 					<div
+						ref={moveDialogRef}
+						role="dialog"
+						aria-modal="true"
+						aria-label="Move to folder"
+						tabIndex={-1}
 						className="w-80 rounded-xl border border-hair-strong bg-panel p-4 shadow-xl"
 						onClick={(e) => e.stopPropagation()}
 					>
@@ -1070,6 +1078,11 @@ export default function MailPage() {
 					{/** biome-ignore lint/a11y/noStaticElementInteractions: stop backdrop close */}
 					{/** biome-ignore lint/a11y/useKeyWithClickEvents: no keyboard action */}
 					<div
+						ref={helpDialogRef}
+						role="dialog"
+						aria-modal="true"
+						aria-label="Keyboard shortcuts"
+						tabIndex={-1}
 						className="w-[26rem] max-w-[calc(100vw-2rem)] rounded-xl border border-hair-strong bg-panel p-5 shadow-xl"
 						onClick={(e) => e.stopPropagation()}
 					>
