@@ -13,8 +13,8 @@ export default function ProfileTab({ mailbox }) {
 		apiCall
 			.get("/profile")
 			.then((res) => setName(res.data?.displayName || ""))
-			.catch(() => {})
-			.finally(() => setLoaded(true));
+			.then(() => setLoaded(true))
+			.catch((err) => setNotice(err.message || "Could not load profile"));
 	}, []);
 
 	const save = async (e) => {

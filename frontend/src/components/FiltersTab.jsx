@@ -138,7 +138,7 @@ export default function FiltersTab({ mailbox, folders = [] }) {
 			</div>
 
 			{conflict && <div role="alert" className="mt-3 text-sm text-danger">The active script is not an ezmail-generated script. It is read-only here; manage it externally.<pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap">{source}</pre></div>}
-			<fieldset disabled={conflict || loadFailed}>
+			<fieldset disabled={conflict || loadFailed || busy || removing}>
 			<label className="mt-3 flex cursor-pointer items-center gap-2 text-sm text-ink-2">
 				<input
 					type="checkbox"
