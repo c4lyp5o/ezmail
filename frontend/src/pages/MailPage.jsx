@@ -96,6 +96,7 @@ export default function MailPage() {
 	const [selected, setSelected] = useState(() => new Set()); // Set of UIDs, persists across opens
 	const [movePopup, setMovePopup] = useState(false);
 	const [bulkBusy, setBulkBusy] = useState(false);
+	const [composeBusy, setComposeBusy] = useState(false);
 	const [emptyTrashOpen, setEmptyTrashOpen] = useState(false);
 	const [emptyTrashBusy, setEmptyTrashBusy] = useState(false);
 	const [settingsOpen, setSettingsOpen] = useState(false);
@@ -265,6 +266,7 @@ export default function MailPage() {
 	}, [user?.mailbox]);
 
 	const handleLogout = async () => {
+		if (composeBusy) return;
 		await logout();
 		navigate("/login", { replace: true });
 	};
@@ -402,6 +404,7 @@ export default function MailPage() {
 
 	// ---- folder / message selection ----
 	const selectFolder = (f) => {
+		if (composeBusy) return;
 		if (f !== activeFolder) clearSelection();
 		setActiveFolder(f);
 		setView({ type: "folder" });
@@ -419,6 +422,7 @@ export default function MailPage() {
 	// New message, or reply / replyAll / forward of a loaded message. The key
 	// remounts ComposeView so each open starts from its own initial state.
 	const openCompose = (mode, msg) => {
+		if (composeBusy) return;
 		setView({
 			type: "compose",
 			key: Date.now(),
@@ -446,11 +450,12 @@ export default function MailPage() {
 	const [fullMessage, setFullMessage] = useState(null);
 
 	const openMessageWithBody = useCallback((folder, uid, msg) => {
+		if (composeBusy) return;
 		setFullMessage(null); // clear previous body so no stale summary
 		setView({ type: "message", folder, uid, msg });
 		setMobilePane("reader");
 		setMobileSidebar(false);
-	}, []);
+	}, [composeBusy]);
 
 	// ---- global shortcuts (list navigation lives in MessageList) ----
 	const modalOpen = settingsOpen || movePopup || emptyTrashOpen || helpOpen;
@@ -921,6 +926,7 @@ export default function MailPage() {
 						initial={view.initial}
 						onBack={handleBack}
 						onSent={() => loadFolders()}
+						onBusyChange={setComposeBusy}
 					/>
 				)}
 				{view.type === "message" && (

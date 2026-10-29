@@ -38,7 +38,7 @@ const readBase64 = (file) =>
 
 // `initial` (from utils/reply.js) prefills a reply/forward; without it a saved
 // draft is restored.
-export default function ComposeView({ onBack, initial, onSent }) {
+export default function ComposeView({ onBack, initial, onSent, onBusyChange }) {
 	const { user } = useAuth();
 	const draftKey = `ezmail_draft:${user?.mailbox || ""}`;
 	const [start] = useState(() => initial || loadDraft(draftKey) || {});
@@ -46,11 +46,22 @@ export default function ComposeView({ onBack, initial, onSent }) {
 	const [meta] = useState(start.meta || {}); // inReplyTo / references
 	const [attachments, setAttachments] = useState(start.attachments || []); // {filename, contentType, content(base64)}
 	const [busy, setBusy] = useState(false);
+	useEffect(() => { onBusyChange?.(busy); }, [busy, onBusyChange]);
 	const [error, setError] = useState(start.outdatedAttachments ? "Forwarded attachments from this older draft were removed. Add them again before sending." : "");
 	const [sent, setSent] = useState(false);
 	const [sentWarning, setSentWarning] = useState("");
 	const [draftSaved, setDraftSaved] = useState(false);
 	const fileRef = useRef(null);
+	const discardRef = useRef(false);
+	const draftRef = useRef(null);
+	draftRef.current = { title: start.title, attachmentIndexVersion: 2, form, meta, attachments: attachments.filter((a) => a.forward) };
+	useEffect(() => () => {
+		if (discardRef.current) return;
+		const draft = draftRef.current;
+		if (["to", "cc", "subject", "text"].some((k) => draft.form[k]?.trim())) {
+			try { localStorage.setItem(draftKey, JSON.stringify(draft)); } catch { /* storage unavailable */ }
+		}
+	}, [draftKey]);
 
 	// Debounced auto-save while typing.
 	useEffect(() => {
@@ -88,6 +99,7 @@ export default function ComposeView({ onBack, initial, onSent }) {
 	};
 
 	const discard = () => {
+		discardRef.current = true;
 		clearDraft(draftKey);
 		onBack?.();
 	};
@@ -134,6 +146,7 @@ export default function ComposeView({ onBack, initial, onSent }) {
 					: undefined,
 			});
 			if (result.data?.savedToSent === false && !result.data?.sentSavingDisabled) setSentWarning("The message was sent, but could not be saved to Sent.");
+			discardRef.current = true;
 			clearDraft(draftKey);
 			setSent(true);
 			onSent?.();
@@ -152,6 +165,7 @@ export default function ComposeView({ onBack, initial, onSent }) {
 				<button
 					type="button"
 					onClick={saveBeforeBack}
+					disabled={busy}
 					className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white transition hover:bg-accent"
 				>
 					Back to inbox
@@ -167,6 +181,7 @@ export default function ComposeView({ onBack, initial, onSent }) {
 				<button
 					type="button"
 					onClick={saveBeforeBack}
+					disabled={busy}
 					className="flex items-center gap-1 rounded-lg px-2 py-1 text-sm text-ink-muted transition hover:bg-hover hover:text-ink-2"
 				>
 					<ArrowLeft className="h-4 w-4" />
@@ -182,6 +197,7 @@ export default function ComposeView({ onBack, initial, onSent }) {
 				<button
 					type="button"
 					onClick={discard}
+					disabled={busy}
 					title="Discard draft"
 					className="rounded-lg p-2 text-ink-muted transition hover:bg-danger/10 hover:text-danger"
 				>

@@ -62,6 +62,14 @@ describe("drafts", () => {
 		expect(onBack).toHaveBeenCalled();
 	});
 
+	test("unmounting immediately flushes the latest draft", () => {
+		vi.useFakeTimers();
+		const { unmount } = render(<ComposeView onBack={() => {}} />);
+		type("Subject", "Not yet debounced");
+		unmount();
+		expect(JSON.parse(localStorage.getItem(KEY)).form.subject).toBe("Not yet debounced");
+	});
+
 	test("clearing the last content removes a saved draft", () => {
 		localStorage.setItem(KEY, JSON.stringify({ form: { subject: "Old" } }));
 		render(<ComposeView onBack={() => {}} />);
