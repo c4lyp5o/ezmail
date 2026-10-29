@@ -28,6 +28,15 @@ function clearDraft(key) {
 	}
 }
 
+function persistDraft(key, draft) {
+	if (!["to", "cc", "subject", "text"].some((k) => draft.form[k]?.trim())) {
+		clearDraft(key);
+		return false;
+	}
+	try { localStorage.setItem(key, JSON.stringify(draft)); return true; }
+	catch { return false; }
+}
+
 const readBase64 = (file) =>
 	new Promise((resolve, reject) => {
 		const reader = new FileReader();
@@ -64,10 +73,7 @@ export default function ComposeView({ onBack, initial, onSent, onBusyChange, onU
 	draftRef.current = { title: start.title, attachmentIndexVersion: 2, form, meta, attachments: attachments.filter((a) => a.forward) };
 	useEffect(() => () => {
 		if (discardRef.current) return;
-		const draft = draftRef.current;
-		if (["to", "cc", "subject", "text"].some((k) => draft.form[k]?.trim())) {
-			try { localStorage.setItem(draftKey, JSON.stringify(draft)); } catch { /* storage unavailable */ }
-		}
+		persistDraft(draftKey, draftRef.current);
 	}, [draftKey]);
 
 	// Debounced auto-save while typing.
@@ -78,31 +84,13 @@ export default function ComposeView({ onBack, initial, onSent, onBusyChange, onU
 			form[k]?.trim(),
 		);
 		if (!hasContent) { clearDraft(draftKey); return; }
-		const id = setTimeout(() => {
-			try {
-				localStorage.setItem(
-					draftKey,
-					JSON.stringify({
-						title: start.title,
-						attachmentIndexVersion: 2,
-						form,
-						meta,
-						attachments: attachments.filter((a) => a.forward),
-					}),
-				);
-				setDraftSaved(true);
-			} catch {
-				// storage full/unavailable; draft just isn't kept
-			}
-		}, 800);
+		const id = setTimeout(() => setDraftSaved(persistDraft(draftKey, draftRef.current)), 800);
 		return () => clearTimeout(id);
 	}, [form, meta, attachments, draftKey, sent, start.title]);
 
 	const saveBeforeBack = () => {
 		if (!sent && attachments.some((a) => !a.forward) && !window.confirm("Uploaded files are not saved in drafts. Leave anyway?")) return;
-		if (!sent && ["to", "cc", "subject", "text"].some((k) => form[k]?.trim())) {
-			try { localStorage.setItem(draftKey, JSON.stringify({ title: start.title, attachmentIndexVersion: 2, form, meta, attachments: attachments.filter((a) => a.forward) })); } catch { /* storage unavailable */ }
-		} else if (!sent) clearDraft(draftKey);
+		if (!sent) persistDraft(draftKey, draftRef.current);
 		onBack?.();
 	};
 
