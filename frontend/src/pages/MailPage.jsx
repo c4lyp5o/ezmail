@@ -125,7 +125,10 @@ export default function MailPage() {
 
 	// Growable message-list column width (drag the separator edge).
 	const [listWidth, setListWidth] = useState(
-		() => Number(localStorage.getItem("ezmail_list_width")) || 320,
+		() => {
+			try { return Number(localStorage.getItem("ezmail_list_width")) || 320; }
+			catch { return 320; }
+		},
 	);
 	const [isDraggingList, setIsDraggingList] = useState(false);
 	// Records where the drag began so the width tracks the mouse 1:1 without a
