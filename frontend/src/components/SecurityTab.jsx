@@ -18,8 +18,10 @@ export default function SecurityTab({ mailbox }) {
 		try {
 			const res = await apiCall.post("/totp/status", { mailbox });
 			setStatus(res.data);
-		} catch {
-			setStatus({ enrolled: false, enabled: false });
+			setError("");
+		} catch (err) {
+			setStatus(null);
+			setError(err.message || "Could not load TOTP status");
 		}
 	};
 
@@ -42,7 +44,7 @@ export default function SecurityTab({ mailbox }) {
 			setStep("qr");
 			setPassword("");
 		} catch (err) {
-			setError(err.response?.data?.message || "Could not start enrollment");
+			setError(err.message || "Could not start enrollment");
 		} finally {
 			setBusy(false);
 		}
@@ -64,7 +66,7 @@ export default function SecurityTab({ mailbox }) {
 			setCode("");
 		} catch (err) {
 			setError(
-				err.response?.data?.message || "Verification failed. Try again.",
+				err.message || "Verification failed. Try again.",
 			);
 		} finally {
 			setBusy(false);
@@ -87,7 +89,7 @@ export default function SecurityTab({ mailbox }) {
 			setStep("idle");
 			setQrDraft(null);
 		} catch (err) {
-			setError(err.response?.data?.message || "Could not disable TOTP");
+			setError(err.message || "Could not disable TOTP");
 		} finally {
 			setBusy(false);
 		}
@@ -104,6 +106,7 @@ export default function SecurityTab({ mailbox }) {
 					{error}
 				</div>
 			)}
+			{!status && error && <button type="button" onClick={loadStatus} className="mb-4 text-sm text-accent underline">Retry</button>}
 
 			{/* Status summary */}
 			{status?.enabled ? (
@@ -127,13 +130,6 @@ export default function SecurityTab({ mailbox }) {
 					TOTP is partially set up. Scan a fresh QR to finish, or disable to
 					discard.
 					<div className="mt-3 flex gap-2">
-						<button
-							type="button"
-							onClick={() => setStep("qr")}
-							className="rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-white transition hover:bg-accent"
-						>
-							Resume setup
-						</button>
 						<button
 							type="button"
 							onClick={handleDisable}
