@@ -3,7 +3,7 @@ import { useAuth } from "../context/auth.jsx";
 import { apiCall } from "../utils/apiCall.js";
 import { ArrowLeft, Send, Paperclip, X, FileText, Trash2 } from "lucide-react";
 
-const EMPTY_FORM = { to: "", cc: "", subject: "", text: "", markdown: false };
+const EMPTY_FORM = { to: "", cc: "", bcc: "", subject: "", text: "", markdown: false };
 
 // One auto-saved draft per mailbox, kept in localStorage. Uploaded files are
 // not saved (they can blow the storage quota); forwarded ones are just
@@ -29,7 +29,7 @@ function clearDraft(key) {
 }
 
 function persistDraft(key, draft) {
-	if (!["to", "cc", "subject", "text"].some((k) => draft.form[k]?.trim())) {
+	if (!["to", "cc", "bcc", "subject", "text"].some((k) => draft.form[k]?.trim())) {
 		clearDraft(key);
 		return false;
 	}
@@ -81,7 +81,7 @@ export default function ComposeView({ onBack, initial, onSent, onBusyChange, onU
 	useEffect(() => {
 		if (sent) return;
 		setDraftSaved(false);
-		const hasContent = ["to", "cc", "subject", "text"].some((k) =>
+		const hasContent = ["to", "cc", "bcc", "subject", "text"].some((k) =>
 			form[k]?.trim(),
 		);
 		if (!hasContent) { clearDraft(draftKey); return; }
@@ -250,6 +250,14 @@ export default function ComposeView({ onBack, initial, onSent, onBusyChange, onU
 						value={form.cc}
 						onChange={set("cc")}
 						placeholder="cc@example.com"
+						type="email"
+						multiple
+					/>
+					<Field
+						label="Bcc"
+						value={form.bcc}
+						onChange={set("bcc")}
+						placeholder="hidden recipients"
 						type="email"
 						multiple
 					/>

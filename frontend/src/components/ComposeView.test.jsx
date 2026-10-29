@@ -165,6 +165,14 @@ describe("sending", () => {
 		]);
 	});
 
+	test("sends Bcc recipients and keeps them in the saved draft", async () => {
+		render(<ComposeView onBack={() => {}} initial={{ form: { to: "bob@x.io", bcc: "quiet@x.io" } }} />);
+		expect(screen.getByLabelText("Bcc").value).toBe("quiet@x.io");
+		fireEvent.click(screen.getByText("Send"));
+		await screen.findByText(/Message sent/);
+		expect(calls[0].body).toMatchObject({ to: "bob@x.io", bcc: "quiet@x.io" });
+	});
+
 	test("no recipient: error, no request", () => {
 		render(<ComposeView onBack={() => {}} />);
 		fireEvent.click(screen.getByText("Send"));

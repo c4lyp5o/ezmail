@@ -192,6 +192,7 @@ export const MailModel = {
 	sendMessageBody: t.Object({
 		to: t.String(),
 		cc: t.Optional(t.String()),
+		bcc: t.Optional(t.String()),
 		subject: t.Optional(t.String()),
 		text: t.Optional(t.String()),
 		html: t.Optional(t.String()),

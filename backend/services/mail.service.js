@@ -754,6 +754,7 @@ export const MailService = {
 				},
 				to: body.to,
 				cc: body.cc || undefined,
+				bcc: body.bcc || undefined,
 				subject: body.subject || "",
 				text: body.text || "",
 				html: html || undefined,

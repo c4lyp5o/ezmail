@@ -276,6 +276,13 @@ describe("send", () => {
 		expect(raw).toContain("In-Reply-To: <m2@x.io>");
 	});
 
+	test("sends to Bcc recipients without exposing them in the message", async () => {
+		const res = await post("/send", { ...mail, bcc: "hidden@x.io" });
+		expect(res.status).toBe(200);
+		expect(smtp.sent[0].mail.bcc).toBe("hidden@x.io");
+		expect(smtp.sent[0].mail.raw.toString()).not.toContain("hidden@x.io");
+	});
+
 	test("SAVE_SENT=false skips the Sent copy", async () => {
 		process.env.SAVE_SENT = "false";
 		try {
