@@ -151,7 +151,6 @@ export default function SecurityTab({ mailbox }) {
 			{step === "idle" && status && !status.enabled && (
 				<form onSubmit={handleStart} className="space-y-3">
 					<div>
-						{/** biome-ignore lint/a11y/noLabelWithoutControl: later */}
 						<label htmlFor="totp-password" className="mb-1 block text-sm font-medium text-ink-muted">
 							Mailbox password (one-time, to verify your account)
 						</label>
@@ -194,7 +193,6 @@ export default function SecurityTab({ mailbox }) {
 					</p>
 					<form onSubmit={handleComplete} className="space-y-3">
 						<div>
-							{/** biome-ignore lint/a11y/noLabelWithoutControl: later */}
 							<label htmlFor="totp-enroll-code" className="mb-1 block text-sm font-medium text-ink-muted">
 								Enter the 6-digit code
 							</label>

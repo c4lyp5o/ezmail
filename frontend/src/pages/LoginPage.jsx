@@ -89,7 +89,6 @@ export default function LoginPage() {
 				{needsCode ? (
 					<form onSubmit={submitCode} className="space-y-4">
 						<div>
-							{/** biome-ignore lint/a11y/noLabelWithoutControl: later */}
 								<label htmlFor="login-code" className="mb-1.5 block text-sm font-medium text-ink-2">
 								Authenticator code
 							</label>
@@ -146,7 +145,6 @@ export default function LoginPage() {
 				) : (
 					<form onSubmit={submit} className="space-y-4">
 						<div>
-							{/** biome-ignore lint/a11y/noLabelWithoutControl: later */}
 								<label htmlFor="login-mailbox" className="mb-1.5 block text-sm font-medium text-ink-2">
 								Email address
 							</label>
@@ -164,7 +162,6 @@ export default function LoginPage() {
 						</div>
 
 						<div>
-							{/** biome-ignore lint/a11y/noLabelWithoutControl: later */}
 								<label htmlFor="login-password" className="mb-1.5 block text-sm font-medium text-ink-2">
 								Password
 							</label>

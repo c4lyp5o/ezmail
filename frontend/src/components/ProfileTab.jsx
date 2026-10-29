@@ -1,5 +1,5 @@
 import { Loader2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { apiCall } from "../utils/apiCall.js";
 
 // Profile tab: the display name recipients see in the From header.
@@ -9,15 +9,15 @@ export default function ProfileTab({ mailbox }) {
 	const [busy, setBusy] = useState(false);
 	const [notice, setNotice] = useState("");
 
-	const load = () => {
+	const load = useCallback(() => {
 		setNotice("");
 		return apiCall
 			.get("/profile")
 			.then((res) => setName(res.data?.displayName || ""))
 			.then(() => setLoaded(true))
 			.catch((err) => setNotice(err.message || "Could not load profile"));
-	};
-	useEffect(() => { load(); }, []);
+	}, []);
+	useEffect(() => { load(); }, [load]);
 
 	const save = async (e) => {
 		e.preventDefault();

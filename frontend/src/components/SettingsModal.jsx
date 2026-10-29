@@ -42,7 +42,6 @@ export default function SettingsModal({
 			onClick={onClose}
 		>
 			{/** biome-ignore lint/a11y/useKeyWithClickEvents: later */}
-			{/** biome-ignore lint/a11y/noStaticElementInteractions: later */}
 			<div
 				ref={dialogRef}
 				role="dialog"
