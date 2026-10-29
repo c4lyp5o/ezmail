@@ -25,6 +25,7 @@ const keyFor = (mailbox) => {
 		verifyMailbox: `totp:mailbox:${k}`,
 		pendingSecret: `totp:pending-secret:${k}`,
 		pendingPass: `totp:pending-pass:${k}`,
+		lastStep: `totp:last-step:${k}`,
 	};
 };
 
@@ -95,7 +96,9 @@ export function totpStatus(mailbox) {
 
 // Login: verify a TOTP code for passwordless access. Returns the stored,
 // decrypted mailbox password on success (for the IMAP proxy) or null.
-export function verifyLoginCode(mailbox, token) {
+// A code is single-use: its 30s time step must be newer than the last one a
+// successful login consumed ({ consume: true }), so a captured code can't be replayed.
+export function verifyLoginCode(mailbox, token, { consume = false } = {}) {
 	const k = keyFor(mailbox);
 	if (getSetting(k.enabled) !== "true") return { ok: false, reason: "not-enabled" };
 	const secret = getSetting(k.secret);
@@ -103,6 +106,9 @@ export function verifyLoginCode(mailbox, token) {
 
 	const delta = totpFor(mailbox, secret).validate({ token, window: 1 });
 	if (delta === null) return { ok: false, reason: "invalid-code" };
+	const step = Math.floor(Date.now() / 30_000) + delta;
+	if (step <= Number(getSetting(k.lastStep) || 0)) return { ok: false, reason: "invalid-code" };
+	if (consume) setSetting(k.lastStep, String(step));
 
 	const enc = getSetting(k.passEnc);
 	const password = enc ? decryptSecret(enc) : null;
@@ -125,4 +131,5 @@ export function disableTotp(mailbox) {
 	deleteSetting(k.verifyMailbox);
 	deleteSetting(k.pendingSecret);
 	deleteSetting(k.pendingPass);
+	deleteSetting(k.lastStep);
 }

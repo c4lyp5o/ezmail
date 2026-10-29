@@ -75,3 +75,16 @@ export const codeLimiter = createLimiter({ max: 5, windowMs: 15 * MINUTE });
 export const loginLimiter = createLimiter({ max: 10, windowMs: 15 * MINUTE });
 
 export const limitKey = (mailbox) => String(mailbox).toLowerCase().trim();
+
+// Failures from all clients combined: a high ceiling that stops distributed
+// guessing without letting one client lock a mailbox out (see clientKey).
+export const mailboxLimiter = createLimiter({ max: 100, windowMs: 15 * MINUTE });
+
+// Per-client limiter key. Behind a reverse proxy set TRUST_PROXY=true so the
+// address the proxy appended to X-Forwarded-For is used; otherwise every
+// client shares the proxy's address and one person's failures lock everyone.
+export function clientKey({ request, server }, mailbox) {
+	const forwarded = process.env.TRUST_PROXY === "true" && request.headers.get("x-forwarded-for");
+	const ip = (forwarded ? forwarded.split(",").at(-1).trim() : server?.requestIP?.(request)?.address) || "unknown";
+	return `${ip}|${limitKey(mailbox)}`;
+}

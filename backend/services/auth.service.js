@@ -12,7 +12,7 @@ import {
 	disableTotp,
 	updateTotpPassword,
 } from "./totp.service.js";
-import { codeLimiter, discoveryLimiter, limitKey, loginLimiter } from "./rate-limit.service.js";
+import { clientKey, codeLimiter, discoveryLimiter, limitKey, loginLimiter, mailboxLimiter } from "./rate-limit.service.js";
 import { createSession, deleteSession } from "./session.service.js";
 import { refreshFallbackPassword } from "./filter-fallback.service.js";
 
@@ -96,13 +96,14 @@ async function verifyImap(mailbox, password) {
 export const AuthService = {
 	// Steps truthfully: { totp: true } when the mailbox has TOTP enabled (tell the
 	// client to proceed to the code screen), otherwise logs straight in.
-	login: async ({ body, cookie, status, set }) => {
+	login: async (ctx) => {
+		const { body, cookie, status, set } = ctx;
 		const { mailbox, password, rememberMe } = body;
 		if (!mailbox) {
 			return status(400, { success: false, message: "Mailbox is required" });
 		}
 
-		const discoveryKey = limitKey(mailbox);
+		const discoveryKey = clientKey(ctx, mailbox);
 		const discoveryWait = discoveryLimiter.retryAfter(discoveryKey);
 		if (discoveryWait) return tooManyAttempts(status, set, discoveryWait);
 		discoveryLimiter.fail(discoveryKey);
@@ -120,18 +121,23 @@ export const AuthService = {
 			});
 		}
 
-		const key = limitKey(mailbox);
-		const attempt = loginLimiter.reserve(key);
+		const wide = limitKey(mailbox);
+		const wideWait = mailboxLimiter.retryAfter(wide);
+		if (wideWait) return tooManyAttempts(status, set, wideWait);
+		const attempt = loginLimiter.reserve(discoveryKey);
 		if (attempt.wait) return tooManyAttempts(status, set, attempt.wait);
 		const ok = await verifyImap(mailbox, password);
 		attempt.settle(ok);
 		if (!ok) {
+			mailboxLimiter.fail(wide);
 			return status(401, {
 				success: false,
 				message: "Username or password is incorrect",
 			});
 		}
 
+		discoveryLimiter.reset(discoveryKey);
+		mailboxLimiter.reset(wide);
 		startSession({ cookie, mailbox, password, rememberMe: !!rememberMe });
 		return {
 			success: true,
@@ -154,7 +160,7 @@ export const AuthService = {
 		const wait = codeLimiter.retryAfter(key);
 		if (wait) return tooManyAttempts(status, set, wait);
 
-		const res = verifyLoginCode(mailbox, String(code));
+		const res = verifyLoginCode(mailbox, String(code), { consume: true });
 		if (!res.ok) {
 			codeLimiter.fail(key);
 			const msg =
@@ -197,7 +203,7 @@ export const AuthService = {
 			attempt.settle(false);
 			return status(401, { success: false, message: "Invalid code or mailbox password" });
 		}
-		if (!verifyLoginCode(mailbox, String(code)).ok) {
+		if (!verifyLoginCode(mailbox, String(code), { consume: true }).ok) {
 			attempt.settle(false);
 			return status(401, { success: false, message: "Invalid code or mailbox password" });
 		}
