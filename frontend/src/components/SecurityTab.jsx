@@ -152,10 +152,11 @@ export default function SecurityTab({ mailbox }) {
 				<form onSubmit={handleStart} className="space-y-3">
 					<div>
 						{/** biome-ignore lint/a11y/noLabelWithoutControl: later */}
-						<label className="mb-1 block text-sm font-medium text-ink-muted">
+						<label htmlFor="totp-password" className="mb-1 block text-sm font-medium text-ink-muted">
 							Mailbox password (one-time, to verify your account)
 						</label>
 						<input
+							id="totp-password"
 							type="password"
 							value={password}
 							onChange={(e) => setPassword(e.target.value)}
@@ -194,10 +195,11 @@ export default function SecurityTab({ mailbox }) {
 					<form onSubmit={handleComplete} className="space-y-3">
 						<div>
 							{/** biome-ignore lint/a11y/noLabelWithoutControl: later */}
-							<label className="mb-1 block text-sm font-medium text-ink-muted">
+							<label htmlFor="totp-enroll-code" className="mb-1 block text-sm font-medium text-ink-muted">
 								Enter the 6-digit code
 							</label>
 							<input
+								id="totp-enroll-code"
 								type="text"
 								value={code}
 								onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}

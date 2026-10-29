@@ -90,10 +90,11 @@ export default function LoginPage() {
 					<form onSubmit={submitCode} className="space-y-4">
 						<div>
 							{/** biome-ignore lint/a11y/noLabelWithoutControl: later */}
-							<label className="mb-1.5 block text-sm font-medium text-ink-2">
+								<label htmlFor="login-code" className="mb-1.5 block text-sm font-medium text-ink-2">
 								Authenticator code
 							</label>
 							<input
+									id="login-code"
 								type="text"
 								value={code}
 								onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
@@ -146,10 +147,11 @@ export default function LoginPage() {
 					<form onSubmit={submit} className="space-y-4">
 						<div>
 							{/** biome-ignore lint/a11y/noLabelWithoutControl: later */}
-							<label className="mb-1.5 block text-sm font-medium text-ink-2">
+								<label htmlFor="login-mailbox" className="mb-1.5 block text-sm font-medium text-ink-2">
 								Email address
 							</label>
 							<input
+									id="login-mailbox"
 								type="email"
 								value={mailbox}
 								onChange={(e) => setMailbox(e.target.value)}
@@ -163,10 +165,11 @@ export default function LoginPage() {
 
 						<div>
 							{/** biome-ignore lint/a11y/noLabelWithoutControl: later */}
-							<label className="mb-1.5 block text-sm font-medium text-ink-2">
+								<label htmlFor="login-password" className="mb-1.5 block text-sm font-medium text-ink-2">
 								Password
 							</label>
 							<input
+									id="login-password"
 								type="password"
 								value={password}
 								onChange={(e) => setPassword(e.target.value)}
