@@ -590,6 +590,7 @@ export default function MailPage() {
 			<button
 				type="button"
 				onClick={() => setMobileSidebar(true)}
+				disabled={composeBusy}
 				className="fixed left-3 top-1.5 z-30 flex h-10 w-10 items-center justify-center rounded-lg border border-hair bg-panel text-ink-2 shadow-lg md:hidden"
 				aria-label="Open folders"
 			>
@@ -598,6 +599,7 @@ export default function MailPage() {
 
 			{/* Sidebar */}
 			<aside
+				inert={composeBusy || undefined}
 				className={`fixed inset-y-0 left-0 z-40 flex w-60 shrink-0 flex-col border-r border-hair bg-panel/95 backdrop-blur transition-transform duration-200 md:static md:translate-x-0 md:bg-panel/60 ${
 					mobileSidebar ? "translate-x-0" : "-translate-x-full"
 				}`}
@@ -694,6 +696,7 @@ export default function MailPage() {
 
 			{/* Message list column — resizable on desktop, full-screen when selected on mobile */}
 			<div
+				inert={composeBusy || undefined}
 				style={isMobile ? undefined : { width: listWidth }}
 				className={`relative shrink-0 flex-col border-r border-hair ${
 					isMobile

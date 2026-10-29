@@ -51,6 +51,12 @@ export default function ComposeView({ onBack, initial, onSent, onBusyChange }) {
 	const [sent, setSent] = useState(false);
 	const [sentWarning, setSentWarning] = useState("");
 	const [draftSaved, setDraftSaved] = useState(false);
+	useEffect(() => {
+		if (!busy && !attachments.some((a) => !a.forward)) return;
+		const warn = (event) => { event.preventDefault(); event.returnValue = ""; };
+		window.addEventListener("beforeunload", warn);
+		return () => window.removeEventListener("beforeunload", warn);
+	}, [busy, attachments]);
 	const fileRef = useRef(null);
 	const discardRef = useRef(false);
 	const draftRef = useRef(null);
