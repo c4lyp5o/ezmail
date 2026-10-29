@@ -34,3 +34,23 @@ test("opens settings and navigates between sidebar sections", async () => {
 	expect(screen.queryByRole("dialog")).toBeNull();
 	expect(document.activeElement).toBe(screen.getByText("Open settings"));
 });
+
+test("warns before closing or switching away from unsaved filter edits", async () => {
+	mockApi({ "GET /filters": { enabled: true, rules: [{ field: "subject", match: "contains", value: "a", folder: "X" }] }, "GET /profile": { displayName: "Ada" } });
+	render(<Harness />);
+	fireEvent.click(screen.getByText("Open settings"));
+	fireEvent.click(screen.getByRole("button", { name: "Filters" }));
+	fireEvent.change(await screen.findByLabelText("Rule 1: text to match"), { target: { value: "b" } });
+	await screen.findByText("You have unsaved changes.");
+	fireEvent.click(screen.getByRole("button", { name: "Profile" }));
+	expect(screen.getByRole("alertdialog")).toBeTruthy();
+	fireEvent.click(screen.getByRole("button", { name: "Keep editing" }));
+	expect(screen.getByLabelText("Rule 1: text to match").value).toBe("b");
+	fireEvent.click(screen.getByRole("button", { name: "Close settings" }));
+	fireEvent.keyDown(screen.getByRole("alertdialog"), { key: "Escape" });
+	expect(screen.queryByRole("alertdialog")).toBeNull();
+	expect(screen.getByRole("dialog", { name: "Settings" })).toBeTruthy();
+	fireEvent.click(screen.getByRole("button", { name: "Close settings" }));
+	fireEvent.click(screen.getByRole("button", { name: "Discard changes" }));
+	expect(screen.queryByRole("dialog")).toBeNull();
+});

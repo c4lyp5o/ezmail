@@ -13,6 +13,7 @@ All notable changes to ezmail are recorded here. The format follows [Keep a Chan
 - Login discovery is rate limited, and password attempts are counted before IMAP verification.
 
 ### Added
+- Filters panel: rules read as sentences with a folder picker, can be reordered, can be tried against a sample message without moving mail, show the filtering method and any fallback error, and ask before discarding unsaved edits or deleting all rules.
 - Optional continuous IMAP filtering when ManageSieve is unavailable. The background worker checks new inbox mail while ezmail is running and retains encrypted credentials until disabled or removed.
 - Mail search is debounced and can be cleared; the sidebar shows live-update status. Move notifications remain available for ten seconds and explain when undo is unavailable.
 - Compose warns before leaving uploaded files, shows attachment sizes, and explains the local draft and attachment limits. Failed message, folder, profile, filter, and TOTP status loads offer retry.
