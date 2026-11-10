@@ -12,6 +12,7 @@ import {
 	ChevronRight,
 	MessagesSquare,
 	Paperclip,
+	PencilLine,
 	Download,
 	FileWarning,
 	Forward,
@@ -135,6 +136,7 @@ export default function MessageView({
 	onBack,
 	onDelete,
 	onCompose,
+	onEditDraft, // set only for the Drafts folder
 	onOpenThread,
 	setShowRemote,
 	showRemote,
@@ -310,7 +312,16 @@ export default function MessageView({
 					<ArrowLeft className="h-4 w-4" /> Back
 				</button>
 				<div className="flex-1" />
-				{[
+				{/* A saved draft is continued, not replied to. */}
+				{onEditDraft && msg.flags?.includes("\\Draft") ? (
+					<button
+						type="button"
+						onClick={() => onEditDraft(msg)}
+						className="flex items-center gap-1 rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-white transition hover:bg-accent/90"
+					>
+						<PencilLine className="h-4 w-4" /> Edit draft
+					</button>
+				) : [
 					["reply", Reply, "Reply", "r"],
 					["replyAll", ReplyAll, "Reply all", "a"],
 					["forward", Forward, "Forward", "f"],

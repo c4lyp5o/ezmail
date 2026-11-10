@@ -1090,7 +1090,13 @@ export const MailService = {
 			let uid = Number(appended.uid);
 			if (!(Number.isInteger(uid) && uid > 0)) uid = await findDraftUid(client, folder, messageId);
 			let replaced;
-			if (body.replaces) {
+			// The new copy's UID is unknown and its attachments were copied from
+			// the old one: keep the old copy, or the client's references to its
+			// attachments (which it can't move to an unknown UID) would break.
+			const fwd = body.forwardAttachments;
+			const strands = !uid && fwd?.indexes?.length && (fwd.folder || "INBOX") === folder && Number(fwd.uid) === body.replaces;
+			if (body.replaces && strands) replaced = false;
+			else if (body.replaces) {
 				try {
 					replaced = await removeDraft(client, folder, body.replaces);
 				} catch (err) {

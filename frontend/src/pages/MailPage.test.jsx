@@ -572,3 +572,102 @@ describe("rename and delete folders", () => {
 		expect(within(settings).getByRole("button", { name: "Filters" }).getAttribute("aria-current")).toBe("page");
 	});
 });
+
+describe("server drafts and previews", () => {
+	const DRAFTS = "Brouillons"; // found by its \Drafts special use, not by name
+	const draftRow = { ...mk(42, "Unfinished"), flags: ["\\Seen", "\\Draft"] };
+	const setup = () =>
+		mockApi({
+			"GET /me": ME,
+			"GET /mail/folders": [...FOLDERS, folder(DRAFTS, "\\Drafts")],
+			"GET /mail/messages/INBOX": { messages: [mk(30, "Alpha"), { ...mk(31, "Odd"), flags: ["\\Seen", "\\Draft"] }], total: 2, page: 1, pageSize: 50 },
+			[`GET /mail/messages/${DRAFTS}`]: { messages: [draftRow], total: 1, page: 1, pageSize: 50 },
+			"GET /mail/message/INBOX/31": { ...mk(31, "Odd"), flags: ["\\Seen", "\\Draft"], folder: "INBOX", to: "x@y.z", html: "", text: "body of Odd", attachments: [] },
+			[`GET /mail/message/${DRAFTS}/42`]: {
+				...draftRow,
+				folder: DRAFTS,
+				to: "bob@x.io",
+				bcc: "quiet@x.io",
+				html: "",
+				text: "body of Unfinished",
+				attachments: [{ index: 1, filename: "plan.pdf", contentType: "application/pdf", size: 10 }],
+			},
+			"GET /profile": { displayName: "", signature: "Sig" },
+		});
+
+	test("Edit draft shows only for \\Draft messages in the Drafts folder and opens the composer", async () => {
+		setup();
+		await renderMail();
+		await open("Odd"); // \Draft flag, but not in Drafts: a normal message
+		expect(screen.queryByRole("button", { name: /Edit draft/ })).toBeNull();
+		expect(screen.getByTitle("Reply (r)")).toBeTruthy();
+
+		const nav = within(screen.getByRole("navigation"));
+		fireEvent.click(await nav.findByRole("button", { name: DRAFTS }));
+		await screen.findByText("Unfinished");
+		await open("Unfinished");
+		expect(screen.queryByTitle("Reply (r)")).toBeNull();
+		expect(screen.queryByTitle("Forward (f)")).toBeNull();
+		expect(screen.getByTitle("Delete (#)")).toBeTruthy();
+		fireEvent.click(screen.getByRole("button", { name: /Edit draft/ }));
+		expect(await screen.findByLabelText("Bcc")).toBeTruthy();
+		expect(screen.getByLabelText("To").value).toBe("bob@x.io");
+		expect(screen.getByLabelText("Bcc").value).toBe("quiet@x.io");
+		expect(screen.getByPlaceholderText("Subject").value).toBe("Unfinished");
+		expect(screen.getByPlaceholderText(/Write your message/).value).toBe("body of Unfinished");
+		expect(screen.getByText("plan.pdf")).toBeTruthy();
+	});
+
+	test("leaving the composer by navigating shows a toast when its draft can't be saved", async () => {
+		const calls = setup(); // no POST /mail/drafts route: the save fails
+		await renderMail();
+		fireEvent.click(screen.getByTitle("Compose (c)"));
+		fireEvent.change(await screen.findByPlaceholderText("Subject"), { target: { value: "Unsent idea" } });
+		fireEvent.click(within(screen.getByRole("navigation")).getByRole("button", { name: "Archive" }));
+		expect(await screen.findByText("Draft could not be saved to Drafts")).toBeTruthy();
+		expect(posted(calls, "/mail/drafts")).toHaveLength(1);
+		expect(posted(calls, "/mail/drafts")[0].body.subject).toBe("Unsent idea");
+	});
+
+	test("on an open draft, r edits it and a / f do nothing", async () => {
+		setup();
+		await renderMail();
+		fireEvent.click(await within(screen.getByRole("navigation")).findByRole("button", { name: DRAFTS }));
+		await screen.findByText("Unfinished");
+		await open("Unfinished");
+		press("a");
+		press("f");
+		await act(async () => {});
+		expect(screen.queryByLabelText("Bcc")).toBeNull();
+		expect(screen.getByText("body of Unfinished")).toBeTruthy(); // still reading
+		press("r");
+		expect(await screen.findByText("Edit draft")).toBeTruthy(); // composer title
+		expect(screen.getByLabelText("Bcc").value).toBe("quiet@x.io");
+		expect(screen.getByPlaceholderText("Subject").value).toBe("Unfinished");
+	});
+
+	test("the previews setting drops the snippets flag and is remembered", async () => {
+		const calls = setup();
+		await renderMail();
+		const inboxCalls = () => calls.filter((c) => c.path === "/mail/messages/INBOX");
+		expect(new URL(inboxCalls().at(-1).url, "http://x").searchParams.get("snippets")).toBe("1");
+		fireEvent.click(screen.getByLabelText("Settings"));
+		const toggle = screen.getByRole("button", { name: "Show message previews" });
+		expect(toggle.getAttribute("aria-pressed")).toBe("true");
+		const before = inboxCalls().length;
+		fireEvent.click(toggle);
+		expect(toggle.getAttribute("aria-pressed")).toBe("false");
+		expect(localStorage.getItem("ezmail_previews")).toBe("off");
+		await waitFor(() => expect(inboxCalls().length).toBeGreaterThan(before));
+		expect(new URL(inboxCalls().at(-1).url, "http://x").searchParams.get("snippets")).toBeNull();
+	});
+
+	test("a saved 'off' preference applies from the first request", async () => {
+		localStorage.setItem("ezmail_previews", "off");
+		const calls = setup();
+		await renderMail();
+		const inboxCalls = calls.filter((c) => c.path === "/mail/messages/INBOX");
+		expect(inboxCalls.length).toBeGreaterThan(0);
+		expect(inboxCalls.every((c) => new URL(c.url, "http://x").searchParams.get("snippets") === null)).toBe(true);
+	});
+});

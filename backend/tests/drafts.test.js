@@ -196,6 +196,58 @@ describe("save draft", () => {
 		expect((await download(`/message/Drafts/${next.json.data.uid}/attachment/0`)).bytes.equals(pdf)).toBe(true);
 	});
 
+	test("the new copy numbers its attachments uploads first, then forwarded ones in indexes order", async () => {
+		const file = (name) => ({ filename: name, contentType: "application/pdf", content: Buffer.from(name).toString("base64") });
+		const first = (await post("/drafts", { ...draft, attachments: [file("a.pdf"), file("b.pdf")] })).json.data.uid;
+		const next = await post("/drafts", {
+			...draft,
+			attachments: [file("c.pdf")],
+			forwardAttachments: { folder: "Drafts", uid: first, indexes: [1, 0] },
+			replaces: first,
+		});
+		const uid = next.json.data.uid;
+		const opened = (await get(`/message/Drafts/${uid}`)).json.data;
+		expect(opened.attachments.map((a) => [a.index, a.filename])).toEqual([[0, "c.pdf"], [1, "b.pdf"], [2, "a.pdf"]]);
+		for (const [i, name] of ["c.pdf", "b.pdf", "a.pdf"].entries())
+			expect((await download(`/message/Drafts/${uid}/attachment/${i}`)).bytes.toString()).toBe(name);
+	});
+
+	test("with an html (markdown) body the attachment positions are still the indexes", async () => {
+		const file = (name) => ({ filename: name, contentType: "text/plain", content: Buffer.from(name).toString("base64") });
+		const md = { to: "bob@x.io", subject: "md", text: "# Title\n\n*hi*", markdown: true };
+		const first = (await post("/drafts", { ...md, attachments: [file("a.txt"), file("b.txt")] })).json.data.uid;
+		const stored = drafts().find((m) => m.uid === first).bodyStructure;
+		expect(stored.childNodes.map((n) => n.type)).toEqual(["multipart/alternative", "text/plain", "text/plain"]);
+		const next = await post("/drafts", {
+			...md,
+			attachments: [file("c.txt")],
+			forwardAttachments: { folder: "Drafts", uid: first, indexes: [1, 0] },
+			replaces: first,
+		});
+		const uid = next.json.data.uid;
+		const opened = (await get(`/message/Drafts/${uid}`)).json.data;
+		expect(opened.html).toContain("<h1");
+		expect(opened.attachments.map((a) => [a.index, a.filename])).toEqual([[0, "c.txt"], [1, "b.txt"], [2, "a.txt"]]);
+		for (const [i, name] of ["c.txt", "b.txt", "a.txt"].entries())
+			expect((await download(`/message/Drafts/${uid}/attachment/${i}`)).bytes.toString()).toBe(name);
+	});
+
+	test("without a new UID, the old copy stays when the save forwarded its attachments", async () => {
+		const pdf = Buffer.from("%PDF keep me").toString("base64");
+		const first = (await post("/drafts", { ...draft, attachments: [{ filename: "a.pdf", content: pdf }] })).json.data.uid;
+		imap.uidplus = false;
+		imap.failSearch = true;
+		const res = await post("/drafts", { ...draft, forwardAttachments: { folder: "Drafts", uid: first, indexes: [0] }, replaces: first });
+		expect(res.status).toBe(200);
+		expect(res.json.data).toEqual({ folder: "Drafts", replaced: false });
+		expect(drafts().map((m) => m.uid)).toContain(first);
+		expect(drafts()).toHaveLength(2);
+		// Without forwarded refs to it, the old copy is still replaced.
+		const plain = await post("/drafts", { ...draft, replaces: first });
+		expect(plain.json.data).toEqual({ folder: "Drafts", replaced: true });
+		expect(drafts().map((m) => m.uid)).not.toContain(first);
+	});
+
 	test("a missing forwarded attachment is a 400 and nothing is stored", async () => {
 		const res = await post("/drafts", { ...draft, forwardAttachments: { folder: "INBOX", uid: 42, indexes: [0] } });
 		expect(res.status).toBe(400);

@@ -66,6 +66,7 @@ const MessageRow = memo(function MessageRow({
 	onToggle,
 	onClick,
 	alwaysRead,
+	snippet, // plain-text body preview, or undefined
 	swipe, // { label: "Archive" | "Delete", onSwipe } — mobile swipe-left
 	onDragStart, // (event, msg) — set only on fine-pointer desktops
 }) {
@@ -140,17 +141,24 @@ const MessageRow = memo(function MessageRow({
 						>
 							{msg.fromName || msg.from}
 						</div>
-						<div className="flex items-center gap-2">
+						{/* The snippet (plain text) follows the subject on desktop and
+						    wraps to its own line on mobile. */}
+						<div className="flex flex-wrap items-center gap-x-2 md:flex-nowrap">
 							{isUnread && (
 								<span className="h-2 w-2 shrink-0 rounded-full bg-accent" />
 							)}
 							<div
-								className={`truncate text-sm ${
+								className={`min-w-0 truncate text-sm ${
 									isUnread ? "text-ink-2" : "text-ink-muted"
 								}`}
 							>
 								{msg.subject}
 							</div>
+							{snippet && (
+								<div className="min-w-0 grow basis-full truncate text-xs text-ink-faint md:basis-0 md:text-sm md:before:mr-2 md:before:content-['–']">
+									{snippet}
+								</div>
+							)}
 						</div>
 					</div>
 					<div className="shrink-0 text-right">
@@ -172,9 +180,9 @@ function formatDate(date) {
 		: d.toLocaleDateString([], { month: "short", day: "numeric" });
 }
 
-// Builds the SWR key for a given folder / page / sort / search.
-const listKey = (folder, page, sort, search) =>
-	`/mail/messages/${encodeURIComponent(folder)}?page=${page}&pageSize=${PAGE_SIZE}&sort=${sort}&search=${encodeURIComponent(search || "")}`;
+// Builds the SWR key for a given folder / page / sort / search / previews.
+const listKey = (folder, page, sort, search, snippets) =>
+	`/mail/messages/${encodeURIComponent(folder)}?page=${page}&pageSize=${PAGE_SIZE}&sort=${sort}&search=${encodeURIComponent(search || "")}${snippets ? "&snippets=1" : ""}`;
 const fetcher = async (url) => {
 	const res = await apiCall.get(url);
 	return res?.data || { messages: [], total: 0, page: 1, pageSize: PAGE_SIZE };
@@ -194,6 +202,7 @@ export default function MessageList({
 	refreshInterval = 10000,
 	swipeAction, // { label, onSwipe(msg) } or undefined
 	draggable = false, // rows drag onto folders (fine pointer only)
+	snippets = true, // ask for and show body previews
 }) {
 	const [sort, setSort] = useState("desc");
 	const [search, setSearch] = useState("");
@@ -209,7 +218,7 @@ export default function MessageList({
 	const anchorRef = useRef(null);
 
 	const { data, isValidating, error, mutate } = useSWR(
-		activeFolder ? listKey(activeFolder, page, sort, search) : null,
+		activeFolder ? listKey(activeFolder, page, sort, search, snippets) : null,
 		fetcher,
 		{ revalidateOnFocus: false, refreshInterval },
 	);
@@ -523,6 +532,7 @@ export default function MessageList({
 						onToggle={onToggleSelect}
 						onClick={openMessage}
 						alwaysRead={alwaysRead}
+						snippet={snippets ? msg.snippet || undefined : undefined}
 						swipe={swipeAction}
 						onDragStart={canDrag ? onDragStart : undefined}
 					/>

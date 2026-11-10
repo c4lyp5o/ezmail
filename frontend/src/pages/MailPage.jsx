@@ -20,7 +20,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
-import ComposeView from "../components/ComposeView.jsx";
+import ComposeView, { UPLOADS_AT_RISK_PROMPT } from "../components/ComposeView.jsx";
 import EmptyTrashModal from "../components/EmptyTrashModal.jsx";
 import FolderList from "../components/FolderList.jsx";
 import MessageList from "../components/MessageList.jsx";
@@ -32,7 +32,7 @@ import { useAuth } from "../context/auth.jsx";
 import { apiCall } from "../utils/apiCall.js";
 import { isTypingTarget } from "../utils/keyboard.js";
 import { specialFolder } from "../utils/folders.js";
-import { buildDraft } from "../utils/reply.js";
+import { buildDraft, resumeDraft } from "../utils/reply.js";
 import { useDialogFocus } from "../utils/useDialogFocus.js";
 import { useMailEvents } from "../utils/useMailEvents.js";
 
@@ -68,6 +68,23 @@ function readNotifyPref() {
 function writeNotifyPref(on) {
 	try {
 		localStorage.setItem(NOTIFY_KEY, on ? "on" : "off");
+	} catch {
+		// preference just isn't remembered
+	}
+}
+
+// Snippets under subjects in the message list; on unless turned off.
+const PREVIEWS_KEY = "ezmail_previews";
+function readPreviewsPref() {
+	try {
+		return localStorage.getItem(PREVIEWS_KEY) !== "off";
+	} catch {
+		return true;
+	}
+}
+function writePreviewsPref(on) {
+	try {
+		localStorage.setItem(PREVIEWS_KEY, on ? "on" : "off");
 	} catch {
 		// preference just isn't remembered
 	}
@@ -115,6 +132,11 @@ export default function MailPage() {
 	const toastTimer = useRef(null);
 	const [live, setLive] = useState(false); // SSE stream connected
 	const [notifyOn, setNotifyOn] = useState(readNotifyPref);
+	const [previewsOn, setPreviewsOn] = useState(readPreviewsPref);
+	const togglePreviews = () => {
+		writePreviewsPref(!previewsOn);
+		setPreviewsOn(!previewsOn);
+	};
 
 	// Mobile: sidebar drawer open state + which pane is shown
 	const [mobileSidebar, setMobileSidebar] = useState(false);
@@ -287,7 +309,7 @@ export default function MailPage() {
 
 	const handleLogout = async () => {
 		if (composeBusy) return;
-		if (view.type === "compose" && composeHasUploads && !window.confirm("Uploaded files are not saved in drafts. Leave anyway?")) return;
+		if (view.type === "compose" && composeHasUploads && !window.confirm(UPLOADS_AT_RISK_PROMPT)) return;
 		await logout();
 		navigate("/login", { replace: true });
 	};
@@ -515,7 +537,7 @@ export default function MailPage() {
 	// ---- folder / message selection ----
 	const selectFolder = (f) => {
 		if (composeBusy) return;
-		if (view.type === "compose" && composeHasUploads && !window.confirm("Uploaded files are not saved in drafts. Leave anyway?")) return;
+		if (view.type === "compose" && composeHasUploads && !window.confirm(UPLOADS_AT_RISK_PROMPT)) return;
 		if (f !== activeFolder) clearSelection();
 		setActiveFolder(f);
 		setView({ type: "folder" });
@@ -532,19 +554,21 @@ export default function MailPage() {
 
 	// New message, or reply / replyAll / forward of a loaded message. The key
 	// remounts ComposeView so each open starts from its own initial state.
-	const openCompose = (mode, msg) => {
+	// mode "draft" continues a server draft from `folder` (the Drafts folder).
+	const openCompose = (mode, msg, folder) => {
 		if (composeBusy) return;
-		if (view.type === "compose" && composeHasUploads && !window.confirm("Uploaded files are not saved in drafts. Leave anyway?")) return;
+		if (view.type === "compose" && composeHasUploads && !window.confirm(UPLOADS_AT_RISK_PROMPT)) return;
 		setView({
 			type: "compose",
 			key: Date.now(),
-			initial: mode && msg ? buildDraft(mode, msg, user?.mailbox) : null,
+			initial: mode && msg ? (mode === "draft" ? resumeDraft(msg, folder) : buildDraft(mode, msg, user?.mailbox)) : null,
 		});
 		setMobilePane("reader");
 		setMobileSidebar(false);
 	};
 
 	const archiveFolder = specialFolder(folders, "Archive", "Archive");
+	const draftsFolder = specialFolder(folders, "Drafts", "Drafts");
 
 	// After any mutation (mark read / delete / move), refresh the SWR list so
 	// the UI reflects the server state (needed because moves change UIDs).
@@ -563,7 +587,7 @@ export default function MailPage() {
 
 	const openMessageWithBody = useCallback((folder, uid, msg) => {
 		if (composeBusy) return;
-		if (view.type === "compose" && composeHasUploads && !window.confirm("Uploaded files are not saved in drafts. Leave anyway?")) return;
+		if (view.type === "compose" && composeHasUploads && !window.confirm(UPLOADS_AT_RISK_PROMPT)) return;
 		setFullMessage(null); // clear previous body so no stale summary
 		setView({ type: "message", folder, uid, msg });
 		setMobilePane("reader");
@@ -661,6 +685,11 @@ export default function MailPage() {
 			case "a":
 			case "f":
 				if (view.type !== "message" || !fullMessage) return;
+				// A saved draft is continued, not replied to (as in the toolbar).
+				if (draftsFolder && view.folder === draftsFolder && fullMessage.flags?.includes("\\Draft")) {
+					if (e.key === "r") openCompose("draft", fullMessage, view.folder);
+					return;
+				}
 				openCompose(
 					{ r: "reply", a: "replyAll", f: "forward" }[e.key],
 					fullMessage,
@@ -1052,6 +1081,7 @@ export default function MailPage() {
 								: undefined
 						}
 						keyboardEnabled={!modalOpen && view.type !== "compose"}
+						snippets={previewsOn}
 						draggable={!isMobile}
 					/>
 				</div>
@@ -1119,7 +1149,16 @@ export default function MailPage() {
 						key={view.key}
 						initial={view.initial}
 						onBack={handleBack}
-						onSent={() => loadFolders()}
+						onSent={() => {
+							loadFolders();
+							refreshList?.();
+						}}
+						onDraftsChange={() => {
+							if (activeFolder === draftsFolder) refreshList?.();
+						}}
+						onDraftSaveFailed={({ hadUploads }) =>
+							showToast({ text: `Draft could not be saved to Drafts${hadUploads ? ", attachments were not kept" : ""}` })
+						}
 						onBusyChange={setComposeBusy}
 						onUploadsChange={setComposeHasUploads}
 					/>
@@ -1144,6 +1183,11 @@ export default function MailPage() {
 						starred={openStarred}
 						onMarkUnread={markOpenUnread}
 						onCompose={openCompose}
+						onEditDraft={
+							draftsFolder && view.folder === draftsFolder
+								? (msg) => openCompose("draft", msg, view.folder)
+								: undefined
+						}
 						onOpenThread={(folder, uid) =>
 							openMessageWithBody(folder, uid, null)
 						}
@@ -1302,6 +1346,8 @@ export default function MailPage() {
 				folders={folders}
 				notifyOn={notifyOn}
 				onToggleNotify={toggleNotify}
+				previewsOn={previewsOn}
+				onTogglePreviews={togglePreviews}
 			/>
 		</div>
 	);
