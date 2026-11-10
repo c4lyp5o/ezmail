@@ -2,9 +2,14 @@ import { Loader2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { apiCall } from "../utils/apiCall.js";
 
-// Profile tab: the display name recipients see in the From header.
+// Matches the backend's limit (after it normalises line endings).
+export const SIGNATURE_MAX = 2000;
+
+// Profile tab: the display name recipients see in the From header, and the
+// plain-text signature the composer adds to new messages, replies and forwards.
 export default function ProfileTab({ mailbox }) {
 	const [name, setName] = useState("");
+	const [signature, setSignature] = useState("");
 	const [loaded, setLoaded] = useState(false);
 	const [busy, setBusy] = useState(false);
 	const [notice, setNotice] = useState("");
@@ -13,7 +18,10 @@ export default function ProfileTab({ mailbox }) {
 		setNotice("");
 		return apiCall
 			.get("/profile")
-			.then((res) => setName(res.data?.displayName || ""))
+			.then((res) => {
+				setName(res.data?.displayName || "");
+				setSignature(res.data?.signature || "");
+			})
 			.then(() => setLoaded(true))
 			.catch((err) => setNotice(err.message || "Could not load profile"));
 	}, []);
@@ -24,8 +32,9 @@ export default function ProfileTab({ mailbox }) {
 		setBusy(true);
 		setNotice("");
 		try {
-			const res = await apiCall.put("/profile", { displayName: name });
+			const res = await apiCall.put("/profile", { displayName: name, signature });
 			setName(res.data?.displayName || "");
+			setSignature(res.data?.signature || "");
 			setNotice("Saved");
 		} catch (err) {
 			setNotice(err.message || "Failed to save");
@@ -54,6 +63,28 @@ export default function ProfileTab({ mailbox }) {
 				/>
 				<p className="mt-1.5 text-xs text-ink-muted">
 					Shown to recipients as “{name.trim() || mailbox}” &lt;{mailbox}&gt;.
+				</p>
+			</div>
+			<div>
+				<label
+					htmlFor="profile-signature"
+					className="mb-1.5 block text-sm font-medium text-ink-2"
+				>
+					Signature
+				</label>
+				<textarea
+					id="profile-signature"
+					value={signature}
+					onChange={(e) => setSignature(e.target.value)}
+					disabled={!loaded}
+					maxLength={SIGNATURE_MAX}
+					rows={4}
+					aria-describedby="profile-signature-help"
+					className="w-full resize-y rounded-lg border border-hair bg-canvas px-3 py-2 text-sm text-ink outline-none focus:border-accent"
+				/>
+				<p id="profile-signature-help" className="mt-1.5 flex justify-between gap-3 text-xs text-ink-muted">
+					<span>Plain text, added below a “-- ” line to new messages, replies and forwards.</span>
+					<span>{signature.length}/{SIGNATURE_MAX}</span>
 				</p>
 			</div>
 			<div className="flex items-center gap-3">

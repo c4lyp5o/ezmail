@@ -1,5 +1,6 @@
 // Builds ComposeView's starting state for reply / reply-all / forward from a
 // fully loaded message (MessageView's data, incl. `addresses`).
+import { addSignature } from "./signature.js";
 
 // "Re: x" stays "Re: x"; "Fw: x" / "Fwd: x" stay as-is when forwarding.
 const withPrefix = (prefix, subject = "") =>
@@ -13,18 +14,23 @@ function bodyText(msg) {
 	return new DOMParser().parseFromString(msg.html, "text/html").body.textContent || "";
 }
 
-export function buildDraft(mode, msg, me) {
+// `signature` (optional) goes above the quoted text; when it is passed the
+// draft carries it, so ComposeView doesn't add it a second time.
+export function buildDraft(mode, msg, me, signature) {
+	const signed = signature !== undefined ? { signature } : {};
+	const sign = (body) => (signature !== undefined ? addSignature(body, signature) : body);
 	const when = msg.date ? new Date(msg.date).toLocaleString() : "";
 	const text = bodyText(msg).trim();
 
 	if (mode === "forward") {
 		return {
 			title: "Forward",
+			...signed,
 			form: {
 				to: "",
 				cc: "",
 				subject: withPrefix("Fwd", msg.subject),
-				text: `\n\n---------- Forwarded message ----------\nFrom: ${msg.from}\nDate: ${when}\nSubject: ${msg.subject}\nTo: ${msg.to}\n\n${text}`,
+				text: sign(`\n\n---------- Forwarded message ----------\nFrom: ${msg.from}\nDate: ${when}\nSubject: ${msg.subject}\nTo: ${msg.to}\n\n${text}`),
 				markdown: false,
 			},
 			// References, not bytes: the server copies them from the original.
@@ -55,14 +61,15 @@ export function buildDraft(mode, msg, me) {
 
 	return {
 		title: mode === "replyAll" ? "Reply all" : "Reply",
+		...signed,
 		form: {
 			to: to.join(", "),
 			cc: cc.join(", "),
 			subject: withPrefix("Re", msg.subject),
-			text: `\n\nOn ${when}, ${msg.from} wrote:\n${text
+			text: sign(`\n\nOn ${when}, ${msg.from} wrote:\n${text
 				.split("\n")
 				.map((l) => `> ${l}`)
-				.join("\n")}`,
+				.join("\n")}`),
 			markdown: false,
 		},
 		meta: {

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { buildDraft } from "./reply.js";
+import { addSignature, markdownSafeSignature, signatureBlock } from "./signature.js";
 
 const msg = {
 	subject: "Lunch?",
@@ -79,5 +80,40 @@ describe("forward", () => {
 	test("HTML-only mail is quoted as text", () => {
 		const d = buildDraft("forward", { ...msg, text: "", html: "<p>hello <b>there</b></p>" });
 		expect(d.form.text).toMatch(/hello there$/);
+	});
+});
+
+describe("signature", () => {
+	const SIG = "Ada\nAnalyst";
+	test("new message: the body is the signature block", () => {
+		expect(addSignature("", SIG)).toBe("\n\n-- \nAda\nAnalyst");
+	});
+
+	test("reply and forward: signature above the quoted text, typing starts above it", () => {
+		const r = buildDraft("reply", msg, "me@x.io", SIG);
+		expect(r.form.text).toMatch(/^\n\n-- \nAda\nAnalyst\n\nOn .*, Bob <bob@x\.io> wrote:\n> line1\n> line2$/);
+		expect(r.signature).toBe(SIG);
+		const f = buildDraft("forward", msg, "me@x.io", SIG);
+		expect(f.form.text).toMatch(/^\n\n-- \nAda\nAnalyst\n\n---------- Forwarded message ----------\n/);
+	});
+
+	test("empty or missing signature adds nothing", () => {
+		expect(addSignature("x", "")).toBe("x");
+		expect(addSignature("x", "  \n ")).toBe("x");
+		expect(buildDraft("reply", msg, "me@x.io", "").form.text).toBe(buildDraft("reply", msg, "me@x.io").form.text);
+		expect(buildDraft("reply", msg, "me@x.io")).not.toHaveProperty("signature");
+	});
+
+	test("markdown: an unedited signature is escaped, keeps line breaks and its own paragraph", () => {
+		const sig = "**Ada** <script>x</script>\n> quote\n- item\n2. two\n[a](b)";
+		const text = `Hi${signatureBlock(sig)}\n\n> quoted`;
+		expect(markdownSafeSignature(text, sig)).toBe(
+			"Hi\n\n-- \n\n\\*\\*Ada\\*\\* \\<script\\>x\\</script\\>  \n\\> quote  \n\\- item  \n2\\. two  \n\\[a\\](b)\n\n> quoted",
+		);
+	});
+
+	test("markdown: an edited or missing signature is left to the user", () => {
+		expect(markdownSafeSignature("Hi\n\n-- \nAda (edited)", "Ada\nAnalyst")).toBe("Hi\n\n-- \nAda (edited)");
+		expect(markdownSafeSignature("*hi*", "")).toBe("*hi*");
 	});
 });
