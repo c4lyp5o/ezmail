@@ -130,8 +130,8 @@ export const MailModel = {
 
 	moveMessageBody: t.Object({
 		uids: uidArray,
-		from: t.String(),
-		to: t.String(),
+		from: t.String({ minLength: 1 }),
+		to: t.String({ minLength: 1 }),
 	}),
 
 	moveMessageResponse: t.Object({
@@ -161,6 +161,11 @@ export const MailModel = {
 			t.Object({
 				uids: uidArray,
 				folder: t.String(),
+				inboxUnseen: t.Optional(t.Integer()),
+				// Destination UIDs in Trash (UIDPLUS); only on a move to Trash.
+				movedUids: t.Optional(t.Array(t.Integer())),
+				// Trash path the messages were moved to; absent for a permanent delete.
+				trash: t.Optional(t.String()),
 			}),
 		),
 	}),

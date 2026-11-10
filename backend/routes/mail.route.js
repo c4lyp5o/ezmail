@@ -52,7 +52,7 @@ export const MailRoutes = new Elysia({ prefix: "/api/v1/mail" })
 		response: MailModel.getMessageResponse,
 		detail: {
 			summary: "Get a single message",
-			description: "Fetches full body (text/html) + flags for one message.",
+			description: "Fetches full body (text/html) + flags for one message. 404 when it no longer exists.",
 			tags: ["Mail"],
 		},
 	})
@@ -108,10 +108,11 @@ export const MailRoutes = new Elysia({ prefix: "/api/v1/mail" })
 	})
 	.post("/delete", MailService.deleteMessage, {
 		body: MailModel.deleteMessageBody,
+		response: MailModel.deleteMessageResponse,
 		detail: {
-			summary: "Permanently delete a message",
+			summary: "Delete messages",
 			description:
-				"Flags a message as \\Deleted and expunges it from the folder (permanent, used on Trash items).",
+				"Outside Trash: moves to Trash (created if missing) and returns `trash` and, with UIDPLUS, `movedUids`. Inside Trash: flags \\Deleted and expunges (permanent, no `trash`).",
 			tags: ["Mail"],
 		},
 	})

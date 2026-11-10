@@ -34,9 +34,11 @@ export function createPool(build) {
 
 	async function acquire(user) {
 		const key = keyOf(user);
-		const entry = entries.get(key) ?? { idle: [], open: 0, waiters: [] };
-		entries.set(key, entry);
 		for (;;) {
+			// Re-read after every wake-up: settle() may have dropped the entry while
+			// this waiter was pending, and counting on an orphan would exceed the cap.
+			const entry = entries.get(key) ?? { idle: [], open: 0, waiters: [] };
+			entries.set(key, entry);
 			const slot = entry.idle.pop();
 			if (slot) {
 				clearTimeout(slot.timer);

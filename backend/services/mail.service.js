@@ -145,7 +145,11 @@ function attachmentParts(structure) {
 	function visit(node, related = false) {
 		if (!node) return;
 		const disposition = String(node.disposition || "").toLowerCase();
-		const attached = disposition === "attachment" || disposition === "inline" ||
+		const type = String(node.type || "").toLowerCase();
+		// A nameless inline text/plain or text/html part is the message body.
+		const bodyText = type === "text/plain" || type === "text/html";
+		const attached = disposition === "attachment" ||
+			(disposition === "inline" && !bodyText) ||
 			!!node.dispositionParameters?.filename || !!node.parameters?.name ||
 			(related && !!node.id);
 		if (attached && node.part) {
@@ -273,6 +277,16 @@ async function currentInboxUnseen(client) {
 	}
 }
 
+// imapflow resolves a failed MOVE (server NO, missing destination) to false
+// rather than throwing; make it throw so withClient answers 502. imapflow also
+// returns false for an empty UID list, which is a no-op, not a failure.
+async function moveOrThrow(client, uids, to) {
+	if (Array.isArray(uids) && !uids.length) return undefined;
+	const moved = await client.messageMove(uids, to, { uid: true });
+	if (!moved) throw new Error(`Could not move messages to ${to}`);
+	return moved;
+}
+
 async function changeFlags(method, cookie, body, status) {
 	const user = await getUser(cookie);
 	if (!user?.mailbox || !user?.password)
@@ -322,7 +336,8 @@ export const MailService = {
 			const existing = await client.list();
 			if (existing.some((f) => f.path.toLowerCase() === name.toLowerCase())) return { path: name, created: false };
 			const made = await client.mailboxCreate(name);
-			return { path: made?.path || name, created: true };
+			// imapflow reports ALREADYEXISTS (e.g. an unlisted folder) as created: false.
+			return { path: made?.path || name, created: made?.created !== false };
 		});
 		if (res?.data?.created === false)
 			return status(409, { success: false, message: "A folder with that name already exists." });
@@ -335,8 +350,9 @@ export const MailService = {
 		if (!user?.mailbox || !user?.password)
 			return status(401, { success: false, message: "Unauthorized" });
 		const folder = params?.folder;
-		const page = Number(query?.page) || 1;
-		const pageSizeRaw = Number(query?.pageSize) || 50;
+		// Whole numbers >= 1; anything else would build an invalid sequence set.
+		const page = Math.max(1, Math.floor(Number(query?.page) || 1));
+		const pageSizeRaw = Math.max(1, Math.floor(Number(query?.pageSize) || 50));
 		const size = Math.min(pageSizeRaw, 100);
 		const sort = query?.sort || "desc"; // 'asc' | 'desc' by date
 		const search = (query?.search || "").trim();
@@ -428,7 +444,7 @@ export const MailService = {
 		if (!user?.mailbox || !user?.password)
 			return status(401, { success: false, message: "Unauthorized" });
 		const { folder, uid } = params;
-		return withClient(user, status, async (client) => {
+		const res = await withClient(user, status, async (client) => {
 			await client.mailboxOpen(folder || "INBOX");
 			const msg = await client.fetchOne(
 				Number(uid),
@@ -513,6 +529,9 @@ export const MailService = {
 				attachments,
 			};
 		});
+		// Missing or expunged message.
+		if (res?.success && !res.data) return status(404, { success: false, message: "Not Found" });
+		return res;
 	},
 
 	// --- conversation: messages linked by Message-ID / References ---
@@ -528,11 +547,9 @@ export const MailService = {
 			const p = found?.parsed;
 			if (!p?.messageId) return [];
 
-			const ids = [
-				...new Set(
-					[p.messageId, p.inReplyTo, ...[p.references || []].flat()].filter(Boolean),
-				),
-			].slice(-25); // bound the search on very long threads
+			// Bound the search on very long threads, but never drop the message's own id.
+			const refs = [...[p.references || []].flat(), p.inReplyTo].filter(Boolean);
+			const ids = [...new Set([p.messageId, ...refs.slice(-24)])];
 			const terms = [
 				...ids.map((id) => ({ header: { "message-id": id } })),
 				{ header: { references: p.messageId } },
@@ -624,9 +641,7 @@ export const MailService = {
 			const lock = await client.getMailboxLock(from);
 			let movedUids;
 			try {
-				movedUids = destinationUids(
-					await client.messageMove(targetUids, to, { uid: true }),
-				);
+				movedUids = destinationUids(await moveOrThrow(client, targetUids, to));
 			} finally {
 				lock.release();
 			}
@@ -635,8 +650,8 @@ export const MailService = {
 		});
 	},
 
-	// Permanently delete a single message: flag \Deleted then expunge it from the
-	// mailbox. Used when deleting from Trash — the message is removed for good.
+	// Delete messages: outside Trash a move to Trash (`trash` + `movedUids` in
+	// the response); inside Trash permanent (flag \Deleted + expunge, no `trash`).
 	deleteMessage: async ({ cookie, body, status }) => {
 		const user = await getUser(cookie);
 		if (!user?.mailbox || !user?.password)
@@ -644,25 +659,35 @@ export const MailService = {
 		const { uids, folder } = body;
 		const targetUids = Array.isArray(uids) ? uids.map(Number) : uids;
 		return withClient(user, status, async (client) => {
-			// Outside Trash a delete is a move to Trash; inside it, permanent.
 			let trash = await findSpecialFolder(client, "\\Trash", TRASH_NAMES);
-			if (!trash && folder !== "Trash") {
+			if (!trash) {
 				// Some mailboxes have no Trash yet; create it rather than failing the delete.
 				trash = "Trash";
-				await client.mailboxCreate(trash).catch(() => {});
+				try {
+					// imapflow returns { created: false } on ALREADYEXISTS (another tab, or unlisted).
+					await client.mailboxCreate(trash);
+				} catch (err) {
+					// Tolerate only an explicit already-exists; "doesn't exist", [NONEXISTENT] etc. are failures.
+					const already = err.serverResponseCode
+						? err.serverResponseCode === "ALREADYEXISTS"
+						: /already ?exists/i.test(`${err.responseText || ""} ${err.response || ""} ${err.message}`);
+					if (!already) throw err;
+				}
 			}
+			const toTrash = folder !== trash;
+			let movedUids;
 			const lock = await client.getMailboxLock(folder);
 			try {
-				if (folder !== trash) {
-					await client.messageMove(targetUids, trash, { uid: true });
-				} else {
-					await client.messageDelete(targetUids, { uid: true });
+				if (toTrash) {
+					movedUids = destinationUids(await moveOrThrow(client, targetUids, trash));
+				} else if (targetUids.length && !(await client.messageDelete(targetUids, { uid: true }))) {
+					throw new Error("Could not delete messages");
 				}
 			} finally {
 				lock.release();
 			}
 			const inboxUnseen = await currentInboxUnseen(client);
-			return { uids: targetUids, folder: folder, inboxUnseen };
+			return { uids: targetUids, folder: folder, inboxUnseen, movedUids, trash: toTrash ? trash : undefined };
 		});
 	},
 
@@ -676,7 +701,8 @@ export const MailService = {
 		return withClient(user, status, async (client) => {
 			const lock = await client.getMailboxLock(folder);
 			try {
-				if (client.mailbox?.exists) await client.messageDelete("1:*");
+				if (client.mailbox?.exists && !(await client.messageDelete("1:*")))
+					throw new Error("Could not empty folder");
 			} finally {
 				lock.release();
 			}

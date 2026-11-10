@@ -85,6 +85,24 @@ describe("drafts", () => {
 		expect(screen.getByText(/older draft were removed/)).toBeTruthy();
 		expect(screen.queryByText("old.pdf")).toBeNull();
 	});
+
+	test("version-2 forwarding drafts are dropped after the index renumbering", () => {
+		localStorage.setItem(KEY, JSON.stringify({ attachmentIndexVersion: 2, form: { to: "x@y.z" }, attachments: [
+			{ filename: "v2.pdf", forward: { folder: "INBOX", uid: 1, index: 2 } },
+		] }));
+		render(<ComposeView onBack={() => {}} />);
+		expect(screen.getByText(/older draft were removed/)).toBeTruthy();
+		expect(screen.queryByText("v2.pdf")).toBeNull();
+	});
+
+	test("current-version forwarding drafts keep their attachment refs", () => {
+		localStorage.setItem(KEY, JSON.stringify({ attachmentIndexVersion: 3, form: { to: "x@y.z" }, attachments: [
+			{ filename: "v3.pdf", forward: { folder: "INBOX", uid: 1, index: 2 } },
+		] }));
+		render(<ComposeView onBack={() => {}} />);
+		expect(screen.queryByText(/older draft were removed/)).toBeNull();
+		expect(screen.getByText("v3.pdf")).toBeTruthy();
+	});
 });
 
 describe("sending", () => {
@@ -163,6 +181,7 @@ describe("sending", () => {
 		expect(JSON.parse(localStorage.getItem(KEY)).attachments).toEqual([
 			{ filename: "a.pdf", forward: { folder: "INBOX", uid: 42, index: 1 } },
 		]);
+		expect(JSON.parse(localStorage.getItem(KEY)).attachmentIndexVersion).toBe(3);
 	});
 
 	test("sends Bcc recipients and keeps them in the saved draft", async () => {

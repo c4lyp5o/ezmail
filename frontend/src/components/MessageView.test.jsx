@@ -136,4 +136,48 @@ describe("reader", () => {
 		expect(link.getAttribute("download")).toBe("plan.pdf");
 		expect(screen.queryByText("logo.png")).toBeNull();
 	});
+
+	test("markdown-looking plain text renders in the gated frame, not the page", async () => {
+		const text = "- hi\n\n![x](https://tracker.example/p.gif)\n\n[site](https://example.com)";
+		mockApi({
+			"GET /mail/message/INBOX/5": { ...MSG, text, attachments: [] },
+			"GET /mail/message/INBOX/5/thread": [],
+		});
+		const setShowRemote = vi.fn();
+		const { container, rerender } = view({ setShowRemote });
+		const frame = await screen.findByTitle("email-body");
+		expect(frame.getAttribute("sandbox")).toBe("allow-same-origin allow-popups allow-popups-to-escape-sandbox");
+		expect(container.querySelector('img[src^="https:"]')).toBeNull();
+		const doc = parse(frame.getAttribute("srcdoc"));
+		expect(doc.querySelector('meta[http-equiv="Content-Security-Policy"]').getAttribute("content")).toBe(emailCsp(false));
+		const img = doc.querySelector("img");
+		expect(img.hasAttribute("src")).toBe(false);
+		expect(img.getAttribute("data-remote-src")).toBe("https://tracker.example/p.gif");
+		const a = doc.querySelector("a");
+		expect(a.target).toBe("_blank");
+		expect(a.rel).toBe("noopener noreferrer");
+
+		fireEvent.click(screen.getByText("Load remote images"));
+		expect(setShowRemote).toHaveBeenCalledWith(true);
+		rerender(<MessageView folder="INBOX" uid={5} onBack={() => {}} onDelete={async () => {}} setShowRemote={setShowRemote} showRemote />);
+		const shown = parse(screen.getByTitle("email-body").getAttribute("srcdoc"));
+		expect(shown.querySelector("img").getAttribute("src")).toBe("https://tracker.example/p.gif");
+	});
+
+	test("ordinary plain text stays a <pre> with no frame or remote button", async () => {
+		mockApi({ "GET /mail/message/INBOX/5": { ...MSG, attachments: [] }, "GET /mail/message/INBOX/5/thread": [] });
+		view();
+		const pre = await screen.findByText("see below");
+		expect(pre.tagName).toBe("PRE");
+		expect(screen.queryByTitle("email-body")).toBeNull();
+		expect(screen.queryByText("Load remote images")).toBeNull();
+	});
+
+	test("HTML mail still renders its own HTML in the frame", async () => {
+		mockApi({ "GET /mail/message/INBOX/5": { ...MSG, html: HTML, text: "- fallback", attachments: [] }, "GET /mail/message/INBOX/5/thread": [] });
+		view();
+		const frame = await screen.findByTitle("email-body");
+		expect(frame.getAttribute("srcdoc")).toBe(emailDoc(HTML, false));
+		expect(screen.getByText("Load remote images")).toBeTruthy();
+	});
 });

@@ -4,6 +4,10 @@ import { apiCall } from "../utils/apiCall.js";
 import { ArrowLeft, Send, Paperclip, X, FileText, Trash2 } from "lucide-react";
 
 const EMPTY_FORM = { to: "", cc: "", bcc: "", subject: "", text: "", markdown: false };
+// Bump when the backend's attachment index numbering changes, so saved forward
+// references from older drafts are dropped instead of picking the wrong file.
+// 3: nameless inline text/plain and text/html parts are no longer counted.
+const ATTACHMENT_INDEX_VERSION = 3;
 
 // One auto-saved draft per mailbox, kept in localStorage. Uploaded files are
 // not saved (they can blow the storage quota); forwarded ones are just
@@ -11,7 +15,7 @@ const EMPTY_FORM = { to: "", cc: "", bcc: "", subject: "", text: "", markdown: f
 function loadDraft(key) {
 	try {
 		const draft = JSON.parse(localStorage.getItem(key)) || null;
-		if (draft && draft.attachmentIndexVersion !== 2 && draft.attachments?.some((a) => a.forward)) {
+		if (draft && draft.attachmentIndexVersion !== ATTACHMENT_INDEX_VERSION && draft.attachments?.some((a) => a.forward)) {
 			return { ...draft, attachments: draft.attachments.filter((a) => !a.forward), outdatedAttachments: true };
 		}
 		return draft;
@@ -70,7 +74,7 @@ export default function ComposeView({ onBack, initial, onSent, onBusyChange, onU
 	const fileRef = useRef(null);
 	const discardRef = useRef(false);
 	const draftRef = useRef(null);
-	draftRef.current = { title: start.title, attachmentIndexVersion: 2, form, meta, attachments: attachments.filter((a) => a.forward) };
+	draftRef.current = { title: start.title, attachmentIndexVersion: ATTACHMENT_INDEX_VERSION, form, meta, attachments: attachments.filter((a) => a.forward) };
 	useEffect(() => () => {
 		if (discardRef.current) return;
 		persistDraft(draftKey, draftRef.current);

@@ -376,13 +376,38 @@ export default function MailPage() {
 		});
 	};
 
-	// Outside Trash a delete is an undoable move; inside Trash it's permanent.
+	// The server decides: outside Trash it moves there (creating Trash if the
+	// mailbox has none) and returns `trash`; inside Trash it deletes for good.
+	// afterMutation() reloads the folder list, so a new Trash shows up.
 	const deleteMessages = async (uids, folder) => {
-		if (folder !== trashFolder) return moveMessages(uids, folder, trashFolder);
 		const res = await apiCall.post("/mail/delete", { folder, uids });
 		applyInboxUnseen(res.data?.inboxUnseen);
 		afterMutation();
-		showToast({ text: `${plural(uids.length)} deleted permanently` });
+		const trash = res.data?.trash;
+		if (!trash) {
+			showToast({ text: `${plural(uids.length)} deleted permanently` });
+			return;
+		}
+		const moved = res.data?.movedUids;
+		showToast({
+			text: `${plural(uids.length)} moved to ${trash}${moved?.length ? "" : "; undo unavailable from this server"}`,
+			undo: moved?.length
+				? async () => {
+						setToast(null);
+						try {
+							const r = await apiCall.post("/mail/move", {
+								uids: moved,
+								from: trash,
+								to: folder,
+							});
+							applyInboxUnseen(r.data?.inboxUnseen);
+							afterMutation();
+						} catch (err) {
+							showToast({ text: err.message || "Undo failed" });
+						}
+					}
+				: null,
+		});
 	};
 
 	const runBulk = async (fn) => {
@@ -556,7 +581,7 @@ export default function MailPage() {
 
 	// ---- live updates: SSE fed by IMAP IDLE on INBOX ----
 	// Events are hints; we refetch. While live, list polling backs off. The
-	// browser's EventSource reconnects on its own after drops.
+	// hook reconnects after drops/errors with backoff (useMailEvents).
 	const liveRefreshTimer = useRef(null);
 	const mailEvent = (ev) => {
 		if (ev.type === "ready") setLive(true);

@@ -12,12 +12,14 @@ export const imap = {
 	calls: [],
 	uidplus: true,
 	failMove: false,
+	failDelete: false,
 	clients: [], // every FakeImapFlow created, for pushing IDLE events
 	reset() {
 		this.boxes = new Map();
 		this.calls = [];
 		this.uidplus = true;
 		this.failMove = false;
+		this.failDelete = false;
 		this.clients = [];
 	},
 	addBox(path, specialUse) {
@@ -192,8 +194,11 @@ export class FakeImapFlow extends EventEmitter {
 		return true;
 	}
 
+	// Like imapflow 2.11: a failed MOVE (server NO, missing destination)
+	// resolves to false instead of throwing.
 	async messageMove(uids, to, opts) {
-		if (imap.failMove) throw new Error("simulated move failure");
+		if (imap.failMove) return imap.failMove === "undefined" ? undefined : false;
+		if (!imap.boxes.has(to)) return false;
 		const src = this.box(this.mailbox.path);
 		const dst = this.box(to);
 		const moving = this.select(uids, opts);
@@ -207,13 +212,16 @@ export class FakeImapFlow extends EventEmitter {
 		return imap.uidplus ? { path: src.path, destination: to, uidMap } : { path: src.path, destination: to };
 	}
 
+	// Like imapflow 2.11: ALREADYEXISTS resolves to { created: false }.
 	async mailboxCreate(path) {
-		if (imap.boxes.has(path)) throw new Error("Mailbox exists");
+		if (imap.boxes.has(path)) return { path, created: false };
 		imap.addBox(path);
-		return { path };
+		return { path, created: true };
 	}
 
+	// Like imapflow 2.11: a failed STORE/EXPUNGE resolves to false.
 	async messageDelete(uids, opts = {}) {
+		if (imap.failDelete) return imap.failDelete === "undefined" ? undefined : false;
 		const src = this.box(this.mailbox.path);
 		const doomed = new Set(this.select(uids, opts));
 		src.messages = src.messages.filter((m) => !doomed.has(m));

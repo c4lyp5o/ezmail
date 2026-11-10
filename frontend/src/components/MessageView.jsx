@@ -141,12 +141,22 @@ export default function MessageView({
 	const [retryCount, setRetryCount] = useState(0);
 	const [showDetails, setShowDetails] = useState(false);
 
-	// True when the loaded HTML contains externally-hosted images (http(s)://),
+	// Markdown-looking plain text renders as HTML in the same sandboxed frame
+	// as HTML mail, so it gets the same remote-content gate (emailCsp) and
+	// link handling instead of loading trackers into the app page.
+	const bodyHtml = useMemo(() => {
+		if (msg?.html) return msg.html;
+		if (!looksLikeMarkdown(msg?.text)) return "";
+		// Incoming mail is untrusted — sanitize the rendered markdown too.
+		return DOMPurify.sanitize(marked.parse(msg.text));
+	}, [msg?.html, msg?.text]);
+
+	// True when the body contains externally-hosted images (http(s)://),
 	// so we can offer a Gmail-style "Load remote images" button.
 	const showRemoteButton = useMemo(() => {
-		if (!msg?.html) return false;
-		return /<img[^>]+src=["'](?:\/\/|https?:)?\/\//i.test(msg.html);
-	}, [msg?.html]);
+		if (!bodyHtml) return false;
+		return /<img[^>]+src=["'](?:\/\/|https?:)?\/\//i.test(bodyHtml);
+	}, [bodyHtml]);
 
 	const thisFolder = folder || "INBOX";
 
@@ -471,31 +481,19 @@ export default function MessageView({
 						</button>
 					</div>
 				)}
-				{msg.html ? (
+				{bodyHtml ? (
 					<iframe
 						title="email-body"
 						sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
-						srcDoc={emailDoc(msg.html, showRemote)}
+						srcDoc={emailDoc(bodyHtml, showRemote)}
 						onLoad={fitFrame}
 						className="mail-body-frame block w-full rounded-lg border border-hair bg-white"
 						style={{ height: 120 }}
 					/>
 				) : msg.text ? (
-					looksLikeMarkdown(msg.text) ? (
-						<div
-							className="mail-markdown prose prose-invert max-w-none text-sm leading-relaxed text-ink-2"
-							// biome-ignore lint/security/noDangerouslySetInnerHtml: later
-							dangerouslySetInnerHTML={{
-								// Incoming mail is untrusted — sanitize the rendered
-								// markdown so embedded HTML/script can not run.
-								__html: DOMPurify.sanitize(marked.parse(msg.text)),
-							}}
-						/>
-					) : (
-						<pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed text-ink-2">
-							{msg.text}
-						</pre>
-					)
+					<pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed text-ink-2">
+						{msg.text}
+					</pre>
 				) : (
 					<div className="text-sm text-ink-muted">(no body)</div>
 				)}
