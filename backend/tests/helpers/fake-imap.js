@@ -13,6 +13,8 @@ export const imap = {
 	uidplus: true,
 	failMove: false,
 	failDelete: false,
+	failStatus: false,
+	failMailbox: false,
 	clients: [], // every FakeImapFlow created, for pushing IDLE events
 	reset() {
 		this.boxes = new Map();
@@ -20,6 +22,8 @@ export const imap = {
 		this.uidplus = true;
 		this.failMove = false;
 		this.failDelete = false;
+		this.failStatus = false;
+		this.failMailbox = false;
 		this.clients = [];
 	},
 	addBox(path, specialUse) {
@@ -60,15 +64,38 @@ function headerValue(m, name) {
 	return line ? line.slice(name.length + 1).trim() : "";
 }
 
+const has = (haystack, needle) => String(haystack).toLowerCase().includes(String(needle).toLowerCase());
+// Header text plus the envelope address/name, like IMAP FROM/TO substring search.
+const addressText = (m, field) =>
+	[headerValue(m, field), ...(m.envelope[field] || []).map((a) => `${a.name} <${a.address}>`)].join(" ");
+// IMAP dates compare calendar days only (UTC here), ignoring the time.
+const day = (d) => Math.floor(new Date(d).getTime() / 86400000);
+
+// All keys must match (IMAP SEARCH ANDs its criteria).
 function matches(m, query) {
-	if (query.or) return query.or.some((q) => matches(m, q));
-	if (query.header) {
-		return Object.entries(query.header).every(([k, v]) =>
-			headerValue(m, k).toLowerCase().includes(String(v).toLowerCase()),
-		);
-	}
-	const text = String(query.text || "").toLowerCase();
-	return m.envelope.subject.toLowerCase().includes(text);
+	return Object.entries(query).every(([key, v]) => {
+		switch (key) {
+			case "or": return v.some((q) => matches(m, q));
+			case "header":
+				return Object.entries(v).every(([k, val]) => has(headerValue(m, k), val));
+			case "text": return has(m.envelope.subject, v);
+			case "subject": return has(m.envelope.subject, v);
+			case "from":
+			case "to": return has(addressText(m, key), v);
+			case "seen": return m.flags.has("\\Seen") === !!v;
+			case "flagged": return m.flags.has("\\Flagged") === !!v;
+			case "since": return day(m.internalDate) >= day(v);
+			case "before": return day(m.internalDate) < day(v);
+			default: throw new Error(`fake-imap: unsupported search key ${key}`);
+		}
+	});
+}
+
+function mailboxError(command) {
+	const err = new Error("Command failed");
+	err.executedCommand = command;
+	err.responseStatus = "NO";
+	return err;
 }
 
 function parseSeqRange(range, count) {
@@ -112,8 +139,9 @@ export class FakeImapFlow extends EventEmitter {
 	async list(opts = {}) {
 		return [...imap.boxes.values()].map((b) => ({
 			path: b.path,
-			name: b.path,
+			name: b.path.split("/").pop(),
 			delimiter: "/",
+			parentPath: b.path.includes("/") ? b.path.slice(0, b.path.lastIndexOf("/")) : "",
 			specialUse: b.specialUse,
 			flags: new Set(),
 			status: opts.statusQuery?.unseen
@@ -122,9 +150,13 @@ export class FakeImapFlow extends EventEmitter {
 		}));
 	}
 
-	async status(path) {
+	// Like imapflow 2.11: resolves to false when STATUS fails (imap.failStatus).
+	async status(path, query = {}) {
+		if (imap.failStatus) return false;
 		const b = this.box(path);
-		return { unseen: b.messages.filter((m) => !m.flags.has("\\Seen")).length };
+		const res = { path, unseen: b.messages.filter((m) => !m.flags.has("\\Seen")).length };
+		if (query.messages) res.messages = b.messages.length;
+		return res;
 	}
 
 	async getMailboxLock(path) {
@@ -217,6 +249,28 @@ export class FakeImapFlow extends EventEmitter {
 		if (imap.boxes.has(path)) return { path, created: false };
 		imap.addBox(path);
 		return { path, created: true };
+	}
+
+	// Like imapflow 2.11: resolves to { path, newPath } and throws on a NO
+	// (missing source, existing target, imap.failMailbox). Children move too.
+	async mailboxRename(path, newPath) {
+		imap.calls.push({ cmd: "rename", path, newPath });
+		if (imap.failMailbox || !imap.boxes.has(path) || imap.boxes.has(newPath)) throw mailboxError("RENAME");
+		for (const [p, b] of [...imap.boxes]) {
+			if (p !== path && !p.startsWith(`${path}/`)) continue;
+			imap.boxes.delete(p);
+			b.path = newPath + p.slice(path.length);
+			imap.boxes.set(b.path, b);
+		}
+		return { path, newPath };
+	}
+
+	// Like imapflow 2.11: resolves to { path } and throws on a NO.
+	async mailboxDelete(path) {
+		imap.calls.push({ cmd: "delete", path });
+		if (imap.failMailbox || !imap.boxes.has(path)) throw mailboxError("DELETE");
+		imap.boxes.delete(path);
+		return { path };
 	}
 
 	// Like imapflow 2.11: a failed STORE/EXPUNGE resolves to false.

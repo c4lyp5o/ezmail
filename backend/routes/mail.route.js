@@ -36,6 +36,38 @@ export const MailRoutes = new Elysia({ prefix: "/api/v1/mail" })
 			tags: ["Mail"],
 		},
 	})
+	.post("/folders/rename", MailService.renameFolder, {
+		body: MailModel.renameFolderBody,
+		response: {
+			200: MailModel.renameFolderResponse,
+			400: MailModel.renameFolderResponse,
+			404: MailModel.renameFolderResponse,
+			409: MailModel.renameFolderResponse,
+			502: MailModel.renameFolderResponse,
+		},
+		detail: {
+			summary: "Rename a folder",
+			description:
+				"Renames a user folder in place (same parent). INBOX and special-use folders are refused (400); 404 when the folder doesn't exist; 409 when the target exists. Filter rules are not rewritten: `filtersAffected` warns when they reference the folder.",
+			tags: ["Mail"],
+		},
+	})
+	.post("/folders/delete", MailService.deleteFolder, {
+		body: MailModel.deleteFolderBody,
+		response: {
+			200: MailModel.deleteFolderResponse,
+			400: MailModel.deleteFolderResponse,
+			404: MailModel.deleteFolderResponse,
+			409: MailModel.deleteFolderResponse,
+			502: MailModel.deleteFolderResponse,
+		},
+		detail: {
+			summary: "Delete an empty folder",
+			description:
+				"Deletes a user folder with no messages and no child folders (409 otherwise). INBOX and special-use folders are refused (400). `filtersAffected` warns when filter rules reference it.",
+			tags: ["Mail"],
+		},
+	})
 	.get("/messages/:folder", MailService.listMessages, {
 		response: MailModel.listMessagesResponse,
 		detail: {
@@ -72,10 +104,11 @@ export const MailRoutes = new Elysia({ prefix: "/api/v1/mail" })
 			uid: t.String(),
 			index: t.String(),
 		}),
+		query: t.Object({ inline: t.Optional(t.String()) }),
 		detail: {
 			summary: "Download an attachment",
 			description:
-				"Streams one attachment's bytes (also backs inline cid: images). Always served as a download with a sandboxing CSP.",
+				"Streams one attachment's bytes (also backs inline cid: images). Served as a download with a sandboxing CSP; with `?inline=1`, PNG/JPEG/GIF/WebP are served `inline` (other types ignore the flag).",
 			tags: ["Mail"],
 		},
 	})

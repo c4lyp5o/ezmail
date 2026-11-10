@@ -180,6 +180,39 @@ export const MailModel = {
 		data: t.Optional(t.Object({ path: t.String() })),
 	}),
 
+	renameFolderBody: t.Object({
+		path: t.String({ minLength: 1 }),
+		newName: t.String({ minLength: 1, maxLength: 64 }),
+	}),
+
+	renameFolderResponse: t.Object({
+		success: t.Boolean(),
+		message: t.Optional(t.String()),
+		data: t.Optional(
+			t.Object({
+				path: t.String(),
+				newPath: t.String(),
+				// Saved filter rules target this folder (or a child); undefined when unknown.
+				filtersAffected: t.Optional(t.Boolean()),
+			}),
+		),
+	}),
+
+	deleteFolderBody: t.Object({
+		path: t.String({ minLength: 1 }),
+	}),
+
+	deleteFolderResponse: t.Object({
+		success: t.Boolean(),
+		message: t.Optional(t.String()),
+		data: t.Optional(
+			t.Object({
+				path: t.String(),
+				filtersAffected: t.Optional(t.Boolean()),
+			}),
+		),
+	}),
+
 	expungeFolderBody: t.Object({
 		folder: t.String(),
 	}),

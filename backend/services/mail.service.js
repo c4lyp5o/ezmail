@@ -10,6 +10,7 @@ import { generalLogger as logger } from "../logger.js";
 import { getUser } from "../plugins/auth.plugin.js";
 import { createPool } from "./imap-pool.service.js";
 import { getDisplayName } from "./profile.service.js";
+import { parseSearchQuery } from "./search-query.js";
 
 // Builds an IMAP client bound to the authenticated user's mailbox. No global
 // account — the credentials come from the server-side session (created only
@@ -95,12 +96,10 @@ function destinationUids(res) {
 // Finds a special-use folder (RFC 6154), falling back to common names —
 // servers call Trash "Deleted Items", "Bin", etc.
 async function findSpecialFolder(client, use, namePattern) {
-	const list = await client.list();
-	return (
-		list.find((f) => f.specialUse === use) ||
-		list.find((f) => namePattern.test(f.name))
-	)?.path;
+	return specialIn(await client.list(), use, namePattern);
 }
+const specialIn = (list, use, namePattern) =>
+	(list.find((f) => f.specialUse === use) || list.find((f) => namePattern.test(f.name)))?.path;
 const TRASH_NAMES = /^(trash|bin|deleted( items| messages)?)$/i;
 const SENT_NAMES = /^sent( items| mail| messages)?$/i;
 // Same character set the Sieve filters accept, so a new folder can always be a rule target.
@@ -237,9 +236,27 @@ function rewriteCidLinks(html, attachments, folder, uid) {
 }
 
 // RFC 6266 filename for Content-Disposition (ASCII fallback + UTF-8).
-function contentDisposition(filename) {
+function contentDisposition(filename, type = "attachment") {
 	const ascii = filename.replace(/[^\x20-\x7e]|["\\]/g, "_");
-	return `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(filename)}`;
+	return `${type}; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(filename)}`;
+}
+
+// Types that may be served inline (?inline=1) for previews, mapped to the
+// fixed Content-Type and CSP sent. Never SVG/HTML or anything scriptable.
+const IMAGE_CSP = "default-src 'none'; sandbox";
+const INLINE_TYPES = new Map([
+	["image/png", IMAGE_CSP],
+	["image/jpeg", IMAGE_CSP],
+	["image/gif", IMAGE_CSP],
+	["image/webp", IMAGE_CSP],
+]);
+
+// The allowlisted media type (the Map's own key string) for a declared
+// Content-Type, ignoring case and parameters; undefined when not allowlisted.
+function inlineType(declared) {
+	const bare = String(declared || "").split(";")[0].trim().toLowerCase();
+	for (const key of INLINE_TYPES.keys()) if (key === bare) return key;
+	return undefined;
 }
 
 function mapEnvelope(msg) {
@@ -285,6 +302,51 @@ async function moveOrThrow(client, uids, to) {
 	const moved = await client.messageMove(uids, to, { uid: true });
 	if (!moved) throw new Error(`Could not move messages to ${to}`);
 	return moved;
+}
+
+// A renamable/deletable folder from the server's own LIST (the client's path is
+// only a lookup key), or { error: [status, message] }. INBOX, special-use
+// folders and the folders findSpecialFolder resolves by name are refused.
+async function userFolder(client, path) {
+	const list = await client.list();
+	const folder = list.find((f) => f.path === path);
+	if (!folder) return { error: [404, "Folder not found."] };
+	const resolved = [
+		specialIn(list, "\\Trash", TRASH_NAMES),
+		specialIn(list, "\\Sent", SENT_NAMES),
+		specialIn(list, "\\Archive", ARCHIVE_NAMES),
+	];
+	if (folder.path.toUpperCase() === "INBOX" || folder.specialUse || resolved.includes(folder.path))
+		return { error: [400, "INBOX and system folders can't be renamed or deleted."] };
+	return { list, folder, resolved, delimiter: folder.delimiter ? String(folder.delimiter) : "" };
+}
+
+// Whether saved filter rules file into `path` or a folder below it. Read-only
+// and best effort: undefined when the rules can't be read (e.g. ManageSieve down).
+async function filtersReference(cookie, path, delimiter) {
+	try {
+		const { FilterService } = await import("./filter.service.js");
+		const data = (await FilterService.get({ cookie, status: () => undefined }))?.data;
+		if (!data || data.mode === "unavailable" || data.conflict || !Array.isArray(data.rules)) return undefined;
+		const target = path.toLowerCase();
+		return data.rules.some((rule) => {
+			const folder = String(rule.folder || "").toLowerCase();
+			return folder === target || (!!delimiter && folder.startsWith(target + delimiter.toLowerCase()));
+		});
+	} catch {
+		return undefined;
+	}
+}
+
+// Maps a folder-command result to the response: { error } → that status.
+async function folderResponse(res, status, cookie, data) {
+	if (res?.data?.error) {
+		const [code, message] = res.data.error;
+		return status(code, { success: false, message });
+	}
+	if (!res?.data) return res;
+	const filtersAffected = await filtersReference(cookie, res.data.path, res.data.delimiter);
+	return { success: true, data: { ...data(res.data), filtersAffected } };
 }
 
 async function changeFlags(method, cookie, body, status) {
@@ -344,6 +406,61 @@ export const MailService = {
 		return res?.data ? { success: true, data: { path: res.data.path } } : res;
 	},
 
+	// --- rename a user folder (keeps its parent) ---
+	renameFolder: async ({ cookie, body, status }) => {
+		const user = await getUser(cookie);
+		if (!user?.mailbox || !user?.password)
+			return status(401, { success: false, message: "Unauthorized" });
+		const newName = body.newName.trim();
+		if (!NEW_FOLDER_NAME.test(newName) || newName.toUpperCase() === "INBOX")
+			return status(400, { success: false, message: "Use letters, numbers, spaces, dashes and underscores." });
+		const res = await withClient(user, status, async (client) => {
+			const found = await userFolder(client, body.path);
+			if (found.error) return found;
+			const { list, folder, resolved, delimiter } = found;
+			// Renaming a parent would move any system folder nested below it.
+			if (delimiter && list.some((f) => f.path.startsWith(folder.path + delimiter) && (f.specialUse || resolved.includes(f.path))))
+				return { error: [400, "This folder contains a system folder and can't be renamed."] };
+			if (delimiter && newName.includes(delimiter))
+				return { error: [400, "Folder names can't contain the hierarchy delimiter."] };
+			const parent = folder.parentPath ??
+				(delimiter && folder.path.includes(delimiter) ? folder.path.slice(0, folder.path.lastIndexOf(delimiter)) : "");
+			const newPath = parent ? `${parent}${delimiter}${newName}` : newName;
+			if (newPath === folder.path) return { error: [400, "The folder already has that name."] };
+			if (list.some((f) => f.path !== folder.path && f.path.toLowerCase() === newPath.toLowerCase()))
+				return { error: [409, "A folder with that name already exists."] };
+			// imapflow throws on NO, but resolves undefined when not authenticated.
+			const renamed = await client.mailboxRename(folder.path, newPath);
+			if (!renamed) throw new Error(`Could not rename ${folder.path}`);
+			return { path: folder.path, newPath: renamed.newPath || newPath, delimiter };
+		});
+		return folderResponse(res, status, cookie, ({ path, newPath }) => ({ path, newPath }));
+	},
+
+	// --- delete an empty user folder ---
+	deleteFolder: async ({ cookie, body, status }) => {
+		const user = await getUser(cookie);
+		if (!user?.mailbox || !user?.password)
+			return status(401, { success: false, message: "Unauthorized" });
+		const res = await withClient(user, status, async (client) => {
+			const found = await userFolder(client, body.path);
+			if (found.error) return found;
+			const { list, folder, delimiter } = found;
+			const children = toFlagsArray(folder.flags).includes("\\HasChildren") ||
+				(!!delimiter && list.some((f) => f.path.startsWith(folder.path + delimiter)));
+			if (children) return { error: [409, "Delete or move this folder's subfolders first."] };
+			// imapflow resolves STATUS failures to false; never delete on an unknown count.
+			const info = await client.status(folder.path, { messages: true });
+			const count = Number(info?.messages);
+			if (!info || !Number.isInteger(count)) throw new Error(`Could not count messages in ${folder.path}`);
+			if (count > 0) return { error: [409, "Only empty folders can be deleted. Move or delete its messages first."] };
+			const deleted = await client.mailboxDelete(folder.path);
+			if (!deleted) throw new Error(`Could not delete ${folder.path}`);
+			return { path: folder.path, delimiter };
+		});
+		return folderResponse(res, status, cookie, ({ path }) => ({ path }));
+	},
+
 	// --- message list (envelope only) ---
 	listMessages: async ({ cookie, params, query, status }) => {
 		const user = await getUser(cookie);
@@ -372,7 +489,7 @@ export const MailService = {
 				// 3. If search term is present, search UIDs
 				let searchUids = null;
 				if (search) {
-					const uids = await client.search({ text: search }, { uid: true });
+					const uids = await client.search(parseSearchQuery(search), { uid: true });
 					if (Array.isArray(uids) && uids.length) {
 						searchUids = new Set(uids);
 					} else {
@@ -591,7 +708,7 @@ export const MailService = {
 	},
 
 	// --- one attachment's bytes (download, inline cid: images) ---
-	getAttachment: async ({ cookie, params, status }) => {
+	getAttachment: async ({ cookie, params, query, status }) => {
 		const user = await getUser(cookie);
 		if (!user?.mailbox || !user?.password)
 			return status(401, { success: false, message: "Unauthorized" });
@@ -611,6 +728,22 @@ export const MailService = {
 		}
 		const a = found;
 		if (!a) return status(404, { success: false, message: "Not Found" });
+
+		// ?inline=1 for an allowlisted type: shown in place, with a fixed
+		// Content-Type from the allowlist and no sniffing. Otherwise ignored.
+		const inline = query?.inline === "1" ? inlineType(a.contentType) : undefined;
+		if (inline) {
+			return new Response(a.content, {
+				headers: {
+					"Content-Type": inline,
+					"Content-Disposition": contentDisposition(a.filename || "attachment", "inline"),
+					"Content-Length": String(a.content.length),
+					"X-Content-Type-Options": "nosniff",
+					"Content-Security-Policy": INLINE_TYPES.get(inline),
+					"Cache-Control": "no-store",
+				},
+			});
+		}
 
 		// Served from our own origin, so never let it render as a page:
 		// always a download on navigation, no sniffing, sandboxed if opened.
