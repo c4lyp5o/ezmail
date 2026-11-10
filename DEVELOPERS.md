@@ -67,7 +67,7 @@ ezmail/
 - **Send:** MIME is built before SMTP submission and the same bytes are appended to Sent. `savedToSent` reports filing success; `sentSavingDisabled` distinguishes `SAVE_SENT=false` from a failure after delivery.
 - **Folders:** `POST /mail/folders` creates a top-level folder (letters, digits, spaces, dashes, underscores — the set Sieve filters accept); 409 if it exists in any case. Deleting with no Trash folder creates one.
 - **TOTP codes** are single-use: the last consumed 30 s step is stored per mailbox (`totp:last-step:*`) and login or recovery must present a newer one.
-- **Moves/deletes** return `movedUids` (UIDPLUS) so the client can undo.
+- **Moves/deletes** return `movedUids` (UIDPLUS) so the client can undo. `POST /mail/delete` moves to Trash (creating it if missing) and returns `trash`; inside Trash it expunges permanently.
 - **Threads:** `GET /mail/message/:folder/:uid/thread` searches INBOX, the open folder, Sent and Archive by `Message-ID` / `References`. A matching subject alone never links messages.
 - **Filters:** ManageSieve uses the signed-in mailbox credentials and TLS. Only scripts matching ezmail's template are editable. Scripts are checked before upload, the previous managed version is retained, and custom active scripts are read-only. See the README for configuration and migration.
 - **IMAP filter fallback:** explicit per-mailbox opt-in stores rules and an encrypted password in `fallback_filters`. A process-local scheduler polls enabled accounts; SQLite leases coordinate workers sharing a database. UIDVALIDITY and a per-message UID cursor prevent processing old mail on first enable and permit retries after failures. A changed UIDVALIDITY skips existing messages and raises a status warning. Each run that completes without error stores `last_success` (returned as `lastCheck`); it is cleared when the fallback is re-enabled. Disabling or deleting rules removes the stored password. Tests use fake IMAP; verify delivery and moves against a real server.
@@ -94,7 +94,7 @@ ezmail/
 - **SWR** is the data layer. INBOX refreshes every 10s, or 60s while the SSE stream is live. Polling pauses in background tabs, and `revalidateOnFocus` is off.
 - **MailPage** owns view state, selection, global shortcuts, the undo toast, the EventSource and notifications (`ezmail_notify` in localStorage).
 - **MessageList** handles list navigation keys, Shift range selection, and swipe (`useSwipe`; `swipeAction` comes from MailPage).
-- **MessageView:** HTML bodies render in a sandboxed `srcDoc` iframe wrapped by `emailDoc`, with a `<meta>` CSP from `emailCsp` that blocks remote content until the user opts in. The frame auto-sizes to its content. Text bodies that look like Markdown render through `marked` + DOMPurify.
+- **MessageView:** HTML bodies render in a sandboxed `srcDoc` iframe wrapped by `emailDoc`, with a `<meta>` CSP from `emailCsp` that blocks remote content until the user opts in. The frame auto-sizes to its content. Text bodies that look like Markdown render through `marked` + DOMPurify into the same sandboxed frame.
 - **ComposeView:** prefilled by `utils/reply.js` `buildDraft`. Auto-saves to `ezmail_draft:<mailbox>` and flushes on exit; uploaded files aren't saved. Old forwarding references without the current index version are removed with a warning.
 - **Shortcuts** are ignored while typing (`utils/keyboard.js` `isTypingTarget`).
 - **Resizable list column** width is persisted in `ezmail_list_width`.

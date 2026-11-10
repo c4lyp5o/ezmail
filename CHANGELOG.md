@@ -4,6 +4,22 @@ All notable changes to ezmail are recorded here. The format follows [Keep a Chan
 
 ## [Unreleased]
 
+### Changed
+- Every delete in the UI now goes through `POST /api/v1/mail/delete`, which creates a Trash folder when the mailbox has none instead of failing. Conversation view also searches Archive.
+- **API:** `GET /api/v1/mail/message/:folder/:uid` returns 404 (was 400) when the message no longer exists. `POST /api/v1/mail/delete` responses may now also carry `inboxUnseen`, `movedUids` and `trash` (`trash` only when the delete was a move to Trash); existing fields are unchanged. No database, session or environment variable changes.
+- Dependency updates: deadslog 2 (no code changes), Biome 2.6, imapflow 2.11, mailparser 3.14, nodemailer 10.4, marked 18.2, plus patch and minor bumps.
+
+### Fixed
+- Messages whose body part is `Content-Disposition: inline` without a filename (for example from mutt) showed a blank body and a phantom attachment. Forward drafts saved in the browser before this release lose their forwarded-attachment references and show the "removed from an older draft" warning, because attachment numbering changed.
+- Plain-text mail that looks like Markdown was rendered in the app page and could load remote images without the "Load remote images" opt-in. It now renders in the same sandboxed frame as HTML mail.
+- Opening a deleted message returned 400 "Bad request"; it now returns 404.
+- A failed move, delete or Empty Trash could be reported as success ("moved to Trash") because imapflow returns a failure value instead of throwing. These now return 502.
+- Creating a folder that already exists on the server but was missing from the listing returned success instead of 409.
+- The IMAP connection pool could exceed its per-mailbox limit under one wake-up interleaving.
+- A failing live-update connection made each tab reconnect every ~3 s indefinitely. The client now backs off from 3 s to 60 s (the delay resets on a mail event or once the stream has stayed up 30 s), the server sends an SSE `retry:` hint, and the watcher uses the bounded connect timeouts.
+- `GET /api/v1/mail/messages` with a page or page size below 1 returned 502; values are now clamped.
+- Very long threads could drop the message's own Message-ID from the thread lookup.
+
 ## [3.0.0] - 2026-10-30
 
 ### Breaking
