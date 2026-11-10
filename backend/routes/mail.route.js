@@ -69,10 +69,12 @@ export const MailRoutes = new Elysia({ prefix: "/api/v1/mail" })
 		},
 	})
 	.get("/messages/:folder", MailService.listMessages, {
+		query: MailModel.listMessagesQuery,
 		response: MailModel.listMessagesResponse,
 		detail: {
 			summary: "List messages in a folder",
-			description: "Paginated envelope listing for a folder (default INBOX).",
+			description:
+				"Paginated envelope listing for a folder (default INBOX). `?snippets=1` adds a `snippet` (start of the body text, at most 140 characters) to each row; best effort, never fails the list.",
 			tags: ["Mail"],
 		},
 	})
@@ -164,6 +166,35 @@ export const MailRoutes = new Elysia({ prefix: "/api/v1/mail" })
 		detail: {
 			summary: "Send an email",
 			description: "Sends an email via SMTP.",
+			tags: ["Mail"],
+		},
+	})
+	.post("/drafts", MailService.saveDraft, {
+		body: MailModel.saveDraftBody,
+		response: {
+			200: MailModel.saveDraftResponse,
+			400: MailModel.saveDraftResponse,
+			401: MailModel.saveDraftResponse,
+			502: MailModel.saveDraftResponse,
+		},
+		detail: {
+			summary: "Save a draft",
+			description:
+				"Stores the draft (Bcc kept) in the Drafts folder (created if missing) flagged \\Draft \\Seen. `uid` is returned when the server reports it (UIDPLUS), otherwise looked up by Message-ID on a best-effort basis. With `replaces`, that UID is removed from Drafts after the new copy is stored, only if it is flagged \\Draft; `replaced` says whether it was. `replaced: false` after a successful save means the earlier copy was not removed and may remain (e.g. the mailbox does not keep \\Draft).",
+			tags: ["Mail"],
+		},
+	})
+	.post("/drafts/discard", MailService.discardDraft, {
+		body: MailModel.discardDraftBody,
+		response: {
+			200: MailModel.discardDraftResponse,
+			401: MailModel.discardDraftResponse,
+			502: MailModel.discardDraftResponse,
+		},
+		detail: {
+			summary: "Discard a draft",
+			description:
+				"Removes one message from the Drafts folder if it is flagged \\Draft. Idempotent: an unknown or non-draft UID answers 200 with `removed: false`.",
 			tags: ["Mail"],
 		},
 	})

@@ -11,6 +11,7 @@ import { getUser } from "../plugins/auth.plugin.js";
 import { createPool } from "./imap-pool.service.js";
 import { getDisplayName } from "./profile.service.js";
 import { parseSearchQuery } from "./search-query.js";
+import { snippetFromPart } from "./snippet.js";
 
 // Builds an IMAP client bound to the authenticated user's mailbox. No global
 // account — the credentials come from the server-side session (created only
@@ -184,21 +185,27 @@ async function loadAttachment(client, uid, part) {
 	return content;
 }
 
-// Fetch only displayable text parts; attachment bodies are downloaded on demand.
-async function loadDisplayBodies(client, uid, structure, attachments) {
+// The displayable text/plain and text/html body nodes (attachments excluded).
+function textBodyNodes(structure, attachments) {
 	const attachmentIds = new Set(attachments.map((part) => part.part));
 	const candidates = { "text/plain": [], "text/html": [] };
 	function visit(node) {
 		if (!node || attachmentIds.has(node.part)) return;
 		const type = String(node.type || "").toLowerCase();
-		if (candidates[type] && node.part) candidates[type].push(node.part);
+		if (candidates[type] && node.part) candidates[type].push(node);
 		for (const child of node.childNodes || []) visit(child);
 	}
 	visit(withRootPart(structure));
+	return candidates;
+}
+
+// Fetch only displayable text parts; attachment bodies are downloaded on demand.
+async function loadDisplayBodies(client, uid, structure, attachments) {
+	const candidates = textBodyNodes(structure, attachments);
 	const bodies = { text: "", html: "" };
 	let total = 0;
 	for (const [type, key] of [["text/plain", "text"], ["text/html", "html"]]) {
-		for (const part of candidates[type]) {
+		for (const { part } of candidates[type]) {
 			const result = await client.download(Number(uid), part, { uid: true, maxBytes: 8 * 1024 * 1024 + 1 });
 			if (!result?.content) throw new Error("Message body part not found");
 			const chunks = [];
@@ -216,6 +223,45 @@ async function loadDisplayBodies(client, uid, structure, attachments) {
 		}
 	}
 	return bodies;
+}
+
+// Snippets: one partial BODY.PEEK fetch per distinct text part id on the page.
+const SNIPPET_BYTES = 512;
+const SNIPPET_MAX_GROUPS = 6;
+
+// Adds `snippet` to the mapped rows in place. Never throws: on any failure
+// the rows simply keep no snippet.
+async function addSnippets(client, pageItems, rows) {
+	const groups = new Map(); // part id -> [{ uid, node, row }]
+	pageItems.forEach((msg, i) => {
+		const nodes = textBodyNodes(msg.bodyStructure, attachmentParts(msg.bodyStructure));
+		const node = nodes["text/plain"][0] || nodes["text/html"][0];
+		if (!node || !msg.uid) return;
+		if (!groups.has(node.part)) groups.set(node.part, []);
+		groups.get(node.part).push({ uid: msg.uid, node, row: rows[i] });
+	});
+	// Largest groups first, so the cap drops the fewest rows.
+	const chosen = [...groups].sort((a, b) => b[1].length - a[1].length).slice(0, SNIPPET_MAX_GROUPS);
+	for (const [part, members] of chosen) {
+		try {
+			const byUid = new Map(members.map((m) => [m.uid, m]));
+			const query = { uid: true, bodyParts: [{ key: part, start: 0, maxLength: SNIPPET_BYTES }] };
+			for await (const msg of client.fetch([...byUid.keys()], query, { uid: true })) {
+				const m = byUid.get(msg?.uid);
+				const buf = msg?.bodyParts?.get?.(part.toLowerCase());
+				if (!m || !buf) continue;
+				m.row.snippet = snippetFromPart(buf, {
+					type: m.node.type,
+					encoding: m.node.encoding,
+					charset: m.node.parameters?.charset,
+				});
+			}
+		} catch (err) {
+			// Stop here: a broken connection would fail every remaining group too.
+			logger.warn(`[MAIL] snippet fetch failed for part ${part}: ${err.message}`);
+			return;
+		}
+	}
 }
 
 const attachmentUrl = (folder, uid, index) =>
@@ -349,6 +395,141 @@ async function folderResponse(res, status, cookie, data) {
 	return { success: true, data: { ...data(res.data), filtersAffected } };
 }
 
+// --- message composition shared by send and drafts ---
+
+// If the sender used markdown and no explicit html was provided, convert
+// markdown → HTML, then sanitize so any markdown-embedded HTML/scripts can't
+// execute in recipients' mail clients.
+function composeHtml(body) {
+	if (body.html || !body.markdown || !body.text) return body.html;
+	try {
+		return sanitizeHtml(marked.parse(body.text));
+	} catch {
+		return undefined;
+	}
+}
+
+// Uploaded (base64) plus forwarded attachments, or { error } for a 400.
+// Throws on IMAP failure or when forwarded attachments exceed the limit.
+async function composeAttachments(user, body) {
+	const attachments = (body.attachments || []).map((a) => ({
+		filename: a.filename,
+		contentType: a.contentType || "application/octet-stream",
+		content: Buffer.from(a.content || "", "base64"),
+	}));
+
+	// Forwarded attachments are copied from the original message here,
+	// so the browser never has to download and re-upload them.
+	const fwd = body.forwardAttachments;
+	if (fwd?.indexes?.length) {
+		if (fwd.indexes.length > 100) return { error: "Too many forwarded attachments" };
+		const forwarded = await withImap(user, async (client) => {
+			await client.mailboxOpen(fwd.folder || "INBOX");
+			const original = await client.fetchOne(Number(fwd.uid), { bodyStructure: true }, { uid: true });
+			const parts = attachmentParts(original?.bodyStructure);
+			if (fwd.indexes.some((i) => !parts[i])) return null;
+			const result = [];
+			let total = 0;
+			for (const i of fwd.indexes) {
+				const a = parts[i];
+				const content = await loadAttachment(client, fwd.uid, a);
+				total += content.length;
+				if (total > MAX_ATTACHMENT_BYTES) throw new Error("Forwarded attachments exceed 25 MiB limit");
+				result.push({ filename: a.filename, contentType: a.contentType, content });
+			}
+			return result;
+		});
+		if (!forwarded) return { error: "Forwarded attachment not found" };
+		attachments.push(...forwarded);
+	}
+	return { attachments };
+}
+
+function composeMail(user, body, html, attachments) {
+	const domain = user.mailbox.split("@")[1] || "localhost";
+	return {
+		from: {
+			name: getDisplayName(user.mailbox) || user.mailbox,
+			address: user.mailbox,
+		},
+		to: body.to || undefined,
+		cc: body.cc || undefined,
+		bcc: body.bcc || undefined,
+		subject: body.subject || "",
+		text: body.text || "",
+		html: html || undefined,
+		attachments: attachments.length ? attachments : undefined,
+		inReplyTo: body.inReplyTo || undefined,
+		references: body.references || undefined,
+		// Fixed id + date so the Sent copy is the same message as the one
+		// delivered (threading in other clients matches it up).
+		messageId: `<${crypto.randomUUID()}@${domain}>`,
+		date: new Date(),
+	};
+}
+
+// --- drafts ---
+const DRAFTS_NAMES = /^drafts?$/i;
+
+// Creates a folder, tolerating only an explicit already-exists.
+async function createIfMissing(client, path) {
+	try {
+		// imapflow returns { created: false } on ALREADYEXISTS (another tab, or unlisted).
+		await client.mailboxCreate(path);
+	} catch (err) {
+		// Tolerate only an explicit already-exists; "doesn't exist", [NONEXISTENT] etc. are failures.
+		const already = err.serverResponseCode
+			? err.serverResponseCode === "ALREADYEXISTS"
+			: /already ?exists/i.test(`${err.responseText || ""} ${err.response || ""} ${err.message}`);
+		if (!already) throw err;
+	}
+}
+
+// The account's Drafts folder by role (then name); with `create`, made if missing.
+async function draftsFolder(client, create) {
+	const found = await findSpecialFolder(client, "\\Drafts", DRAFTS_NAMES);
+	if (found || !create) return found;
+	await createIfMissing(client, "Drafts");
+	return "Drafts";
+}
+
+// Removes one message from the Drafts folder, only if it carries \Draft.
+// false when it doesn't exist or isn't a draft; throws when the delete fails.
+// Note: a mailbox that doesn't accept \Draft as a permanent flag makes imapflow
+// drop it silently, so the copy never matches here and stays (replaced: false).
+async function removeDraft(client, drafts, uid) {
+	const lock = await client.getMailboxLock(drafts);
+	try {
+		const msg = await client.fetchOne(uid, { uid: true, flags: true }, { uid: true });
+		if (!msg || !toFlagsArray(msg.flags).includes("\\Draft")) return false;
+		if (!(await client.messageDelete([uid], { uid: true }))) throw new Error(`Could not remove draft ${uid}`);
+		return true;
+	} finally {
+		lock.release();
+	}
+}
+
+// Without UIDPLUS the APPEND reply has no UID: look the copy up by its unique
+// Message-ID. Best-effort; undefined on any failure or no match.
+async function findDraftUid(client, drafts, messageId) {
+	if (!messageId) return undefined;
+	try {
+		const lock = await client.getMailboxLock(drafts);
+		try {
+			// imapflow resolves false on a failed SEARCH, undefined without a mailbox.
+			const found = await client.search({ header: { "message-id": messageId } }, { uid: true });
+			if (!Array.isArray(found) || !found.length) return undefined;
+			const uid = Math.max(...found);
+			return Number.isInteger(uid) && uid > 0 ? uid : undefined;
+		} finally {
+			lock.release();
+		}
+	} catch (err) {
+		logImapError(err);
+		return undefined;
+	}
+}
+
 async function changeFlags(method, cookie, body, status) {
 	const user = await getUser(cookie);
 	if (!user?.mailbox || !user?.password)
@@ -473,6 +654,7 @@ export const MailService = {
 		const size = Math.min(pageSizeRaw, 100);
 		const sort = query?.sort || "desc"; // 'asc' | 'desc' by date
 		const search = (query?.search || "").trim();
+		const wantSnippets = query?.snippets === "1" || query?.snippets === "true";
 
 		return withClient(user, status, async (client) => {
 			const targetFolder = folder || "INBOX";
@@ -546,6 +728,7 @@ export const MailService = {
 				// IMAP returns sequence/UID order; reverse for newest arrival first.
 				if (sort !== "asc") pageItems.reverse();
 				const messages = pageItems.map((msg) => mapEnvelope(msg));
+				if (wantSnippets && messages.length) await addSnippets(client, pageItems, messages);
 
 				return { messages, total, page, pageSize: size, sort, search };
 			} finally {
@@ -627,14 +810,18 @@ export const MailService = {
 				fromName: parsed?.from?.value?.[0]?.name || "",
 				to: parsed?.to?.text || "",
 				cc: parsed?.cc?.text || "",
+				// Only drafts normally keep a Bcc header; undefined otherwise.
+				bcc: parsed?.bcc?.text || undefined,
 				replyTo: replyTo || "",
 				messageId: parsed?.messageId || undefined,
+				inReplyTo: parsed?.inReplyTo || undefined,
 				references: [parsed?.references || []].flat().join(" ") || undefined,
 				addresses: {
 					from: addressList(parsed?.from),
 					replyTo: addressList(parsed?.replyTo),
 					to: addressList(parsed?.to),
 					cc: addressList(parsed?.cc),
+					bcc: parsed?.bcc ? addressList(parsed.bcc) : undefined,
 				},
 				date: parsed?.date || msg.internalDate,
 				mailedBy,
@@ -796,16 +983,7 @@ export const MailService = {
 			if (!trash) {
 				// Some mailboxes have no Trash yet; create it rather than failing the delete.
 				trash = "Trash";
-				try {
-					// imapflow returns { created: false } on ALREADYEXISTS (another tab, or unlisted).
-					await client.mailboxCreate(trash);
-				} catch (err) {
-					// Tolerate only an explicit already-exists; "doesn't exist", [NONEXISTENT] etc. are failures.
-					const already = err.serverResponseCode
-						? err.serverResponseCode === "ALREADYEXISTS"
-						: /already ?exists/i.test(`${err.responseText || ""} ${err.response || ""} ${err.message}`);
-					if (!already) throw err;
-				}
+				await createIfMissing(client, trash);
 			}
 			const toTrash = folder !== trash;
 			let movedUids;
@@ -860,71 +1038,9 @@ export const MailService = {
 		});
 
 		try {
-			// If the sender used markdown and no explicit html was provided,
-			// convert markdown → HTML so the reader can render it nicely.
-			let html = body.html;
-			if (body.markdown && !html && body.text) {
-				try {
-					// Convert markdown → HTML, then sanitize so any markdown-embedded
-					// HTML/scripts can't execute in recipients' mail clients.
-					html = sanitizeHtml(marked.parse(body.text));
-				} catch {
-					html = undefined;
-				}
-			}
-
-			// Build nodemailer attachments from base64 payloads.
-			const attachments = (body.attachments || []).map((a) => ({
-				filename: a.filename,
-				contentType: a.contentType || "application/octet-stream",
-				content: Buffer.from(a.content || "", "base64"),
-			}));
-
-			// Forwarded attachments are copied from the original message here,
-			// so the browser never has to download and re-upload them.
-			const fwd = body.forwardAttachments;
-			if (fwd?.indexes?.length) {
-				if (fwd.indexes.length > 100) return status(400, { success: false, message: "Too many forwarded attachments" });
-				const forwarded = await withImap(user, async (client) => {
-					await client.mailboxOpen(fwd.folder || "INBOX");
-					const original = await client.fetchOne(Number(fwd.uid), { bodyStructure: true }, { uid: true });
-					const parts = attachmentParts(original?.bodyStructure);
-					if (fwd.indexes.some((i) => !parts[i])) return null;
-					const result = [];
-					let total = 0;
-					for (const i of fwd.indexes) {
-						const a = parts[i];
-						const content = await loadAttachment(client, fwd.uid, a);
-						total += content.length;
-						if (total > MAX_ATTACHMENT_BYTES) throw new Error("Forwarded attachments exceed 25 MiB limit");
-						result.push({ filename: a.filename, contentType: a.contentType, content });
-					}
-					return result;
-				});
-				if (!forwarded) return status(400, { success: false, message: "Forwarded attachment not found" });
-				attachments.push(...forwarded);
-			}
-
-			const domain = user.mailbox.split("@")[1] || "localhost";
-			const mail = {
-				from: {
-					name: getDisplayName(user.mailbox) || user.mailbox,
-					address: user.mailbox,
-				},
-				to: body.to,
-				cc: body.cc || undefined,
-				bcc: body.bcc || undefined,
-				subject: body.subject || "",
-				text: body.text || "",
-				html: html || undefined,
-				attachments: attachments.length ? attachments : undefined,
-				inReplyTo: body.inReplyTo || undefined,
-				references: body.references || undefined,
-				// Fixed id + date so the Sent copy is the same message as the one
-				// delivered (threading in other clients matches it up).
-				messageId: `<${crypto.randomUUID()}@${domain}>`,
-				date: new Date(),
-			};
+			const files = await composeAttachments(user, body);
+			if (files.error) return status(400, { success: false, message: files.error });
+			const mail = composeMail(user, body, composeHtml(body), files.attachments);
 			// Complete MIME construction before SMTP accepts the message.
 			const raw = await new MailComposer(mail).compile().build();
 			await transporter.sendMail({ ...mail, raw });
@@ -941,5 +1057,60 @@ export const MailService = {
 			logger.error(`[MAIL] 💥[smtp] ${err.message}`);
 			return status(502, { success: false, message: err.message });
 		}
+	},
+
+	// --- drafts (IMAP Drafts folder) ---
+	// Composed exactly like a sent message, but keeps Bcc. The previous copy
+	// (`replaces`) is removed only after the new one is stored, and a failure
+	// there never fails the save.
+	saveDraft: async ({ cookie, body, status }) => {
+		const user = await getUser(cookie);
+		if (!user?.mailbox || !user?.password)
+			return status(401, { success: false, message: "Unauthorized" });
+		let raw;
+		let messageId;
+		try {
+			const files = await composeAttachments(user, body);
+			if (files.error) return status(400, { success: false, message: files.error });
+			const mail = composeMail(user, body, composeHtml(body), files.attachments);
+			messageId = mail.messageId; // unique per save: finds the copy without UIDPLUS
+			const node = new MailComposer(mail).compile();
+			node.keepBcc = true; // the draft copy only; send never keeps Bcc
+			raw = await node.build();
+		} catch (err) {
+			logImapError(err);
+			return status(502, { success: false, message: "Mail command failed" });
+		}
+		return withClient(user, status, async (client) => {
+			const folder = await draftsFolder(client, true);
+			// imapflow throws when the server answers NO/BAD to APPEND, and
+			// resolves to undefined when unauthenticated or without a destination.
+			const appended = await client.append(folder, raw, ["\\Draft", "\\Seen"]);
+			if (!appended) throw new Error(`Could not save draft to ${folder}`);
+			let uid = Number(appended.uid);
+			if (!(Number.isInteger(uid) && uid > 0)) uid = await findDraftUid(client, folder, messageId);
+			let replaced;
+			if (body.replaces) {
+				try {
+					replaced = await removeDraft(client, folder, body.replaces);
+				} catch (err) {
+					logImapError(err);
+					replaced = false;
+				}
+			}
+			return { uid, folder, replaced };
+		});
+	},
+
+	// Removes one draft (Drafts folder only, must carry \Draft). Idempotent.
+	discardDraft: async ({ cookie, body, status }) => {
+		const user = await getUser(cookie);
+		if (!user?.mailbox || !user?.password)
+			return status(401, { success: false, message: "Unauthorized" });
+		return withClient(user, status, async (client) => {
+			const folder = await draftsFolder(client, false);
+			if (!folder) return { uid: body.uid, removed: false };
+			return { uid: body.uid, removed: await removeDraft(client, folder, body.uid), folder };
+		});
 	},
 };
