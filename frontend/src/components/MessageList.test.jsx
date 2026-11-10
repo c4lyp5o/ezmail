@@ -30,6 +30,7 @@ function Harness({
 	keyboardEnabled = true,
 	initialSelected = [],
 	swipeAction,
+	snippets,
 }) {
 	const [selected, setSelected] = useState(() => new Set(initialSelected));
 	return (
@@ -51,6 +52,7 @@ function Harness({
 				onSelectionChange={setSelected}
 				keyboardEnabled={keyboardEnabled}
 				swipeAction={swipeAction}
+				snippets={snippets}
 			/>
 		</SWRConfig>
 	);
@@ -102,7 +104,7 @@ describe("plain navigation", () => {
 
 	test("ignored while typing in search", async () => {
 		const onOpen = await setup();
-		fireEvent.keyDown(screen.getByPlaceholderText("Search mail…"), { key: "j" });
+		fireEvent.keyDown(screen.getByLabelText("Search current folder"), { key: "j" });
 		expect(onOpen).not.toHaveBeenCalled();
 	});
 
@@ -219,5 +221,81 @@ describe("swipe (mobile)", () => {
 		fireEvent.touchMove(row(), { touches: [{ clientX: 200, clientY: 100 }] });
 		expect(screen.getByText("Archive")).toBeTruthy();
 		expect(row().style.transform).toBe("translateX(-100px)");
+	});
+});
+
+describe("search operators", () => {
+	test("the help lists the operators and inserts an example", async () => {
+		await setup();
+		const toggle = screen.getByRole("button", { name: "Search operators" });
+		fireEvent.click(toggle);
+		const help = screen.getByRole("dialog", { name: "Search operators" });
+		for (const op of ["from:", "to:", "subject:", "is:unread", "is:starred", "after:", "before:"]) {
+			expect(help.textContent).toContain(op);
+		}
+		expect(help.textContent).toContain("UTC");
+		expect(help.textContent).not.toContain("has:");
+		await waitFor(() => expect(help.contains(document.activeElement)).toBe(true));
+		fireEvent.keyDown(document.activeElement, { key: "Escape" });
+		expect(screen.queryByRole("dialog")).toBeNull();
+		expect(document.activeElement).toBe(toggle);
+
+		const input = screen.getByLabelText("Search current folder");
+		fireEvent.change(input, { target: { value: "invoice" } });
+		fireEvent.click(toggle);
+		fireEvent.click(screen.getByText("is:unread"));
+		expect(input.value).toBe("invoice is:unread");
+		expect(document.activeElement).toBe(input);
+	});
+
+	test("a typed operator query is sent verbatim", async () => {
+		await setup();
+		const query = 'from:alice subject:"weekly report" before:2026-01-01';
+		fireEvent.change(screen.getByLabelText("Search current folder"), { target: { value: query } });
+		await waitFor(() =>
+			expect(calls.some((c) => c.path === "/mail/messages/INBOX" && new URL(c.url, "http://x").searchParams.get("search") === query)).toBe(true),
+		);
+	});
+});
+
+describe("snippets", () => {
+	const listCalls = () => calls.filter((c) => c.path === "/mail/messages/INBOX");
+	const param = (c) => new URL(c.url, "http://x").searchParams.get("snippets");
+	const withSnippets = () => {
+		calls = mockApi({
+			"GET /mail/messages/INBOX": {
+				messages: MESSAGES.map((m, i) => (i === 0 ? { ...m, snippet: "Hi <b>x</b> & more" } : i === 1 ? { ...m, snippet: "Second preview" } : m)),
+				total: 30,
+				page: 1,
+				pageSize: 50,
+			},
+		});
+	};
+
+	test("asks for snippets by default and shows them as plain text", async () => {
+		withSnippets();
+		await setup();
+		expect(listCalls().every((c) => param(c) === "1")).toBe(true);
+		const snippet = screen.getByText("Hi <b>x</b> & more");
+		expect(snippet.querySelector("b")).toBeNull();
+		expect(snippet.closest("[data-uid]").dataset.uid).toBe("100");
+		expect(screen.getByText("Second preview")).toBeTruthy();
+	});
+
+	test("rows without a snippet render only the subject line", async () => {
+		withSnippets();
+		await setup();
+		// Subject alone on its line: no snippet element (and no unread dot, it's read).
+		expect(screen.getByText("Subject 3").parentElement.children).toHaveLength(1);
+		expect(screen.getByText("Subject 1").parentElement.children).toHaveLength(2);
+	});
+
+	test("turned off: no flag in the request and no snippet text", async () => {
+		withSnippets();
+		await setup({ snippets: false });
+		expect(listCalls().length).toBeGreaterThan(0);
+		expect(listCalls().every((c) => param(c) === null)).toBe(true);
+		expect(screen.queryByText("Hi <b>x</b> & more")).toBeNull();
+		expect(screen.queryByText("Second preview")).toBeNull();
 	});
 });

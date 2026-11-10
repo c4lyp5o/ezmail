@@ -5,13 +5,13 @@ A self-hosted webmail client. A Bun + Elysia backend talks IMAP/SMTP to your mai
 ## Features
 
 - **Any mailbox can sign in.** Credentials are checked directly against your IMAP server; there are no ezmail accounts.
-- **Reading:** server-side pagination, search, sort, and unread counts on every folder. Conversation view built from `Message-ID` / `References` across INBOX and Sent.
+- **Reading:** server-side pagination, search (with `from:`, `to:`, `subject:`, `is:`, `before:` and `after:` operators), sort, and unread counts on every folder. Optional message previews under each subject. Conversation view built from `Message-ID` / `References` across INBOX and Sent.
 - **Live updates:** new mail arrives over IMAP IDLE, streamed to the browser with server-sent events. Optional desktop notifications and an unread count in the tab title.
-- **Writing:** compose, reply, reply-all and forward (attachments are copied on the server). Optional Markdown body. One draft per mailbox auto-saves locally; uploaded files must be added again after leaving. A copy of each sent message is saved to Sent. Ctrl/⌘+Enter sends.
-- **Organising:** bulk select with checkboxes or Shift+arrows, move, archive, delete, mark read. Undo for moves and deletes. Swipe left on mobile to archive.
+- **Writing:** compose, reply, reply-all and forward (attachments are copied on the server). Optional Markdown body. One draft per mailbox auto-saves locally and is also saved to the server's Drafts folder (when closing and periodically while editing), where "Edit draft" resumes it as plain text; uploaded files are kept in the server draft once it is saved, and must be added again if only the local draft remains (attachments total at most 24 MiB per message). Recipient autocomplete from addresses you have sent to (kept in the browser, cleared on logout), a per-mailbox signature, and a 5-second Undo before sending. A copy of each sent message is saved to Sent. Ctrl/⌘+Enter sends.
+- **Organising:** bulk select with checkboxes or Shift+arrows, move, archive, delete, mark read. Undo for moves and deletes. Drag messages onto a folder on desktop, rename or delete empty folders from the sidebar, and use the reader toolbar to archive, move, star or mark unread. Swipe left on mobile to archive. Image attachments preview in a lightbox.
 - **Safe rendering:** HTML mail is sanitised and shown in a sandboxed iframe with a strict Content-Security-Policy. Remote images, CSS backgrounds, fonts and media stay blocked until you allow them for that message. Attachments download on demand.
 - **Security:** server-side sessions, optional passwordless TOTP login, rate-limited login and code attempts.
-- **Extras:** per-mailbox display name, server-side filters (Dovecot Sieve), optional LLM summaries, light/dark theme, keyboard shortcuts.
+- **Extras:** per-mailbox display name and signature, server-side filters (Dovecot Sieve), optional LLM summaries, light/dark theme, keyboard shortcuts.
 
 ## Quick start
 
@@ -113,13 +113,15 @@ Press `?` in the app for the full list.
 
 | Key | Action |
 | --- | --- |
-| `j` / `k`, `↓` / `↑` | Next / previous message |
+| `j` / `k`, `↓` / `↑` | Next / previous message (also while reading) |
 | `Shift` + arrows, `PgUp` / `PgDn`, `Home` / `End` | Extend selection |
 | `Enter` / `o` | Open message |
 | `x` | Toggle selection |
 | `c` | Compose |
 | `r` / `a` / `f` | Reply / reply all / forward |
 | `e` | Archive |
+| `s` | Star / unstar |
+| `u` | Mark unread |
 | `#` / `Delete` | Delete |
 | `z` | Undo |
 | `/` | Search |

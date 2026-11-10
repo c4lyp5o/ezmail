@@ -10,6 +10,21 @@ import {
 	Trash2,
 } from "lucide-react";
 import { useState } from "react";
+import { FolderMenu, RenameFolder } from "./FolderActions.jsx";
+import { DRAG_MIME } from "./MessageList.jsx";
+
+// Reads a message drag payload; only positive integer UIDs survive.
+function readDrop(e) {
+	try {
+		const { uids, folder } = JSON.parse(e.dataTransfer.getData(DRAG_MIME));
+		const clean = Array.isArray(uids)
+			? uids.filter((u) => Number.isInteger(u) && u > 0)
+			: [];
+		return clean.length ? { uids: clean, folder: String(folder || "") } : null;
+	} catch {
+		return null;
+	}
+}
 
 // Icons by RFC 6154 special-use flag; names are only a fallback.
 const SPECIAL_USE_ICONS = {
@@ -81,7 +96,37 @@ function NewFolder({ onCreate }) {
 	);
 }
 
-export default function FolderList({ folders, active, onSelect, onCreate }) {
+// Only plain user folders can be renamed/deleted: not INBOX and nothing the
+// sidebar treats as special (by special-use flag or conventional name).
+const isUserFolder = (folder) =>
+	folder.path.toUpperCase() !== "INBOX" && !folder.specialUse && !Object.hasOwn(NAME_ICONS, folder.name);
+
+export default function FolderList({ folders, active, onSelect, onCreate, onDropMessages, onRename, onDelete }) {
+	const [dropTarget, setDropTarget] = useState(null);
+	const [renaming, setRenaming] = useState(null);
+	const carriesMessages = (e) =>
+		!!onDropMessages && [...(e.dataTransfer?.types || [])].includes(DRAG_MIME);
+	const dropProps = (path) =>
+		onDropMessages
+			? {
+					onDragOver: (e) => {
+						if (!carriesMessages(e)) return;
+						e.preventDefault();
+						e.dataTransfer.dropEffect = path === active ? "none" : "move";
+						if (dropTarget !== path) setDropTarget(path);
+					},
+					onDragLeave: (e) => {
+						if (!e.currentTarget.contains(e.relatedTarget)) setDropTarget(null);
+					},
+					onDrop: (e) => {
+						setDropTarget(null);
+						if (!carriesMessages(e)) return;
+						e.preventDefault();
+						const payload = readDrop(e);
+						if (payload) onDropMessages(path, payload.uids, payload.folder);
+					},
+				}
+			: {};
 	return (
 		<nav className="flex-1 space-y-0.5 overflow-y-auto px-2 py-2">
 			{folders.length === 0 && (
@@ -89,19 +134,33 @@ export default function FolderList({ folders, active, onSelect, onCreate }) {
 			)}
 			{folders.map((folder) => {
 				const Icon =
-					SPECIAL_USE_ICONS[folder.specialUse] || NAME_ICONS[folder.name] || Folder;
+					SPECIAL_USE_ICONS[folder.specialUse] || (Object.hasOwn(NAME_ICONS, folder.name) ? NAME_ICONS[folder.name] : null) || Folder;
 				const isActive = folder.path === active;
 				// Unread counts are noise for Sent/Drafts/Trash.
 				const unread = /\\(Sent|Drafts|Trash)/.test(folder.specialUse || "")
 					? 0
 					: folder.unread || 0;
+				const editable = !!(onRename && onDelete) && isUserFolder(folder);
+				if (editable && renaming === folder.path) {
+					return (
+						<RenameFolder
+							key={folder.path}
+							folder={folder}
+							onSubmit={(name) => onRename(folder.path, name)}
+							onClose={() => setRenaming(null)}
+						/>
+					);
+				}
+				// Drop handlers sit on the row so the "…" button is a target too.
 				return (
+					<div key={folder.path} className="group relative" {...dropProps(folder.path)}>
 					<button
 						type="button"
-						key={folder.path}
 						onClick={() => onSelect(folder.path)}
-						className={`relative flex w-full items-center gap-3 rounded-md pl-6 py-1.5 text-sm transition ${
-							isActive
+						className={`relative flex w-full items-center gap-3 rounded-md pl-6 py-1.5 text-sm transition ${editable ? "pr-8" : ""} ${
+							dropTarget === folder.path && !isActive
+								? "bg-accent/20 text-ink ring-1 ring-accent"
+								: isActive
 								? "bg-accent/12 text-ink font-medium"
 								: "text-ink-muted hover:bg-hover hover:text-ink"
 						}`}
@@ -124,6 +183,10 @@ export default function FolderList({ folders, active, onSelect, onCreate }) {
 							</span>
 						)}
 					</button>
+					{editable && (
+						<FolderMenu folder={folder} onRename={() => setRenaming(folder.path)} onDelete={onDelete} />
+					)}
+					</div>
 				);
 			})}
 			{onCreate && <NewFolder onCreate={onCreate} />}

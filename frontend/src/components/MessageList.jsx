@@ -11,7 +11,9 @@ import {
 	Star,
 	Trash2,
 } from "lucide-react";
+import SearchHelp from "./SearchHelp.jsx";
 
+export const DRAG_MIME = "application/x-ezmail-uids";
 const PAGE_SIZE = 50;
 const SWIPE_TRIGGER = 80; // px left before release acts
 const SWIPE_MAX = 120;
@@ -64,7 +66,9 @@ const MessageRow = memo(function MessageRow({
 	onToggle,
 	onClick,
 	alwaysRead,
+	snippet, // plain-text body preview, or undefined
 	swipe, // { label: "Archive" | "Delete", onSwipe } — mobile swipe-left
+	onDragStart, // (event, msg) — set only on fine-pointer desktops
 }) {
 	const isUnread = !alwaysRead && !msg.seen;
 	const isFlagged = msg.flags?.includes("\\Flagged");
@@ -96,6 +100,8 @@ const MessageRow = memo(function MessageRow({
 					onClick(msg);
 				}}
 				{...handlers}
+				draggable={onDragStart ? true : undefined}
+				onDragStart={onDragStart ? (e) => onDragStart(e, msg) : undefined}
 				data-uid={msg.uid}
 				style={{
 					transform: dx ? `translateX(${dx}px)` : undefined,
@@ -135,17 +141,24 @@ const MessageRow = memo(function MessageRow({
 						>
 							{msg.fromName || msg.from}
 						</div>
-						<div className="flex items-center gap-2">
+						{/* The snippet (plain text) follows the subject on desktop and
+						    wraps to its own line on mobile. */}
+						<div className="flex flex-wrap items-center gap-x-2 md:flex-nowrap">
 							{isUnread && (
 								<span className="h-2 w-2 shrink-0 rounded-full bg-accent" />
 							)}
 							<div
-								className={`truncate text-sm ${
+								className={`min-w-0 truncate text-sm ${
 									isUnread ? "text-ink-2" : "text-ink-muted"
 								}`}
 							>
 								{msg.subject}
 							</div>
+							{snippet && (
+								<div className="min-w-0 grow basis-full truncate text-xs text-ink-faint md:basis-0 md:text-sm md:before:mr-2 md:before:content-['–']">
+									{snippet}
+								</div>
+							)}
 						</div>
 					</div>
 					<div className="shrink-0 text-right">
@@ -167,9 +180,9 @@ function formatDate(date) {
 		: d.toLocaleDateString([], { month: "short", day: "numeric" });
 }
 
-// Builds the SWR key for a given folder / page / sort / search.
-const listKey = (folder, page, sort, search) =>
-	`/mail/messages/${encodeURIComponent(folder)}?page=${page}&pageSize=${PAGE_SIZE}&sort=${sort}&search=${encodeURIComponent(search || "")}`;
+// Builds the SWR key for a given folder / page / sort / search / previews.
+const listKey = (folder, page, sort, search, snippets) =>
+	`/mail/messages/${encodeURIComponent(folder)}?page=${page}&pageSize=${PAGE_SIZE}&sort=${sort}&search=${encodeURIComponent(search || "")}${snippets ? "&snippets=1" : ""}`;
 const fetcher = async (url) => {
 	const res = await apiCall.get(url);
 	return res?.data || { messages: [], total: 0, page: 1, pageSize: PAGE_SIZE };
@@ -188,6 +201,8 @@ export default function MessageList({
 	keyboardEnabled = true,
 	refreshInterval = 10000,
 	swipeAction, // { label, onSwipe(msg) } or undefined
+	draggable = false, // rows drag onto folders (fine pointer only)
+	snippets = true, // ask for and show body previews
 }) {
 	const [sort, setSort] = useState("desc");
 	const [search, setSearch] = useState("");
@@ -203,7 +218,7 @@ export default function MessageList({
 	const anchorRef = useRef(null);
 
 	const { data, isValidating, error, mutate } = useSWR(
-		activeFolder ? listKey(activeFolder, page, sort, search) : null,
+		activeFolder ? listKey(activeFolder, page, sort, search, snippets) : null,
 		fetcher,
 		{ revalidateOnFocus: false, refreshInterval },
 	);
@@ -238,12 +253,26 @@ export default function MessageList({
 
 	const refresh = useCallback(() => mutate(), [mutate]);
 
+	// Stable accessors for the parent: the page's messages in display order,
+	// and opening one by UID (same path as a click: marks read, moves cursor).
+	const messagesRef = useRef(messages);
+	messagesRef.current = messages;
+	const openRef = useRef(null);
+	const getMessages = useCallback(() => messagesRef.current, []);
+	const openUid = useCallback((uid) => {
+		const msg = messagesRef.current.find((m) => m.uid === uid);
+		if (msg) openRef.current?.(msg);
+	}, []);
+
 	// Expose mutate() + loading + pagination to the parent (MailPage) so it can
 	// refresh after mutations and render a fixed bottom pagination bar.
+	// In-flight auto mark-read per UID, so callers can order a later unflag after it.
+	const markReadRef = useRef(new Map());
+	const pendingRead = useCallback((uid) => markReadRef.current.get(Number(uid)), []);
 	useEffect(() => {
 		if (onReady)
-			onReady({ refresh, isValidating, page, setPage, total, totalPages });
-	}, [onReady, refresh, isValidating, page, total, totalPages]);
+			onReady({ refresh, isValidating, page, setPage, total, totalPages, getMessages, openUid, pendingRead });
+	}, [onReady, refresh, isValidating, page, total, totalPages, getMessages, openUid, pendingRead]);
 
 	const openMessage = useCallback(
 		(msg) => {
@@ -258,7 +287,7 @@ export default function MessageList({
 					}),
 					false,
 				);
-				apiCall
+				const req = apiCall
 					.post("/mail/flags", {
 						folder: activeFolder,
 						uids: [msg.uid],
@@ -272,7 +301,11 @@ export default function MessageList({
 					.catch((err) => {
 						setMarkError(err.message || "Could not mark message read");
 						mutate();
+					})
+					.finally(() => {
+						if (markReadRef.current.get(msg.uid) === req) markReadRef.current.delete(msg.uid);
 					});
+				markReadRef.current.set(msg.uid, req);
 			}
 			setCursor(msg.uid);
 			anchorRef.current = null;
@@ -282,6 +315,38 @@ export default function MessageList({
 			}
 		},
 		[activeFolder, alwaysRead, onOpenMessage, onMarkedRead, mutate],
+	);
+	openRef.current = openMessage;
+
+	// Desktop drag onto a sidebar folder. A row in the selection drags the
+	// whole selection; MailPage decides the source folder, not this payload.
+	const [finePointer] = useState(
+		() => !!window.matchMedia?.("(hover: hover) and (pointer: fine)").matches,
+	);
+	const canDrag = draggable && finePointer;
+	// Ref keeps the handler stable so memoised rows don't re-render per selection.
+	const selectedRef = useRef(selected);
+	selectedRef.current = selected;
+	const onDragStart = useCallback(
+		(e, msg) => {
+			const sel = selectedRef.current;
+			const uids = sel?.has(msg.uid) ? [...sel] : [msg.uid];
+			const label = `${uids.length} message${uids.length === 1 ? "" : "s"}`;
+			const dt = e.dataTransfer;
+			dt.setData(DRAG_MIME, JSON.stringify({ uids, folder: activeFolder }));
+			dt.setData("text/plain", label);
+			dt.effectAllowed = "move";
+			if (dt.setDragImage) {
+				const ghost = document.createElement("div");
+				ghost.textContent = label;
+				ghost.className =
+					"fixed -left-[999px] top-0 rounded-md bg-accent px-2 py-1 text-xs font-medium text-white";
+				document.body.appendChild(ghost);
+				dt.setDragImage(ghost, -8, -8);
+				setTimeout(() => ghost.remove(), 0);
+			}
+		},
+		[activeFolder],
 	);
 
 	// ---- keyboard navigation ----
@@ -410,11 +475,17 @@ export default function MessageList({
 						value={searchInput}
 						onChange={(e) => setSearchInput(e.target.value)}
 						onKeyDown={(e) => e.key === "Escape" && e.currentTarget.blur()}
-						placeholder="Search mail…"
+						placeholder="Search (from:, is:unread…)"
 						className="w-full rounded-md border border-hair bg-panel/60 py-1.5 pl-8 pr-10 text-sm text-ink-2 outline-none transition placeholder:text-ink-faint focus:border-indigo-600"
 					/>
 					{searchInput && <button type="button" onClick={() => setSearchInput("")} aria-label="Clear search" className="absolute right-2 top-1 text-ink-muted">×</button>}
 				</div>
+				<SearchHelp
+					onInsert={(op) => {
+						setSearchInput((cur) => (cur.trim() ? `${cur.trim()} ${op}` : op));
+						document.getElementById("mail-search")?.focus();
+					}}
+				/>
 				<button
 					type="button"
 					onClick={() => setSort(sort === "desc" ? "asc" : "desc")}
@@ -461,7 +532,9 @@ export default function MessageList({
 						onToggle={onToggleSelect}
 						onClick={openMessage}
 						alwaysRead={alwaysRead}
+						snippet={snippets ? msg.snippet || undefined : undefined}
 						swipe={swipeAction}
+						onDragStart={canDrag ? onDragStart : undefined}
 					/>
 				))}
 			</div>

@@ -4,6 +4,35 @@ All notable changes to ezmail are recorded here. The format follows [Keep a Chan
 
 ## [Unreleased]
 
+### Added
+- Reader toolbar with Archive, Move to…, Star/Unstar and Mark unread; shortcuts `s` (star) and `u` (mark unread). After archiving, deleting or moving from the reader the next message opens, and `j` / `k` also step between messages while reading.
+- Drag messages onto a sidebar folder (desktop pointers only), with undo; dropping on Trash deletes.
+- Recipient autocomplete in To, Cc and Bcc from addresses you have sent to. The history is kept in this browser per mailbox (`ezmail_contacts:<mailbox>`, at most 200 entries) and is cleared on logout.
+- Undo send: a 5-second countdown with an Undo button before a message is sent. Navigation is blocked during it, and closing the tab meanwhile sends nothing and keeps the message as the local draft.
+- Per-mailbox plain-text signature (Settings → Profile, up to 2000 characters), added to new messages, replies and forwards.
+- Search operators: `from:`, `to:`, `subject:` (values can be "quoted"), `is:unread|read|starred|unstarred`, and `before:` / `after:` with `YYYY-MM-DD` (UTC days). A help popover sits on the search box. `has:attachment` is not supported.
+- Rename and delete folders from the sidebar menu. Only empty user folders can be deleted, INBOX and special-use folders are protected, and a notice appears when filter rules still reference the folder (they are not rewritten).
+- Image attachments (PNG, JPEG, GIF, WebP) open in a preview lightbox. PDFs and other types still download.
+- Server-side drafts: the composer saves to the IMAP Drafts folder when it closes and, while you edit, at most every 30 seconds (skipped while the draft's attachments total 2 MiB or more; those are saved on close only). Saved attachments stay in the draft, up to 24 MiB combined per message. Resume one with "Edit draft" in the Drafts folder (plain-text mode). The local browser draft remains.
+- Message previews (the first 140 characters of the body) under each subject in the message list, with a "Show message previews" setting (on by default; stored as `ezmail_previews` in the browser).
+
+### Changed
+- Every delete in the UI now goes through `POST /api/v1/mail/delete`, which creates a Trash folder when the mailbox has none instead of failing. Conversation view also searches Archive.
+- **API:** `GET /api/v1/mail/message/:folder/:uid` returns 404 (was 400) when the message no longer exists. `POST /api/v1/mail/delete` responses may now also carry `inboxUnseen`, `movedUids` and `trash` (`trash` only when the delete was a move to Trash); existing fields are unchanged. No database, session or environment variable changes.
+- **API (additive):** `GET`/`PUT /api/v1/profile` carry `signature`; every `PUT` field is now optional and an omitted field keeps its saved value (a signature over 2000 characters after newline normalisation returns 400, `""` clears it). `GET /api/v1/mail/messages/:folder` `search` understands the operators above, and `snippets=1` adds `snippet` to each row. New `POST /api/v1/mail/folders/rename` (`path`, `newName`) and `POST /api/v1/mail/folders/delete` (`path`) return `filtersAffected` when saved filter rules reference the folder; they answer 400 for INBOX and special-use folders, 404 for an unknown folder and 409 for an existing target or a folder that is not empty. `GET /api/v1/mail/message/:folder/:uid/attachment/:index?inline=1` serves PNG, JPEG, GIF and WebP inline; every other type is unchanged. New `POST /api/v1/mail/drafts` (the send body with every field optional, plus `replaces`) and `POST /api/v1/mail/drafts/discard` (`uid`); message responses gain optional `bcc` (drafts) and `inReplyTo`. `POST /api/v1/mail/move` now rejects an empty `from` or `to` with 400. No database, session or environment variable changes.
+- Dependency updates: deadslog 2 (no code changes), Biome 2.6, imapflow 2.11, mailparser 3.14, nodemailer 10.4, marked 18.2, plus patch and minor bumps.
+
+### Fixed
+- Messages whose body part is `Content-Disposition: inline` without a filename (for example from mutt) showed a blank body and a phantom attachment. Forward drafts saved in the browser before this release lose their forwarded-attachment references and show the "removed from an older draft" warning, because attachment numbering changed.
+- Plain-text mail that looks like Markdown was rendered in the app page and could load remote images without the "Load remote images" opt-in. It now renders in the same sandboxed frame as HTML mail.
+- Opening a deleted message returned 400 "Bad request"; it now returns 404.
+- A failed move, delete or Empty Trash could be reported as success ("moved to Trash") because imapflow returns a failure value instead of throwing. These now return 502.
+- Creating a folder that already exists on the server but was missing from the listing returned success instead of 409.
+- The IMAP connection pool could exceed its per-mailbox limit under one wake-up interleaving.
+- A failing live-update connection made each tab reconnect every ~3 s indefinitely. The client now backs off from 3 s to 60 s (the delay resets on a mail event or once the stream has stayed up 30 s), the server sends an SSE `retry:` hint, and the watcher uses the bounded connect timeouts.
+- `GET /api/v1/mail/messages` with a page or page size below 1 returned 502; values are now clamped.
+- Very long threads could drop the message's own Message-ID from the thread lookup.
+
 ## [3.0.0] - 2026-10-30
 
 ### Breaking

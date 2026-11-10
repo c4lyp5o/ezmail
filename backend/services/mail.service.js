@@ -10,6 +10,8 @@ import { generalLogger as logger } from "../logger.js";
 import { getUser } from "../plugins/auth.plugin.js";
 import { createPool } from "./imap-pool.service.js";
 import { getDisplayName } from "./profile.service.js";
+import { parseSearchQuery } from "./search-query.js";
+import { snippetFromPart } from "./snippet.js";
 
 // Builds an IMAP client bound to the authenticated user's mailbox. No global
 // account — the credentials come from the server-side session (created only
@@ -95,12 +97,10 @@ function destinationUids(res) {
 // Finds a special-use folder (RFC 6154), falling back to common names —
 // servers call Trash "Deleted Items", "Bin", etc.
 async function findSpecialFolder(client, use, namePattern) {
-	const list = await client.list();
-	return (
-		list.find((f) => f.specialUse === use) ||
-		list.find((f) => namePattern.test(f.name))
-	)?.path;
+	return specialIn(await client.list(), use, namePattern);
 }
+const specialIn = (list, use, namePattern) =>
+	(list.find((f) => f.specialUse === use) || list.find((f) => namePattern.test(f.name)))?.path;
 const TRASH_NAMES = /^(trash|bin|deleted( items| messages)?)$/i;
 const SENT_NAMES = /^sent( items| mail| messages)?$/i;
 // Same character set the Sieve filters accept, so a new folder can always be a rule target.
@@ -145,7 +145,11 @@ function attachmentParts(structure) {
 	function visit(node, related = false) {
 		if (!node) return;
 		const disposition = String(node.disposition || "").toLowerCase();
-		const attached = disposition === "attachment" || disposition === "inline" ||
+		const type = String(node.type || "").toLowerCase();
+		// A nameless inline text/plain or text/html part is the message body.
+		const bodyText = type === "text/plain" || type === "text/html";
+		const attached = disposition === "attachment" ||
+			(disposition === "inline" && !bodyText) ||
 			!!node.dispositionParameters?.filename || !!node.parameters?.name ||
 			(related && !!node.id);
 		if (attached && node.part) {
@@ -181,21 +185,27 @@ async function loadAttachment(client, uid, part) {
 	return content;
 }
 
-// Fetch only displayable text parts; attachment bodies are downloaded on demand.
-async function loadDisplayBodies(client, uid, structure, attachments) {
+// The displayable text/plain and text/html body nodes (attachments excluded).
+function textBodyNodes(structure, attachments) {
 	const attachmentIds = new Set(attachments.map((part) => part.part));
 	const candidates = { "text/plain": [], "text/html": [] };
 	function visit(node) {
 		if (!node || attachmentIds.has(node.part)) return;
 		const type = String(node.type || "").toLowerCase();
-		if (candidates[type] && node.part) candidates[type].push(node.part);
+		if (candidates[type] && node.part) candidates[type].push(node);
 		for (const child of node.childNodes || []) visit(child);
 	}
 	visit(withRootPart(structure));
+	return candidates;
+}
+
+// Fetch only displayable text parts; attachment bodies are downloaded on demand.
+async function loadDisplayBodies(client, uid, structure, attachments) {
+	const candidates = textBodyNodes(structure, attachments);
 	const bodies = { text: "", html: "" };
 	let total = 0;
 	for (const [type, key] of [["text/plain", "text"], ["text/html", "html"]]) {
-		for (const part of candidates[type]) {
+		for (const { part } of candidates[type]) {
 			const result = await client.download(Number(uid), part, { uid: true, maxBytes: 8 * 1024 * 1024 + 1 });
 			if (!result?.content) throw new Error("Message body part not found");
 			const chunks = [];
@@ -213,6 +223,45 @@ async function loadDisplayBodies(client, uid, structure, attachments) {
 		}
 	}
 	return bodies;
+}
+
+// Snippets: one partial BODY.PEEK fetch per distinct text part id on the page.
+const SNIPPET_BYTES = 512;
+const SNIPPET_MAX_GROUPS = 6;
+
+// Adds `snippet` to the mapped rows in place. Never throws: on any failure
+// the rows simply keep no snippet.
+async function addSnippets(client, pageItems, rows) {
+	const groups = new Map(); // part id -> [{ uid, node, row }]
+	pageItems.forEach((msg, i) => {
+		const nodes = textBodyNodes(msg.bodyStructure, attachmentParts(msg.bodyStructure));
+		const node = nodes["text/plain"][0] || nodes["text/html"][0];
+		if (!node || !msg.uid) return;
+		if (!groups.has(node.part)) groups.set(node.part, []);
+		groups.get(node.part).push({ uid: msg.uid, node, row: rows[i] });
+	});
+	// Largest groups first, so the cap drops the fewest rows.
+	const chosen = [...groups].sort((a, b) => b[1].length - a[1].length).slice(0, SNIPPET_MAX_GROUPS);
+	for (const [part, members] of chosen) {
+		try {
+			const byUid = new Map(members.map((m) => [m.uid, m]));
+			const query = { uid: true, bodyParts: [{ key: part, start: 0, maxLength: SNIPPET_BYTES }] };
+			for await (const msg of client.fetch([...byUid.keys()], query, { uid: true })) {
+				const m = byUid.get(msg?.uid);
+				const buf = msg?.bodyParts?.get?.(part.toLowerCase());
+				if (!m || !buf) continue;
+				m.row.snippet = snippetFromPart(buf, {
+					type: m.node.type,
+					encoding: m.node.encoding,
+					charset: m.node.parameters?.charset,
+				});
+			}
+		} catch (err) {
+			// Stop here: a broken connection would fail every remaining group too.
+			logger.warn(`[MAIL] snippet fetch failed for part ${part}: ${err.message}`);
+			return;
+		}
+	}
 }
 
 const attachmentUrl = (folder, uid, index) =>
@@ -233,9 +282,27 @@ function rewriteCidLinks(html, attachments, folder, uid) {
 }
 
 // RFC 6266 filename for Content-Disposition (ASCII fallback + UTF-8).
-function contentDisposition(filename) {
+function contentDisposition(filename, type = "attachment") {
 	const ascii = filename.replace(/[^\x20-\x7e]|["\\]/g, "_");
-	return `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(filename)}`;
+	return `${type}; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(filename)}`;
+}
+
+// Types that may be served inline (?inline=1) for previews, mapped to the
+// fixed Content-Type and CSP sent. Never SVG/HTML or anything scriptable.
+const IMAGE_CSP = "default-src 'none'; sandbox";
+const INLINE_TYPES = new Map([
+	["image/png", IMAGE_CSP],
+	["image/jpeg", IMAGE_CSP],
+	["image/gif", IMAGE_CSP],
+	["image/webp", IMAGE_CSP],
+]);
+
+// The allowlisted media type (the Map's own key string) for a declared
+// Content-Type, ignoring case and parameters; undefined when not allowlisted.
+function inlineType(declared) {
+	const bare = String(declared || "").split(";")[0].trim().toLowerCase();
+	for (const key of INLINE_TYPES.keys()) if (key === bare) return key;
+	return undefined;
 }
 
 function mapEnvelope(msg) {
@@ -269,6 +336,196 @@ async function currentInboxUnseen(client) {
 	try {
 		return Number((await client.status("INBOX", { unseen: true }))?.unseen) || 0;
 	} catch {
+		return undefined;
+	}
+}
+
+// imapflow resolves a failed MOVE (server NO, missing destination) to false
+// rather than throwing; make it throw so withClient answers 502. imapflow also
+// returns false for an empty UID list, which is a no-op, not a failure.
+async function moveOrThrow(client, uids, to) {
+	if (Array.isArray(uids) && !uids.length) return undefined;
+	const moved = await client.messageMove(uids, to, { uid: true });
+	if (!moved) throw new Error(`Could not move messages to ${to}`);
+	return moved;
+}
+
+// A renamable/deletable folder from the server's own LIST (the client's path is
+// only a lookup key), or { error: [status, message] }. INBOX, special-use
+// folders and the folders findSpecialFolder resolves by name are refused.
+async function userFolder(client, path) {
+	const list = await client.list();
+	const folder = list.find((f) => f.path === path);
+	if (!folder) return { error: [404, "Folder not found."] };
+	const resolved = [
+		specialIn(list, "\\Trash", TRASH_NAMES),
+		specialIn(list, "\\Sent", SENT_NAMES),
+		specialIn(list, "\\Archive", ARCHIVE_NAMES),
+	];
+	if (folder.path.toUpperCase() === "INBOX" || folder.specialUse || resolved.includes(folder.path))
+		return { error: [400, "INBOX and system folders can't be renamed or deleted."] };
+	return { list, folder, resolved, delimiter: folder.delimiter ? String(folder.delimiter) : "" };
+}
+
+// Whether saved filter rules file into `path` or a folder below it. Read-only
+// and best effort: undefined when the rules can't be read (e.g. ManageSieve down).
+async function filtersReference(cookie, path, delimiter) {
+	try {
+		const { FilterService } = await import("./filter.service.js");
+		const data = (await FilterService.get({ cookie, status: () => undefined }))?.data;
+		if (!data || data.mode === "unavailable" || data.conflict || !Array.isArray(data.rules)) return undefined;
+		const target = path.toLowerCase();
+		return data.rules.some((rule) => {
+			const folder = String(rule.folder || "").toLowerCase();
+			return folder === target || (!!delimiter && folder.startsWith(target + delimiter.toLowerCase()));
+		});
+	} catch {
+		return undefined;
+	}
+}
+
+// Maps a folder-command result to the response: { error } → that status.
+async function folderResponse(res, status, cookie, data) {
+	if (res?.data?.error) {
+		const [code, message] = res.data.error;
+		return status(code, { success: false, message });
+	}
+	if (!res?.data) return res;
+	const filtersAffected = await filtersReference(cookie, res.data.path, res.data.delimiter);
+	return { success: true, data: { ...data(res.data), filtersAffected } };
+}
+
+// --- message composition shared by send and drafts ---
+
+// If the sender used markdown and no explicit html was provided, convert
+// markdown → HTML, then sanitize so any markdown-embedded HTML/scripts can't
+// execute in recipients' mail clients.
+function composeHtml(body) {
+	if (body.html || !body.markdown || !body.text) return body.html;
+	try {
+		return sanitizeHtml(marked.parse(body.text));
+	} catch {
+		return undefined;
+	}
+}
+
+// Uploaded (base64) plus forwarded attachments, or { error } for a 400.
+// Throws on IMAP failure or when forwarded attachments exceed the limit.
+async function composeAttachments(user, body) {
+	const attachments = (body.attachments || []).map((a) => ({
+		filename: a.filename,
+		contentType: a.contentType || "application/octet-stream",
+		content: Buffer.from(a.content || "", "base64"),
+	}));
+
+	// Forwarded attachments are copied from the original message here,
+	// so the browser never has to download and re-upload them.
+	const fwd = body.forwardAttachments;
+	if (fwd?.indexes?.length) {
+		if (fwd.indexes.length > 100) return { error: "Too many forwarded attachments" };
+		const forwarded = await withImap(user, async (client) => {
+			await client.mailboxOpen(fwd.folder || "INBOX");
+			const original = await client.fetchOne(Number(fwd.uid), { bodyStructure: true }, { uid: true });
+			const parts = attachmentParts(original?.bodyStructure);
+			if (fwd.indexes.some((i) => !parts[i])) return null;
+			const result = [];
+			let total = 0;
+			for (const i of fwd.indexes) {
+				const a = parts[i];
+				const content = await loadAttachment(client, fwd.uid, a);
+				total += content.length;
+				if (total > MAX_ATTACHMENT_BYTES) throw new Error("Forwarded attachments exceed 25 MiB limit");
+				result.push({ filename: a.filename, contentType: a.contentType, content });
+			}
+			return result;
+		});
+		if (!forwarded) return { error: "Forwarded attachment not found" };
+		attachments.push(...forwarded);
+	}
+	return { attachments };
+}
+
+function composeMail(user, body, html, attachments) {
+	const domain = user.mailbox.split("@")[1] || "localhost";
+	return {
+		from: {
+			name: getDisplayName(user.mailbox) || user.mailbox,
+			address: user.mailbox,
+		},
+		to: body.to || undefined,
+		cc: body.cc || undefined,
+		bcc: body.bcc || undefined,
+		subject: body.subject || "",
+		text: body.text || "",
+		html: html || undefined,
+		attachments: attachments.length ? attachments : undefined,
+		inReplyTo: body.inReplyTo || undefined,
+		references: body.references || undefined,
+		// Fixed id + date so the Sent copy is the same message as the one
+		// delivered (threading in other clients matches it up).
+		messageId: `<${crypto.randomUUID()}@${domain}>`,
+		date: new Date(),
+	};
+}
+
+// --- drafts ---
+const DRAFTS_NAMES = /^drafts?$/i;
+
+// Creates a folder, tolerating only an explicit already-exists.
+async function createIfMissing(client, path) {
+	try {
+		// imapflow returns { created: false } on ALREADYEXISTS (another tab, or unlisted).
+		await client.mailboxCreate(path);
+	} catch (err) {
+		// Tolerate only an explicit already-exists; "doesn't exist", [NONEXISTENT] etc. are failures.
+		const already = err.serverResponseCode
+			? err.serverResponseCode === "ALREADYEXISTS"
+			: /already ?exists/i.test(`${err.responseText || ""} ${err.response || ""} ${err.message}`);
+		if (!already) throw err;
+	}
+}
+
+// The account's Drafts folder by role (then name); with `create`, made if missing.
+async function draftsFolder(client, create) {
+	const found = await findSpecialFolder(client, "\\Drafts", DRAFTS_NAMES);
+	if (found || !create) return found;
+	await createIfMissing(client, "Drafts");
+	return "Drafts";
+}
+
+// Removes one message from the Drafts folder, only if it carries \Draft.
+// false when it doesn't exist or isn't a draft; throws when the delete fails.
+// Note: a mailbox that doesn't accept \Draft as a permanent flag makes imapflow
+// drop it silently, so the copy never matches here and stays (replaced: false).
+async function removeDraft(client, drafts, uid) {
+	const lock = await client.getMailboxLock(drafts);
+	try {
+		const msg = await client.fetchOne(uid, { uid: true, flags: true }, { uid: true });
+		if (!msg || !toFlagsArray(msg.flags).includes("\\Draft")) return false;
+		if (!(await client.messageDelete([uid], { uid: true }))) throw new Error(`Could not remove draft ${uid}`);
+		return true;
+	} finally {
+		lock.release();
+	}
+}
+
+// Without UIDPLUS the APPEND reply has no UID: look the copy up by its unique
+// Message-ID. Best-effort; undefined on any failure or no match.
+async function findDraftUid(client, drafts, messageId) {
+	if (!messageId) return undefined;
+	try {
+		const lock = await client.getMailboxLock(drafts);
+		try {
+			// imapflow resolves false on a failed SEARCH, undefined without a mailbox.
+			const found = await client.search({ header: { "message-id": messageId } }, { uid: true });
+			if (!Array.isArray(found) || !found.length) return undefined;
+			const uid = Math.max(...found);
+			return Number.isInteger(uid) && uid > 0 ? uid : undefined;
+		} finally {
+			lock.release();
+		}
+	} catch (err) {
+		logImapError(err);
 		return undefined;
 	}
 }
@@ -322,11 +579,67 @@ export const MailService = {
 			const existing = await client.list();
 			if (existing.some((f) => f.path.toLowerCase() === name.toLowerCase())) return { path: name, created: false };
 			const made = await client.mailboxCreate(name);
-			return { path: made?.path || name, created: true };
+			// imapflow reports ALREADYEXISTS (e.g. an unlisted folder) as created: false.
+			return { path: made?.path || name, created: made?.created !== false };
 		});
 		if (res?.data?.created === false)
 			return status(409, { success: false, message: "A folder with that name already exists." });
 		return res?.data ? { success: true, data: { path: res.data.path } } : res;
+	},
+
+	// --- rename a user folder (keeps its parent) ---
+	renameFolder: async ({ cookie, body, status }) => {
+		const user = await getUser(cookie);
+		if (!user?.mailbox || !user?.password)
+			return status(401, { success: false, message: "Unauthorized" });
+		const newName = body.newName.trim();
+		if (!NEW_FOLDER_NAME.test(newName) || newName.toUpperCase() === "INBOX")
+			return status(400, { success: false, message: "Use letters, numbers, spaces, dashes and underscores." });
+		const res = await withClient(user, status, async (client) => {
+			const found = await userFolder(client, body.path);
+			if (found.error) return found;
+			const { list, folder, resolved, delimiter } = found;
+			// Renaming a parent would move any system folder nested below it.
+			if (delimiter && list.some((f) => f.path.startsWith(folder.path + delimiter) && (f.specialUse || resolved.includes(f.path))))
+				return { error: [400, "This folder contains a system folder and can't be renamed."] };
+			if (delimiter && newName.includes(delimiter))
+				return { error: [400, "Folder names can't contain the hierarchy delimiter."] };
+			const parent = folder.parentPath ??
+				(delimiter && folder.path.includes(delimiter) ? folder.path.slice(0, folder.path.lastIndexOf(delimiter)) : "");
+			const newPath = parent ? `${parent}${delimiter}${newName}` : newName;
+			if (newPath === folder.path) return { error: [400, "The folder already has that name."] };
+			if (list.some((f) => f.path !== folder.path && f.path.toLowerCase() === newPath.toLowerCase()))
+				return { error: [409, "A folder with that name already exists."] };
+			// imapflow throws on NO, but resolves undefined when not authenticated.
+			const renamed = await client.mailboxRename(folder.path, newPath);
+			if (!renamed) throw new Error(`Could not rename ${folder.path}`);
+			return { path: folder.path, newPath: renamed.newPath || newPath, delimiter };
+		});
+		return folderResponse(res, status, cookie, ({ path, newPath }) => ({ path, newPath }));
+	},
+
+	// --- delete an empty user folder ---
+	deleteFolder: async ({ cookie, body, status }) => {
+		const user = await getUser(cookie);
+		if (!user?.mailbox || !user?.password)
+			return status(401, { success: false, message: "Unauthorized" });
+		const res = await withClient(user, status, async (client) => {
+			const found = await userFolder(client, body.path);
+			if (found.error) return found;
+			const { list, folder, delimiter } = found;
+			const children = toFlagsArray(folder.flags).includes("\\HasChildren") ||
+				(!!delimiter && list.some((f) => f.path.startsWith(folder.path + delimiter)));
+			if (children) return { error: [409, "Delete or move this folder's subfolders first."] };
+			// imapflow resolves STATUS failures to false; never delete on an unknown count.
+			const info = await client.status(folder.path, { messages: true });
+			const count = Number(info?.messages);
+			if (!info || !Number.isInteger(count)) throw new Error(`Could not count messages in ${folder.path}`);
+			if (count > 0) return { error: [409, "Only empty folders can be deleted. Move or delete its messages first."] };
+			const deleted = await client.mailboxDelete(folder.path);
+			if (!deleted) throw new Error(`Could not delete ${folder.path}`);
+			return { path: folder.path, delimiter };
+		});
+		return folderResponse(res, status, cookie, ({ path }) => ({ path }));
 	},
 
 	// --- message list (envelope only) ---
@@ -335,11 +648,13 @@ export const MailService = {
 		if (!user?.mailbox || !user?.password)
 			return status(401, { success: false, message: "Unauthorized" });
 		const folder = params?.folder;
-		const page = Number(query?.page) || 1;
-		const pageSizeRaw = Number(query?.pageSize) || 50;
+		// Whole numbers >= 1; anything else would build an invalid sequence set.
+		const page = Math.max(1, Math.floor(Number(query?.page) || 1));
+		const pageSizeRaw = Math.max(1, Math.floor(Number(query?.pageSize) || 50));
 		const size = Math.min(pageSizeRaw, 100);
 		const sort = query?.sort || "desc"; // 'asc' | 'desc' by date
 		const search = (query?.search || "").trim();
+		const wantSnippets = query?.snippets === "1" || query?.snippets === "true";
 
 		return withClient(user, status, async (client) => {
 			const targetFolder = folder || "INBOX";
@@ -356,7 +671,7 @@ export const MailService = {
 				// 3. If search term is present, search UIDs
 				let searchUids = null;
 				if (search) {
-					const uids = await client.search({ text: search }, { uid: true });
+					const uids = await client.search(parseSearchQuery(search), { uid: true });
 					if (Array.isArray(uids) && uids.length) {
 						searchUids = new Set(uids);
 					} else {
@@ -413,6 +728,7 @@ export const MailService = {
 				// IMAP returns sequence/UID order; reverse for newest arrival first.
 				if (sort !== "asc") pageItems.reverse();
 				const messages = pageItems.map((msg) => mapEnvelope(msg));
+				if (wantSnippets && messages.length) await addSnippets(client, pageItems, messages);
 
 				return { messages, total, page, pageSize: size, sort, search };
 			} finally {
@@ -428,7 +744,7 @@ export const MailService = {
 		if (!user?.mailbox || !user?.password)
 			return status(401, { success: false, message: "Unauthorized" });
 		const { folder, uid } = params;
-		return withClient(user, status, async (client) => {
+		const res = await withClient(user, status, async (client) => {
 			await client.mailboxOpen(folder || "INBOX");
 			const msg = await client.fetchOne(
 				Number(uid),
@@ -494,14 +810,18 @@ export const MailService = {
 				fromName: parsed?.from?.value?.[0]?.name || "",
 				to: parsed?.to?.text || "",
 				cc: parsed?.cc?.text || "",
+				// Only drafts normally keep a Bcc header; undefined otherwise.
+				bcc: parsed?.bcc?.text || undefined,
 				replyTo: replyTo || "",
 				messageId: parsed?.messageId || undefined,
+				inReplyTo: parsed?.inReplyTo || undefined,
 				references: [parsed?.references || []].flat().join(" ") || undefined,
 				addresses: {
 					from: addressList(parsed?.from),
 					replyTo: addressList(parsed?.replyTo),
 					to: addressList(parsed?.to),
 					cc: addressList(parsed?.cc),
+					bcc: parsed?.bcc ? addressList(parsed.bcc) : undefined,
 				},
 				date: parsed?.date || msg.internalDate,
 				mailedBy,
@@ -513,6 +833,9 @@ export const MailService = {
 				attachments,
 			};
 		});
+		// Missing or expunged message.
+		if (res?.success && !res.data) return status(404, { success: false, message: "Not Found" });
+		return res;
 	},
 
 	// --- conversation: messages linked by Message-ID / References ---
@@ -528,11 +851,9 @@ export const MailService = {
 			const p = found?.parsed;
 			if (!p?.messageId) return [];
 
-			const ids = [
-				...new Set(
-					[p.messageId, p.inReplyTo, ...[p.references || []].flat()].filter(Boolean),
-				),
-			].slice(-25); // bound the search on very long threads
+			// Bound the search on very long threads, but never drop the message's own id.
+			const refs = [...[p.references || []].flat(), p.inReplyTo].filter(Boolean);
+			const ids = [...new Set([p.messageId, ...refs.slice(-24)])];
 			const terms = [
 				...ids.map((id) => ({ header: { "message-id": id } })),
 				{ header: { references: p.messageId } },
@@ -574,7 +895,7 @@ export const MailService = {
 	},
 
 	// --- one attachment's bytes (download, inline cid: images) ---
-	getAttachment: async ({ cookie, params, status }) => {
+	getAttachment: async ({ cookie, params, query, status }) => {
 		const user = await getUser(cookie);
 		if (!user?.mailbox || !user?.password)
 			return status(401, { success: false, message: "Unauthorized" });
@@ -594,6 +915,22 @@ export const MailService = {
 		}
 		const a = found;
 		if (!a) return status(404, { success: false, message: "Not Found" });
+
+		// ?inline=1 for an allowlisted type: shown in place, with a fixed
+		// Content-Type from the allowlist and no sniffing. Otherwise ignored.
+		const inline = query?.inline === "1" ? inlineType(a.contentType) : undefined;
+		if (inline) {
+			return new Response(a.content, {
+				headers: {
+					"Content-Type": inline,
+					"Content-Disposition": contentDisposition(a.filename || "attachment", "inline"),
+					"Content-Length": String(a.content.length),
+					"X-Content-Type-Options": "nosniff",
+					"Content-Security-Policy": INLINE_TYPES.get(inline),
+					"Cache-Control": "no-store",
+				},
+			});
+		}
 
 		// Served from our own origin, so never let it render as a page:
 		// always a download on navigation, no sniffing, sandboxed if opened.
@@ -624,9 +961,7 @@ export const MailService = {
 			const lock = await client.getMailboxLock(from);
 			let movedUids;
 			try {
-				movedUids = destinationUids(
-					await client.messageMove(targetUids, to, { uid: true }),
-				);
+				movedUids = destinationUids(await moveOrThrow(client, targetUids, to));
 			} finally {
 				lock.release();
 			}
@@ -635,8 +970,8 @@ export const MailService = {
 		});
 	},
 
-	// Permanently delete a single message: flag \Deleted then expunge it from the
-	// mailbox. Used when deleting from Trash — the message is removed for good.
+	// Delete messages: outside Trash a move to Trash (`trash` + `movedUids` in
+	// the response); inside Trash permanent (flag \Deleted + expunge, no `trash`).
 	deleteMessage: async ({ cookie, body, status }) => {
 		const user = await getUser(cookie);
 		if (!user?.mailbox || !user?.password)
@@ -644,25 +979,26 @@ export const MailService = {
 		const { uids, folder } = body;
 		const targetUids = Array.isArray(uids) ? uids.map(Number) : uids;
 		return withClient(user, status, async (client) => {
-			// Outside Trash a delete is a move to Trash; inside it, permanent.
 			let trash = await findSpecialFolder(client, "\\Trash", TRASH_NAMES);
-			if (!trash && folder !== "Trash") {
+			if (!trash) {
 				// Some mailboxes have no Trash yet; create it rather than failing the delete.
 				trash = "Trash";
-				await client.mailboxCreate(trash).catch(() => {});
+				await createIfMissing(client, trash);
 			}
+			const toTrash = folder !== trash;
+			let movedUids;
 			const lock = await client.getMailboxLock(folder);
 			try {
-				if (folder !== trash) {
-					await client.messageMove(targetUids, trash, { uid: true });
-				} else {
-					await client.messageDelete(targetUids, { uid: true });
+				if (toTrash) {
+					movedUids = destinationUids(await moveOrThrow(client, targetUids, trash));
+				} else if (targetUids.length && !(await client.messageDelete(targetUids, { uid: true }))) {
+					throw new Error("Could not delete messages");
 				}
 			} finally {
 				lock.release();
 			}
 			const inboxUnseen = await currentInboxUnseen(client);
-			return { uids: targetUids, folder: folder, inboxUnseen };
+			return { uids: targetUids, folder: folder, inboxUnseen, movedUids, trash: toTrash ? trash : undefined };
 		});
 	},
 
@@ -676,7 +1012,8 @@ export const MailService = {
 		return withClient(user, status, async (client) => {
 			const lock = await client.getMailboxLock(folder);
 			try {
-				if (client.mailbox?.exists) await client.messageDelete("1:*");
+				if (client.mailbox?.exists && !(await client.messageDelete("1:*")))
+					throw new Error("Could not empty folder");
 			} finally {
 				lock.release();
 			}
@@ -701,71 +1038,9 @@ export const MailService = {
 		});
 
 		try {
-			// If the sender used markdown and no explicit html was provided,
-			// convert markdown → HTML so the reader can render it nicely.
-			let html = body.html;
-			if (body.markdown && !html && body.text) {
-				try {
-					// Convert markdown → HTML, then sanitize so any markdown-embedded
-					// HTML/scripts can't execute in recipients' mail clients.
-					html = sanitizeHtml(marked.parse(body.text));
-				} catch {
-					html = undefined;
-				}
-			}
-
-			// Build nodemailer attachments from base64 payloads.
-			const attachments = (body.attachments || []).map((a) => ({
-				filename: a.filename,
-				contentType: a.contentType || "application/octet-stream",
-				content: Buffer.from(a.content || "", "base64"),
-			}));
-
-			// Forwarded attachments are copied from the original message here,
-			// so the browser never has to download and re-upload them.
-			const fwd = body.forwardAttachments;
-			if (fwd?.indexes?.length) {
-				if (fwd.indexes.length > 100) return status(400, { success: false, message: "Too many forwarded attachments" });
-				const forwarded = await withImap(user, async (client) => {
-					await client.mailboxOpen(fwd.folder || "INBOX");
-					const original = await client.fetchOne(Number(fwd.uid), { bodyStructure: true }, { uid: true });
-					const parts = attachmentParts(original?.bodyStructure);
-					if (fwd.indexes.some((i) => !parts[i])) return null;
-					const result = [];
-					let total = 0;
-					for (const i of fwd.indexes) {
-						const a = parts[i];
-						const content = await loadAttachment(client, fwd.uid, a);
-						total += content.length;
-						if (total > MAX_ATTACHMENT_BYTES) throw new Error("Forwarded attachments exceed 25 MiB limit");
-						result.push({ filename: a.filename, contentType: a.contentType, content });
-					}
-					return result;
-				});
-				if (!forwarded) return status(400, { success: false, message: "Forwarded attachment not found" });
-				attachments.push(...forwarded);
-			}
-
-			const domain = user.mailbox.split("@")[1] || "localhost";
-			const mail = {
-				from: {
-					name: getDisplayName(user.mailbox) || user.mailbox,
-					address: user.mailbox,
-				},
-				to: body.to,
-				cc: body.cc || undefined,
-				bcc: body.bcc || undefined,
-				subject: body.subject || "",
-				text: body.text || "",
-				html: html || undefined,
-				attachments: attachments.length ? attachments : undefined,
-				inReplyTo: body.inReplyTo || undefined,
-				references: body.references || undefined,
-				// Fixed id + date so the Sent copy is the same message as the one
-				// delivered (threading in other clients matches it up).
-				messageId: `<${crypto.randomUUID()}@${domain}>`,
-				date: new Date(),
-			};
+			const files = await composeAttachments(user, body);
+			if (files.error) return status(400, { success: false, message: files.error });
+			const mail = composeMail(user, body, composeHtml(body), files.attachments);
 			// Complete MIME construction before SMTP accepts the message.
 			const raw = await new MailComposer(mail).compile().build();
 			await transporter.sendMail({ ...mail, raw });
@@ -782,5 +1057,66 @@ export const MailService = {
 			logger.error(`[MAIL] 💥[smtp] ${err.message}`);
 			return status(502, { success: false, message: err.message });
 		}
+	},
+
+	// --- drafts (IMAP Drafts folder) ---
+	// Composed exactly like a sent message, but keeps Bcc. The previous copy
+	// (`replaces`) is removed only after the new one is stored, and a failure
+	// there never fails the save.
+	saveDraft: async ({ cookie, body, status }) => {
+		const user = await getUser(cookie);
+		if (!user?.mailbox || !user?.password)
+			return status(401, { success: false, message: "Unauthorized" });
+		let raw;
+		let messageId;
+		try {
+			const files = await composeAttachments(user, body);
+			if (files.error) return status(400, { success: false, message: files.error });
+			const mail = composeMail(user, body, composeHtml(body), files.attachments);
+			messageId = mail.messageId; // unique per save: finds the copy without UIDPLUS
+			const node = new MailComposer(mail).compile();
+			node.keepBcc = true; // the draft copy only; send never keeps Bcc
+			raw = await node.build();
+		} catch (err) {
+			logImapError(err);
+			return status(502, { success: false, message: "Mail command failed" });
+		}
+		return withClient(user, status, async (client) => {
+			const folder = await draftsFolder(client, true);
+			// imapflow throws when the server answers NO/BAD to APPEND, and
+			// resolves to undefined when unauthenticated or without a destination.
+			const appended = await client.append(folder, raw, ["\\Draft", "\\Seen"]);
+			if (!appended) throw new Error(`Could not save draft to ${folder}`);
+			let uid = Number(appended.uid);
+			if (!(Number.isInteger(uid) && uid > 0)) uid = await findDraftUid(client, folder, messageId);
+			let replaced;
+			// The new copy's UID is unknown and its attachments were copied from
+			// the old one: keep the old copy, or the client's references to its
+			// attachments (which it can't move to an unknown UID) would break.
+			const fwd = body.forwardAttachments;
+			const strands = !uid && fwd?.indexes?.length && (fwd.folder || "INBOX") === folder && Number(fwd.uid) === body.replaces;
+			if (body.replaces && strands) replaced = false;
+			else if (body.replaces) {
+				try {
+					replaced = await removeDraft(client, folder, body.replaces);
+				} catch (err) {
+					logImapError(err);
+					replaced = false;
+				}
+			}
+			return { uid, folder, replaced };
+		});
+	},
+
+	// Removes one draft (Drafts folder only, must carry \Draft). Idempotent.
+	discardDraft: async ({ cookie, body, status }) => {
+		const user = await getUser(cookie);
+		if (!user?.mailbox || !user?.password)
+			return status(401, { success: false, message: "Unauthorized" });
+		return withClient(user, status, async (client) => {
+			const folder = await draftsFolder(client, false);
+			if (!folder) return { uid: body.uid, removed: false };
+			return { uid: body.uid, removed: await removeDraft(client, folder, body.uid), folder };
+		});
 	},
 };

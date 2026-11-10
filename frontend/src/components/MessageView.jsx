@@ -3,20 +3,26 @@ import { marked } from "marked";
 import DOMPurify from "dompurify";
 import { apiCall } from "../utils/apiCall.js";
 import {
+	Archive,
 	ArrowLeft,
+	FolderInput,
 	Mail as MailIcon,
 	Trash2,
 	ChevronDown,
 	ChevronRight,
 	MessagesSquare,
 	Paperclip,
+	PencilLine,
 	Download,
 	FileWarning,
 	Forward,
 	Image as ImageIcon,
 	Reply,
 	ReplyAll,
+	Star,
+	StarOff,
 } from "lucide-react";
+import ImagePreview, { isPreviewable } from "./ImagePreview.jsx";
 
 function DetailRow({ label, value }) {
 	return (
@@ -130,10 +136,16 @@ export default function MessageView({
 	onBack,
 	onDelete,
 	onCompose,
+	onEditDraft, // set only for the Drafts folder
 	onOpenThread,
 	setShowRemote,
 	showRemote,
 	onLoaded,
+	onArchive, // omitted where archiving makes no sense
+	onMove,
+	onToggleStar,
+	starred = false,
+	onMarkUnread,
 }) {
 	const [msg, setMsg] = useState(initialMsg || null);
 	const [loading, setLoading] = useState(true);
@@ -141,12 +153,22 @@ export default function MessageView({
 	const [retryCount, setRetryCount] = useState(0);
 	const [showDetails, setShowDetails] = useState(false);
 
-	// True when the loaded HTML contains externally-hosted images (http(s)://),
+	// Markdown-looking plain text renders as HTML in the same sandboxed frame
+	// as HTML mail, so it gets the same remote-content gate (emailCsp) and
+	// link handling instead of loading trackers into the app page.
+	const bodyHtml = useMemo(() => {
+		if (msg?.html) return msg.html;
+		if (!looksLikeMarkdown(msg?.text)) return "";
+		// Incoming mail is untrusted — sanitize the rendered markdown too.
+		return DOMPurify.sanitize(marked.parse(msg.text));
+	}, [msg?.html, msg?.text]);
+
+	// True when the body contains externally-hosted images (http(s)://),
 	// so we can offer a Gmail-style "Load remote images" button.
 	const showRemoteButton = useMemo(() => {
-		if (!msg?.html) return false;
-		return /<img[^>]+src=["'](?:\/\/|https?:)?\/\//i.test(msg.html);
-	}, [msg?.html]);
+		if (!bodyHtml) return false;
+		return /<img[^>]+src=["'](?:\/\/|https?:)?\/\//i.test(bodyHtml);
+	}, [bodyHtml]);
 
 	const thisFolder = folder || "INBOX";
 
@@ -198,15 +220,24 @@ export default function MessageView({
 
 	// Inline (cid:) images render in the body; only real files get cards.
 	const files = (msg?.attachments || []).filter((a) => !a.related);
+	const attachmentHref = (a) => attachmentUrl(msg.folder || thisFolder, msg.uid, a.index);
+	// Image attachments open in a lightbox; previewIndex indexes `previews`.
+	const previews = files
+		.filter((a) => isPreviewable(a.contentType))
+		.map((a) => ({ index: a.index, url: attachmentHref(a), filename: a.filename }));
+	const [previewIndex, setPreviewIndex] = useState(null);
+	// biome-ignore lint/correctness/useExhaustiveDependencies: close on message change
+	useEffect(() => setPreviewIndex(null), [uid, thisFolder]);
 
-	const remove = async () => {
+	// The parent navigates afterwards (next message, or back to the list).
+	const run = (fn, fallback) => async () => {
 		try {
-			await onDelete();
-			onBack?.();
+			await fn?.();
 		} catch (err) {
-			setError(err.message || "Failed to delete");
+			setError(err.message || fallback);
 		}
 	};
+	const remove = run(onDelete, "Failed to delete");
 
 	// Size the body frame to its content (and keep it fitted as images load)
 	// so the reader scrolls as one page instead of a fixed-height box.
@@ -281,7 +312,16 @@ export default function MessageView({
 					<ArrowLeft className="h-4 w-4" /> Back
 				</button>
 				<div className="flex-1" />
-				{[
+				{/* A saved draft is continued, not replied to. */}
+				{onEditDraft && msg.flags?.includes("\\Draft") ? (
+					<button
+						type="button"
+						onClick={() => onEditDraft(msg)}
+						className="flex items-center gap-1 rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-white transition hover:bg-accent/90"
+					>
+						<PencilLine className="h-4 w-4" /> Edit draft
+					</button>
+				) : [
 					["reply", Reply, "Reply", "r"],
 					["replyAll", ReplyAll, "Reply all", "a"],
 					["forward", Forward, "Forward", "f"],
@@ -297,6 +337,32 @@ export default function MessageView({
 						<span className="hidden lg:inline">{label}</span>
 					</button>
 				))}
+				{[
+					onArchive && ["archive", Archive, "Archive", "e", onArchive],
+					onMove && ["move", FolderInput, "Move to…", null, onMove],
+					onToggleStar && [
+						"star",
+						starred ? StarOff : Star,
+						starred ? "Unstar" : "Star",
+						"s",
+						onToggleStar,
+					],
+					onMarkUnread && ["unread", MailIcon, "Mark unread", "u", onMarkUnread],
+				]
+					.filter(Boolean)
+					.map(([id, Icon, label, key, fn]) => (
+						<button
+							key={id}
+							type="button"
+							onClick={run(fn, `${label} failed`)}
+							aria-label={label}
+							title={key ? `${label} (${key})` : label}
+							className="flex items-center gap-1 rounded-lg px-2 py-1.5 text-sm text-ink-muted transition hover:bg-hover hover:text-ink-2"
+						>
+							<Icon className="h-4 w-4" />
+							<span className="hidden xl:inline">{label}</span>
+						</button>
+					))}
 				<button
 					type="button"
 					onClick={remove}
@@ -428,7 +494,42 @@ export default function MessageView({
 				{/* Attachment cards — download on click */}
 				{files.length > 0 && (
 					<div className="mt-4 space-y-2">
-						{files.map((a) => (
+						{files.map((a) => {
+							const preview = previews.findIndex((p) => p.index === a.index);
+							if (preview >= 0) {
+								return (
+									<div key={a.index} className="flex w-full items-center gap-1 rounded-lg border border-hair bg-panel/40 p-1.5 transition hover:border-indigo-700 hover:bg-panel">
+										<button
+											type="button"
+											onClick={() => setPreviewIndex(preview)}
+											aria-label={`Preview ${a.filename}`}
+											title={`Preview ${a.filename}`}
+											className="flex min-w-0 flex-1 items-center gap-3 rounded-md p-1.5 text-left focus-visible:outline-2 focus-visible:outline-accent"
+										>
+											<div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-accent/15 text-accent">
+												<ImageIcon className="h-4 w-4" />
+											</div>
+											<div className="min-w-0 flex-1">
+												<div className="truncate text-sm font-medium text-ink-2">{a.filename}</div>
+												<div className="truncate text-xs text-ink-muted">
+													{a.contentType}
+													{a.size ? ` · ${formatBytes(a.size)}` : ""}
+												</div>
+											</div>
+										</button>
+										<a
+											href={attachmentHref(a)}
+											download={a.filename}
+											aria-label={`Download ${a.filename}`}
+											title={`Download ${a.filename}`}
+											className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-ink-muted transition hover:bg-hover hover:text-ink-2 focus-visible:outline-2 focus-visible:outline-accent"
+										>
+											<Download className="h-4 w-4" />
+										</a>
+									</div>
+								);
+							}
+							return (
 							<a
 								key={a.index}
 								href={attachmentUrl(msg.folder || thisFolder, msg.uid, a.index)}
@@ -450,10 +551,15 @@ export default function MessageView({
 								</div>
 								<FileWarning className="h-4 w-4 shrink-0 text-ink-faint" />
 							</a>
-						))}
+							);
+						})}
 					</div>
 				)}
 			</div>
+
+			{previewIndex != null && previews[previewIndex] && (
+				<ImagePreview items={previews} index={previewIndex} onIndex={setPreviewIndex} onClose={() => setPreviewIndex(null)} />
+			)}
 
 			{/* Body — rendered inside a sandboxed iframe so the email's own CSS
 			    cannot bleed out into the app's styling. */}
@@ -471,31 +577,19 @@ export default function MessageView({
 						</button>
 					</div>
 				)}
-				{msg.html ? (
+				{bodyHtml ? (
 					<iframe
 						title="email-body"
 						sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
-						srcDoc={emailDoc(msg.html, showRemote)}
+						srcDoc={emailDoc(bodyHtml, showRemote)}
 						onLoad={fitFrame}
 						className="mail-body-frame block w-full rounded-lg border border-hair bg-white"
 						style={{ height: 120 }}
 					/>
 				) : msg.text ? (
-					looksLikeMarkdown(msg.text) ? (
-						<div
-							className="mail-markdown prose prose-invert max-w-none text-sm leading-relaxed text-ink-2"
-							// biome-ignore lint/security/noDangerouslySetInnerHtml: later
-							dangerouslySetInnerHTML={{
-								// Incoming mail is untrusted — sanitize the rendered
-								// markdown so embedded HTML/script can not run.
-								__html: DOMPurify.sanitize(marked.parse(msg.text)),
-							}}
-						/>
-					) : (
-						<pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed text-ink-2">
-							{msg.text}
-						</pre>
-					)
+					<pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed text-ink-2">
+						{msg.text}
+					</pre>
 				) : (
 					<div className="text-sm text-ink-muted">(no body)</div>
 				)}

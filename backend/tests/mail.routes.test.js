@@ -1,5 +1,5 @@
 import { beforeAll, beforeEach, describe, expect, test } from "bun:test";
-import { imap } from "./helpers/fake-imap.js";
+import { FakeImapFlow, imap } from "./helpers/fake-imap.js";
 import { smtp } from "./helpers/fake-smtp.js";
 import { call, login } from "./helpers/http.js";
 
@@ -62,6 +62,38 @@ describe("single-part messages", () => {
 	});
 });
 
+describe("inline body parts", () => {
+	test("a single-part inline text body renders and is not an attachment", async () => {
+		const uid = imap.addMessage("INBOX", {
+			bodyStructure: { type: "text/plain", size: 5, disposition: "inline" },
+			parts: { 1: Buffer.from("hello") },
+		});
+		const res = await get(`/message/INBOX/${uid}`);
+		expect(res.status).toBe(200);
+		expect(res.json.data.text).toBe("hello");
+		expect(res.json.data.attachments).toEqual([]);
+		const list = await get("/messages/INBOX");
+		expect(list.json.data.messages[0].attachments).toBe(0);
+	});
+
+	test("an inline text body beside a real attachment keeps the attachment's index", async () => {
+		const uid = imap.addMessage("INBOX", {
+			bodyStructure: { type: "multipart/mixed", childNodes: [
+				{ part: "1", type: "text/plain", size: 4, disposition: "inline" },
+				{ part: "2", type: "application/pdf", size: 4, disposition: "attachment", dispositionParameters: { filename: "a.pdf" } },
+				{ part: "3", type: "text/plain", size: 3, disposition: "inline", dispositionParameters: { filename: "notes.txt" } },
+			] },
+			parts: { 1: Buffer.from("body"), 2: Buffer.from("%PDF"), 3: Buffer.from("txt") },
+		});
+		const res = await get(`/message/INBOX/${uid}`);
+		expect(res.json.data.text).toBe("body");
+		expect(res.json.data.attachments.map((a) => [a.index, a.filename])).toEqual([[0, "a.pdf"], [1, "notes.txt"]]);
+		const file = await call("GET", `/api/v1/mail/message/INBOX/${uid}/attachment/0`, { cookie });
+		expect(file.status).toBe(200);
+		expect(file.headers.get("content-type")).toBe("application/pdf");
+	});
+});
+
 describe("create folder", () => {
 	test("creates a top-level folder and lists it", async () => {
 		const res = await post("/folders", { name: "  Finance 2026 " });
@@ -91,7 +123,120 @@ describe("delete without a Trash folder", () => {
 		const uid = imap.addMessage("INBOX", { subject: "bye" });
 		const res = await post("/delete", { folder: "INBOX", uids: [uid] });
 		expect(res.status).toBe(200);
+		expect(res.json.data).toMatchObject({ trash: "Trash", movedUids: [1] });
 		expect(imap.boxes.get("Trash").messages.map((m) => m.envelope.subject)).toEqual(["bye"]);
+	});
+
+	test("a failed create is a 502, not a confusing move error", async () => {
+		imap.boxes.delete("Trash");
+		const uid = imap.addMessage("INBOX");
+		const create = FakeImapFlow.prototype.mailboxCreate;
+		FakeImapFlow.prototype.mailboxCreate = async () => { throw new Error("NO [NOPERM] Permission denied"); };
+		try {
+			const res = await post("/delete", { folder: "INBOX", uids: [uid] });
+			expect(res.status).toBe(502);
+			expect(imap.boxes.get("INBOX").messages).toHaveLength(1);
+		} finally {
+			FakeImapFlow.prototype.mailboxCreate = create;
+		}
+	});
+});
+
+describe("upstream failures that imapflow reports without throwing", () => {
+	const withCreate = async (impl, fn) => {
+		const create = FakeImapFlow.prototype.mailboxCreate;
+		FakeImapFlow.prototype.mailboxCreate = impl;
+		try { await fn(); } finally { FakeImapFlow.prototype.mailboxCreate = create; }
+	};
+
+	test("a CREATE refused with a doesn't-exist style error is a 502, not a move to Trash", async () => {
+		imap.boxes.delete("Trash");
+		const uid = imap.addMessage("INBOX");
+		for (const err of [
+			Object.assign(new Error("Command failed"), { serverResponseCode: "NONEXISTENT", responseText: "Mailbox doesn't exist: Trash" }),
+			Object.assign(new Error("Command failed"), { responseText: "Parent mailbox does not exist" }),
+		]) {
+			await withCreate(async () => { throw err; }, async () => {
+				const res = await post("/delete", { folder: "INBOX", uids: [uid] });
+				expect(res.status).toBe(502);
+				expect(res.json.data?.trash).toBeUndefined();
+				expect(imap.boxes.get("INBOX").messages).toHaveLength(1);
+			});
+		}
+	});
+
+	test("an unlisted Trash that already exists is still fine", async () => {
+		const trash = imap.boxes.get("Trash");
+		imap.boxes.delete("Trash");
+		const uid = imap.addMessage("INBOX", { subject: "bye" });
+		// imapflow's ALREADYEXISTS answer, with the folder present but not listed.
+		await withCreate(async (path) => { imap.boxes.set(path, trash); return { path, created: false }; }, async () => {
+			const res = await post("/delete", { folder: "INBOX", uids: [uid] });
+			expect(res.status).toBe(200);
+			expect(res.json.data).toMatchObject({ trash: "Trash", movedUids: [1] });
+		});
+		// An older-style thrown ALREADYEXISTS is tolerated too.
+		imap.boxes.delete("Trash");
+		const uid2 = imap.addMessage("INBOX");
+		await withCreate(async (path) => {
+			imap.boxes.set(path, trash);
+			throw Object.assign(new Error("Command failed"), { serverResponseCode: "ALREADYEXISTS" });
+		}, async () => {
+			expect((await post("/delete", { folder: "INBOX", uids: [uid2] })).status).toBe(200);
+		});
+	});
+
+	test("a move that returns false is a 502 from /delete and /move", async () => {
+		const uid = imap.addMessage("INBOX");
+		imap.failMove = true;
+		const del = await post("/delete", { folder: "INBOX", uids: [uid] });
+		expect(del.status).toBe(502);
+		expect(del.json.data?.trash).toBeUndefined();
+		const move = await post("/move", { uids: [uid], from: "INBOX", to: "Trash" });
+		expect(move.status).toBe(502);
+		imap.failMove = false;
+		const missing = await post("/move", { uids: [uid], from: "INBOX", to: "Nowhere" });
+		expect(missing.status).toBe(502);
+		expect(imap.boxes.get("INBOX").messages).toHaveLength(1);
+	});
+
+	test("a permanent delete or empty-folder that returns false is a 502", async () => {
+		const uid = imap.addMessage("Trash");
+		imap.failDelete = true;
+		expect((await post("/delete", { folder: "Trash", uids: [uid] })).status).toBe(502);
+		expect((await post("/expunge", { folder: "Trash" })).status).toBe(502);
+		imap.failDelete = false;
+		expect(imap.boxes.get("Trash").messages).toHaveLength(1);
+	});
+
+	test("a move with an empty destination is rejected and nothing moves", async () => {
+		const uid = imap.addMessage("INBOX");
+		for (const body of [{ to: "", from: "INBOX" }, { to: "Trash", from: "" }]) {
+			const res = await post("/move", { uids: [uid], ...body });
+			expect(res.status).toBe(400);
+		}
+		expect(imap.boxes.get("INBOX").messages).toHaveLength(1);
+	});
+
+	test("an undefined move or delete result is a 502, like false", async () => {
+		const uid = imap.addMessage("INBOX");
+		imap.failMove = "undefined";
+		expect((await post("/move", { uids: [uid], from: "INBOX", to: "Trash" })).status).toBe(502);
+		expect((await post("/delete", { folder: "INBOX", uids: [uid] })).status).toBe(502);
+		imap.failMove = false;
+		expect(imap.boxes.get("INBOX").messages).toHaveLength(1);
+		const doomed = imap.addMessage("Trash");
+		imap.failDelete = "undefined";
+		expect((await post("/delete", { folder: "Trash", uids: [doomed] })).status).toBe(502);
+		expect((await post("/expunge", { folder: "Trash" })).status).toBe(502);
+		imap.failDelete = false;
+		expect(imap.boxes.get("Trash").messages).toHaveLength(1);
+	});
+
+	test("a duplicate the list missed is still a 409", async () => {
+		await withCreate(async (path) => ({ path, created: false }), async () => {
+			expect((await post("/folders", { name: "Hidden" })).status).toBe(409);
+		});
 	});
 });
 
@@ -138,6 +283,18 @@ describe("message list", () => {
 		expect(uids(res)).toEqual([29, 28, 27, 26, 25]);
 	});
 
+	test("page and pageSize below 1 are clamped instead of failing", async () => {
+		fill(3);
+		for (const q of ["page=-1", "page=0", "pageSize=-5", "pageSize=0&page=0", "page=1.5"]) {
+			const res = await get(`/messages/INBOX?${q}`);
+			expect(res.status).toBe(200);
+			expect(res.json.data.page).toBe(1);
+		}
+		const tiny = await get("/messages/INBOX?pageSize=-5");
+		expect(tiny.json.data.pageSize).toBe(1);
+		expect(uids(tiny)).toEqual([3]);
+	});
+
 	test("empty folder", async () => {
 		const res = await get("/messages/Trash");
 		expect(res.json.data).toMatchObject({ messages: [], total: 0 });
@@ -177,6 +334,12 @@ describe("single message", () => {
 			cc: ["dan@x.io"],
 		});
 		expect(m.text.trim()).toBe("hi there");
+	});
+
+	test("a missing or expunged message is a 404", async () => {
+		const res = await get("/message/INBOX/999");
+		expect(res.status).toBe(404);
+		expect(res.json).toEqual({ success: false, message: "Not Found" });
 	});
 });
 
@@ -219,7 +382,26 @@ describe("flags, move, delete", () => {
 		const res = await post("/delete", { folder: "Trash", uids: [a] });
 		expect(res.status).toBe(200);
 		expect(res.json.data.uids).toEqual([a]);
+		expect(res.json.data.trash).toBeUndefined();
+		expect(res.json.data.movedUids).toBeUndefined();
 		expect(imap.boxes.get("Trash").messages).toHaveLength(0);
+	});
+
+	test("delete outside Trash moves there and reports trash + movedUids", async () => {
+		imap.addMessage("Trash");
+		const a = imap.addMessage("INBOX");
+		const res = await post("/delete", { folder: "INBOX", uids: [a] });
+		expect(res.status).toBe(200);
+		expect(res.json.data).toEqual({ uids: [a], folder: "INBOX", inboxUnseen: 0, movedUids: [2], trash: "Trash" });
+		expect(imap.boxes.get("Trash").messages).toHaveLength(2);
+	});
+
+	test("delete without UIDPLUS still reports trash but omits movedUids", async () => {
+		imap.uidplus = false;
+		const a = imap.addMessage("INBOX");
+		const res = await post("/delete", { folder: "INBOX", uids: [a] });
+		expect(res.json.data.trash).toBe("Trash");
+		expect(res.json.data.movedUids).toBeUndefined();
 	});
 
 	test("Trash is found by its \\Trash role, whatever it's called", async () => {

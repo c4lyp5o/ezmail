@@ -62,10 +62,8 @@ describe("mail page", () => {
 
 	test("# deletes the open message, Undo moves it back with the new UID", async () => {
 		const calls = signedIn({
-			"POST /mail/move": (body) =>
-				body.to === "Trash"
-					? { uids: body.uids, from: "INBOX", to: "Trash", inboxUnseen: 3, movedUids: [900] }
-					: { uids: body.uids, from: "Trash", to: "INBOX", inboxUnseen: 3 },
+			"POST /mail/delete": (body) => ({ uids: body.uids, folder: "INBOX", trash: "Trash", inboxUnseen: 3, movedUids: [900] }),
+			"POST /mail/move": (body) => ({ uids: body.uids, from: "Trash", to: "INBOX", inboxUnseen: 3 }),
 		});
 		renderAt("/mail");
 		await screen.findByText("Quarterly report");
@@ -79,15 +77,15 @@ describe("mail page", () => {
 		});
 
 		expect(await screen.findByText("1 message moved to Trash")).toBeTruthy();
-		expect(calls.find((c) => c.path === "/mail/move").body).toEqual({
+		expect(calls.find((c) => c.path === "/mail/delete").body).toEqual({
+			folder: "INBOX",
 			uids: [42],
-			from: "INBOX",
-			to: "Trash",
 		});
+		expect(calls.some((c) => c.path === "/mail/move")).toBe(false);
 
 		fireEvent.click(screen.getByText("Undo"));
 		await waitFor(() =>
-			expect(calls.filter((c) => c.path === "/mail/move")[1]?.body).toEqual({
+			expect(calls.find((c) => c.path === "/mail/move")?.body).toEqual({
 				uids: [900],
 				from: "Trash",
 				to: "INBOX",
@@ -141,6 +139,43 @@ describe("mail page", () => {
 				uids: [42],
 			}),
 		);
+	});
+
+	test("delete with no Trash folder goes to /mail/delete and shows the new Trash", async () => {
+		let folders = [FOLDERS[0]];
+		const calls = signedIn({
+			"GET /mail/folders": () => folders,
+			"POST /mail/delete": (body) => {
+				folders = FOLDERS;
+				return { uids: body.uids, folder: "INBOX", trash: "Trash" };
+			},
+		});
+		renderAt("/mail");
+		await screen.findByText("Quarterly report");
+		expect(screen.queryByText("Trash")).toBeNull();
+		fireEvent.click(screen.getByRole("checkbox", { name: "" }));
+		fireEvent.click(screen.getByTitle("Delete"));
+		expect(
+			await screen.findByText("1 message moved to Trash; undo unavailable from this server"),
+		).toBeTruthy();
+		expect(calls.find((c) => c.path === "/mail/delete").body).toEqual({ folder: "INBOX", uids: [42] });
+		expect(screen.queryByText("Undo")).toBeNull();
+		expect(await screen.findByText("Trash")).toBeTruthy();
+	});
+
+	test("delete inside Trash says it was permanent", async () => {
+		signedIn({
+			"GET /mail/messages/Trash": { messages: [MSG], total: 1, page: 1, pageSize: 50 },
+			"POST /mail/delete": (body) => ({ uids: body.uids, folder: "Trash" }),
+		});
+		renderAt("/mail");
+		fireEvent.click(await screen.findByText("Trash"));
+		await screen.findByText("Delete all");
+		await screen.findByText("Quarterly report");
+		fireEvent.click(screen.getByRole("checkbox", { name: "" }));
+		fireEvent.click(screen.getByTitle("Delete"));
+		expect(await screen.findByText("1 message deleted permanently")).toBeTruthy();
+		expect(screen.queryByText("Undo")).toBeNull();
 	});
 
 	test("? opens the shortcut help, Esc closes it", async () => {

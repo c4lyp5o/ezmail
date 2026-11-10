@@ -75,4 +75,13 @@ describe("conversation", () => {
 		const res = await thread("INBOX", ids.a);
 		expect(res.json.data.some((m) => m.folder === "Archive" && m.uid === archived)).toBe(true);
 	});
+
+	test("a very long thread still includes the message itself", async () => {
+		const refs = Array.from({ length: 40 }, (_, i) => `<r${i}@x>`);
+		const uid = imap.addMessage("INBOX", {
+			source: mail({ id: "<long@x>", refs, from: "bob@x.io", subject: "Re: long" }),
+		});
+		const res = await thread("INBOX", uid);
+		expect(res.json.data.some((m) => m.folder === "INBOX" && m.uid === uid)).toBe(true);
+	});
 });

@@ -20,7 +20,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
-import ComposeView from "../components/ComposeView.jsx";
+import ComposeView, { UPLOADS_AT_RISK_PROMPT } from "../components/ComposeView.jsx";
 import EmptyTrashModal from "../components/EmptyTrashModal.jsx";
 import FolderList from "../components/FolderList.jsx";
 import MessageList from "../components/MessageList.jsx";
@@ -32,12 +32,12 @@ import { useAuth } from "../context/auth.jsx";
 import { apiCall } from "../utils/apiCall.js";
 import { isTypingTarget } from "../utils/keyboard.js";
 import { specialFolder } from "../utils/folders.js";
-import { buildDraft } from "../utils/reply.js";
+import { buildDraft, resumeDraft } from "../utils/reply.js";
 import { useDialogFocus } from "../utils/useDialogFocus.js";
 import { useMailEvents } from "../utils/useMailEvents.js";
 
 const SHORTCUTS = [
-	["j / k, ↑ / ↓", "Next / previous message"],
+	["j / k, ↑ / ↓", "Next / previous message (also while reading)"],
 	["PgUp / PgDn, Home / End", "Jump a page / to the ends"],
 	["Shift + any of the above", "Extend selection"],
 	["x", "Select / deselect message"],
@@ -45,6 +45,8 @@ const SHORTCUTS = [
 	["c", "Compose"],
 	["r / a / f", "Reply / reply all / forward"],
 	["e", "Archive"],
+	["s", "Star / unstar"],
+	["u", "Mark unread"],
 	["# / Delete", "Delete"],
 	["z", "Undo last move"],
 	["/", "Search"],
@@ -66,6 +68,23 @@ function readNotifyPref() {
 function writeNotifyPref(on) {
 	try {
 		localStorage.setItem(NOTIFY_KEY, on ? "on" : "off");
+	} catch {
+		// preference just isn't remembered
+	}
+}
+
+// Snippets under subjects in the message list; on unless turned off.
+const PREVIEWS_KEY = "ezmail_previews";
+function readPreviewsPref() {
+	try {
+		return localStorage.getItem(PREVIEWS_KEY) !== "off";
+	} catch {
+		return true;
+	}
+}
+function writePreviewsPref(on) {
+	try {
+		localStorage.setItem(PREVIEWS_KEY, on ? "on" : "off");
 	} catch {
 		// preference just isn't remembered
 	}
@@ -104,14 +123,20 @@ export default function MailPage() {
 	const [emptyTrashOpen, setEmptyTrashOpen] = useState(false);
 	const [emptyTrashBusy, setEmptyTrashBusy] = useState(false);
 	const [settingsOpen, setSettingsOpen] = useState(false);
+	const [settingsTab, setSettingsTab] = useState(undefined);
 	const [showRemote, setShowRemote] = useState(false);
 	const [helpOpen, setHelpOpen] = useState(false);
 	const moveDialogRef = useDialogFocus(movePopup, () => setMovePopup(false));
 	const helpDialogRef = useDialogFocus(helpOpen, () => setHelpOpen(false));
-	const [toast, setToast] = useState(null); // { text, undo?: fn }
+	const [toast, setToast] = useState(null); // { text, undo?: fn, action?: { label, run } }
 	const toastTimer = useRef(null);
 	const [live, setLive] = useState(false); // SSE stream connected
 	const [notifyOn, setNotifyOn] = useState(readNotifyPref);
+	const [previewsOn, setPreviewsOn] = useState(readPreviewsPref);
+	const togglePreviews = () => {
+		writePreviewsPref(!previewsOn);
+		setPreviewsOn(!previewsOn);
+	};
 
 	// Mobile: sidebar drawer open state + which pane is shown
 	const [mobileSidebar, setMobileSidebar] = useState(false);
@@ -284,7 +309,7 @@ export default function MailPage() {
 
 	const handleLogout = async () => {
 		if (composeBusy) return;
-		if (view.type === "compose" && composeHasUploads && !window.confirm("Uploaded files are not saved in drafts. Leave anyway?")) return;
+		if (view.type === "compose" && composeHasUploads && !window.confirm(UPLOADS_AT_RISK_PROMPT)) return;
 		await logout();
 		navigate("/login", { replace: true });
 	};
@@ -376,13 +401,38 @@ export default function MailPage() {
 		});
 	};
 
-	// Outside Trash a delete is an undoable move; inside Trash it's permanent.
+	// The server decides: outside Trash it moves there (creating Trash if the
+	// mailbox has none) and returns `trash`; inside Trash it deletes for good.
+	// afterMutation() reloads the folder list, so a new Trash shows up.
 	const deleteMessages = async (uids, folder) => {
-		if (folder !== trashFolder) return moveMessages(uids, folder, trashFolder);
 		const res = await apiCall.post("/mail/delete", { folder, uids });
 		applyInboxUnseen(res.data?.inboxUnseen);
 		afterMutation();
-		showToast({ text: `${plural(uids.length)} deleted permanently` });
+		const trash = res.data?.trash;
+		if (!trash) {
+			showToast({ text: `${plural(uids.length)} deleted permanently` });
+			return;
+		}
+		const moved = res.data?.movedUids;
+		showToast({
+			text: `${plural(uids.length)} moved to ${trash}${moved?.length ? "" : "; undo unavailable from this server"}`,
+			undo: moved?.length
+				? async () => {
+						setToast(null);
+						try {
+							const r = await apiCall.post("/mail/move", {
+								uids: moved,
+								from: trash,
+								to: folder,
+							});
+							applyInboxUnseen(r.data?.inboxUnseen);
+							afterMutation();
+						} catch (err) {
+							showToast({ text: err.message || "Undo failed" });
+						}
+					}
+				: null,
+		});
 	};
 
 	const runBulk = async (fn) => {
@@ -416,8 +466,24 @@ export default function MailPage() {
 	};
 
 	const bulkMove = (toFolder) => {
+		const target = movePopup;
 		setMovePopup(false);
+		if (target?.from)
+			return actOnOpen((uids, from) => moveMessages(uids, from, toFolder)).catch(
+				(err) => showToast({ text: err.message || "Move failed" }),
+			);
 		return runBulk((uids) => moveMessages(uids, activeFolder, toFolder));
+	};
+
+	// Drag from the list onto a sidebar folder. UIDs only mean something in
+	// the folder they came from, so a payload from elsewhere is ignored and
+	// the request uses the app's current folder. Trash goes via delete.
+	const dropMessages = (to, uids, from) => {
+		if (to === activeFolder || from !== activeFolder || !uids.length) return;
+		(to === trashFolder
+			? deleteMessages(uids, activeFolder)
+			: moveMessages(uids, activeFolder, to)
+		).catch((err) => showToast({ text: err.message || "Move failed" }));
 	};
 
 	const createFolder = async (name) => {
@@ -426,10 +492,52 @@ export default function MailPage() {
 		selectFolder(res.data.path);
 	};
 
+	// Rename/delete leave the active folder (or a child of it) dangling, so
+	// it moves along without the compose guards selectFolder applies.
+	const inFolder = (path, target) => {
+		const delim = folders.find((f) => f.path === path)?.delimiter || "/";
+		return target === path || target.startsWith(path + delim);
+	};
+	const relocate = (from, to) => {
+		if (!inFolder(from, activeFolder)) return;
+		clearSelection();
+		setActiveFolder(to);
+		if (view.type === "message") setView({ type: "folder" });
+	};
+	const openFilters = () => {
+		setToast(null);
+		setSettingsTab("filters");
+		setSettingsOpen(true);
+	};
+	const folderToast = (text, filtersAffected) =>
+		showToast(
+			filtersAffected
+				? {
+						text: `${text} Filter rules still point at the old folder.`,
+						action: { label: "Review filters", run: openFilters },
+					}
+				: { text },
+		);
+
+	const renameFolder = async (path, newName) => {
+		const res = await apiCall.post("/mail/folders/rename", { path, newName });
+		const { newPath, filtersAffected } = res.data || {};
+		relocate(path, newPath + activeFolder.slice(path.length));
+		await loadFolders();
+		folderToast(`Folder renamed to “${newName}”.`, filtersAffected);
+	};
+
+	const deleteFolder = async (path) => {
+		const res = await apiCall.post("/mail/folders/delete", { path });
+		relocate(path, "INBOX");
+		await loadFolders();
+		folderToast("Folder deleted.", res.data?.filtersAffected);
+	};
+
 	// ---- folder / message selection ----
 	const selectFolder = (f) => {
 		if (composeBusy) return;
-		if (view.type === "compose" && composeHasUploads && !window.confirm("Uploaded files are not saved in drafts. Leave anyway?")) return;
+		if (view.type === "compose" && composeHasUploads && !window.confirm(UPLOADS_AT_RISK_PROMPT)) return;
 		if (f !== activeFolder) clearSelection();
 		setActiveFolder(f);
 		setView({ type: "folder" });
@@ -446,19 +554,21 @@ export default function MailPage() {
 
 	// New message, or reply / replyAll / forward of a loaded message. The key
 	// remounts ComposeView so each open starts from its own initial state.
-	const openCompose = (mode, msg) => {
+	// mode "draft" continues a server draft from `folder` (the Drafts folder).
+	const openCompose = (mode, msg, folder) => {
 		if (composeBusy) return;
-		if (view.type === "compose" && composeHasUploads && !window.confirm("Uploaded files are not saved in drafts. Leave anyway?")) return;
+		if (view.type === "compose" && composeHasUploads && !window.confirm(UPLOADS_AT_RISK_PROMPT)) return;
 		setView({
 			type: "compose",
 			key: Date.now(),
-			initial: mode && msg ? buildDraft(mode, msg, user?.mailbox) : null,
+			initial: mode && msg ? (mode === "draft" ? resumeDraft(msg, folder) : buildDraft(mode, msg, user?.mailbox)) : null,
 		});
 		setMobilePane("reader");
 		setMobileSidebar(false);
 	};
 
 	const archiveFolder = specialFolder(folders, "Archive", "Archive");
+	const draftsFolder = specialFolder(folders, "Drafts", "Drafts");
 
 	// After any mutation (mark read / delete / move), refresh the SWR list so
 	// the UI reflects the server state (needed because moves change UIDs).
@@ -477,13 +587,65 @@ export default function MailPage() {
 
 	const openMessageWithBody = useCallback((folder, uid, msg) => {
 		if (composeBusy) return;
-		if (view.type === "compose" && composeHasUploads && !window.confirm("Uploaded files are not saved in drafts. Leave anyway?")) return;
+		if (view.type === "compose" && composeHasUploads && !window.confirm(UPLOADS_AT_RISK_PROMPT)) return;
 		setFullMessage(null); // clear previous body so no stale summary
 		setView({ type: "message", folder, uid, msg });
 		setMobilePane("reader");
 		setMobileSidebar(false);
 	}, [composeBusy, composeHasUploads, view.type]);
 	const openListMessage = useCallback((msg) => openMessageWithBody(activeFolder, msg.uid, msg), [activeFolder, openMessageWithBody]);
+
+	// ---- actions on the open message ----
+	// Archive / move / delete: open the next message in list order (else the
+	// previous one), or go back to the list when none is left.
+	const actOnOpen = async (fn) => {
+		const uid = Number(view.uid);
+		let next = null;
+		if (view.folder === activeFolder) {
+			const uids = (listState.getMessages?.() || []).map((m) => m.uid);
+			const i = uids.indexOf(uid);
+			if (i >= 0) next = uids[i + 1] ?? uids[i - 1] ?? null;
+		}
+		await fn([uid], view.folder);
+		if (next != null) listState.openUid?.(next);
+		else handleBack();
+	};
+
+	// Flag changes that keep the reader open (the bulk path closes it).
+	const setOpenFlag = async (flag, add) => {
+		const uid = Number(view.uid);
+		if (!add && flag === "\\Seen") await listState.pendingRead?.(uid); // let the auto mark-read land first
+		const res = await apiCall.post(`/mail/${add ? "flags" : "unflag"}`, {
+			folder: view.folder,
+			uids: [uid],
+			action: add ? "add" : "remove",
+			flags: [flag],
+		});
+		applyInboxUnseen(res.data?.inboxUnseen);
+		refreshList?.();
+		loadFolders();
+	};
+	const openStarred = !!(fullMessage ?? view.msg)?.flags?.includes("\\Flagged");
+	const toggleOpenStar = async () => {
+		const uid = Number(view.uid);
+		const add = !openStarred;
+		await setOpenFlag("\\Flagged", add);
+		setFullMessage((m) =>
+			m && Number(m.uid) === uid
+				? {
+						...m,
+						flags: add
+							? [...(m.flags || []), "\\Flagged"]
+							: (m.flags || []).filter((f) => f !== "\\Flagged"),
+					}
+				: m,
+		);
+	};
+	// Back to the list afterwards (like Gmail) so the reader doesn't re-mark it.
+	const markOpenUnread = async () => {
+		await setOpenFlag("\\Seen", false);
+		handleBack();
+	};
 
 	// ---- global shortcuts (list navigation lives in MessageList) ----
 	const modalOpen = settingsOpen || movePopup || emptyTrashOpen || helpOpen;
@@ -512,6 +674,8 @@ export default function MailPage() {
 				? [openUid]
 				: [];
 		const fail = (err) => showToast({ text: err.message || "Action failed" });
+		// No selection: the shortcut acts on the open message.
+		const onOpen = !selectedUids.length && targets.length > 0;
 
 		switch (e.key) {
 			case "c":
@@ -521,6 +685,11 @@ export default function MailPage() {
 			case "a":
 			case "f":
 				if (view.type !== "message" || !fullMessage) return;
+				// A saved draft is continued, not replied to (as in the toolbar).
+				if (draftsFolder && view.folder === draftsFolder && fullMessage.flags?.includes("\\Draft")) {
+					if (e.key === "r") openCompose("draft", fullMessage, view.folder);
+					return;
+				}
 				openCompose(
 					{ r: "reply", a: "replyAll", f: "forward" }[e.key],
 					fullMessage,
@@ -529,12 +698,36 @@ export default function MailPage() {
 			case "e":
 				if (!targets.length || !archiveFolder || activeFolder === archiveFolder)
 					return;
-				moveMessages(targets, activeFolder, archiveFolder).catch(fail);
+				(onOpen
+					? actOnOpen((uids, from) => moveMessages(uids, from, archiveFolder))
+					: moveMessages(targets, activeFolder, archiveFolder)
+				).catch(fail);
 				break;
 			case "#":
 			case "Delete":
 				if (!targets.length) return;
-				deleteMessages(targets, activeFolder).catch(fail);
+				(onOpen
+					? actOnOpen(deleteMessages)
+					: deleteMessages(targets, activeFolder)
+				).catch(fail);
+				break;
+			case "s": {
+				if (!targets.length) return;
+				if (onOpen) {
+					toggleOpenStar().catch(fail);
+					break;
+				}
+				const msgs = listState.getMessages?.() || [];
+				const allStarred = targets.every((uid) =>
+					msgs.find((m) => m.uid === uid)?.flags?.includes("\\Flagged"),
+				);
+				handleBulkFlags(["\\Flagged"], allStarred ? "remove" : "add");
+				break;
+			}
+			case "u":
+				if (!targets.length) return;
+				if (onOpen) markOpenUnread().catch(fail);
+				else bulkMarkUnread();
 				break;
 			case "z":
 				if (!toast?.undo) return;
@@ -556,7 +749,7 @@ export default function MailPage() {
 
 	// ---- live updates: SSE fed by IMAP IDLE on INBOX ----
 	// Events are hints; we refetch. While live, list polling backs off. The
-	// browser's EventSource reconnects on its own after drops.
+	// hook reconnects after drops/errors with backoff (useMailEvents).
 	const liveRefreshTimer = useRef(null);
 	const mailEvent = (ev) => {
 		if (ev.type === "ready") setLive(true);
@@ -642,6 +835,9 @@ export default function MailPage() {
 					active={activeFolder}
 					onSelect={selectFolder}
 					onCreate={createFolder}
+					onDropMessages={dropMessages}
+					onRename={renameFolder}
+					onDelete={deleteFolder}
 				/>
 				{folderError && <div role="alert" className="px-4 text-xs text-danger">{folderError} <button type="button" onClick={loadFolders} className="underline">Retry</button></div>}
 
@@ -655,7 +851,7 @@ export default function MailPage() {
 					<div className="mt-3 flex items-center justify-between px-1">
 						<button
 							type="button"
-							onClick={() => setSettingsOpen(true)}
+							onClick={() => { setSettingsTab(undefined); setSettingsOpen(true); }}
 							aria-label="Settings"
 				title="Settings"
 							className="flex h-8 w-8 items-center justify-center rounded-md text-ink-muted transition hover:bg-hover hover:text-ink-2"
@@ -885,6 +1081,8 @@ export default function MailPage() {
 								: undefined
 						}
 						keyboardEnabled={!modalOpen && view.type !== "compose"}
+						snippets={previewsOn}
+						draggable={!isMobile}
 					/>
 				</div>
 
@@ -951,7 +1149,16 @@ export default function MailPage() {
 						key={view.key}
 						initial={view.initial}
 						onBack={handleBack}
-						onSent={() => loadFolders()}
+						onSent={() => {
+							loadFolders();
+							refreshList?.();
+						}}
+						onDraftsChange={() => {
+							if (activeFolder === draftsFolder) refreshList?.();
+						}}
+						onDraftSaveFailed={({ hadUploads }) =>
+							showToast({ text: `Draft could not be saved to Drafts${hadUploads ? ", attachments were not kept" : ""}` })
+						}
 						onBusyChange={setComposeBusy}
 						onUploadsChange={setComposeHasUploads}
 					/>
@@ -962,8 +1169,25 @@ export default function MailPage() {
 						uid={view.uid}
 						initialMsg={view.msg}
 						onBack={handleBack}
-						onDelete={() => deleteMessages([Number(view.uid)], view.folder)}
+						onDelete={() => actOnOpen(deleteMessages)}
+						onArchive={
+							archiveFolder && view.folder !== archiveFolder
+								? () =>
+										actOnOpen((uids, from) =>
+											moveMessages(uids, from, archiveFolder),
+										)
+								: undefined
+						}
+						onMove={() => setMovePopup({ from: view.folder })}
+						onToggleStar={toggleOpenStar}
+						starred={openStarred}
+						onMarkUnread={markOpenUnread}
 						onCompose={openCompose}
+						onEditDraft={
+							draftsFolder && view.folder === draftsFolder
+								? (msg) => openCompose("draft", msg, view.folder)
+								: undefined
+						}
 						onOpenThread={(folder, uid) =>
 							openMessageWithBody(folder, uid, null)
 						}
@@ -1014,7 +1238,7 @@ export default function MailPage() {
 						<h3 className="mb-3 text-sm font-semibold text-ink-2">Move to</h3>
 						<div className="max-h-72 space-y-1 overflow-y-auto">
 							{folders
-								.filter((f) => f.path !== activeFolder)
+								.filter((f) => f.path !== (movePopup.from || activeFolder))
 								.map((f) => (
 									<button
 										type="button"
@@ -1052,6 +1276,15 @@ export default function MailPage() {
 							className="font-medium text-accent hover:underline"
 						>
 							Undo
+						</button>
+					)}
+					{toast.action && (
+						<button
+							type="button"
+							onClick={toast.action.run}
+							className="font-medium text-accent hover:underline"
+						>
+							{toast.action.label}
 						</button>
 					)}
 					<button
@@ -1108,10 +1341,13 @@ export default function MailPage() {
 			<SettingsModal
 				open={settingsOpen}
 				onClose={() => setSettingsOpen(false)}
+				initialTab={settingsTab}
 				mailbox={user?.mailbox}
 				folders={folders}
 				notifyOn={notifyOn}
 				onToggleNotify={toggleNotify}
+				previewsOn={previewsOn}
+				onTogglePreviews={togglePreviews}
 			/>
 		</div>
 	);

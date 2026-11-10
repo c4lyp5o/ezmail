@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { app } from "../index.js";
+import { REQUEST_TIMEOUTS } from "../services/imap-pool.service.js";
 import { activeWatchers } from "../services/push.service.js";
 import { imap } from "./helpers/fake-imap.js";
 import { login } from "./helpers/http.js";
@@ -78,6 +79,23 @@ describe("mail events (SSE over IMAP IDLE)", () => {
 		expect(idlers[0].loggedOut).toBe(false);
 		await b.close();
 		expect(idlers[0].loggedOut).toBe(true);
+		expect(activeWatchers()).toBe(0);
+	});
+
+	test("the IDLE connection uses the bounded connect timeouts", async () => {
+		const cookie = await login("push4@x.io");
+		const s = await open(cookie);
+		await s.next();
+		expect(watcherClient().options).toMatchObject(REQUEST_TIMEOUTS);
+		await s.close();
+	});
+
+	test("a failed watch sends a long retry before the error and closes", async () => {
+		const cookie = await login("push5@x.io");
+		imap.boxes.delete("INBOX"); // mailboxOpen fails
+		const res = await app.handle(new Request("http://localhost/api/v1/mail/events", { headers: { cookie } }));
+		const body = await res.text();
+		expect(body).toBe('retry: 30000\n\ndata: {"type":"error"}\n\n');
 		expect(activeWatchers()).toBe(0);
 	});
 
