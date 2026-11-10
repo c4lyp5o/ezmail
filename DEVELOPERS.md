@@ -112,6 +112,16 @@ ezmail/
 - **Shortcuts** are ignored while typing (`utils/keyboard.js` `isTypingTarget`).
 - **Resizable list column** width is persisted in `ezmail_list_width`.
 
+## TODO / deferred
+
+- **415 guard (deferred by decision):** state-changing routes accept any content type; defence relies on the `SameSite=Strict` session cookie. Idea: a global `onBeforeHandle` returning 415 unless `application/json` (allowlisting multipart and body-less routes), optionally with an `Origin` / `Sec-Fetch-Site` check. This would be an API change; record it in `CHANGELOG.md` when done.
+- **TOTP lockout / passwordless login:** one client can lock a mailbox's code attempts for 15 minutes (5 per 15 minutes per mailbox). Needs a redesign (password-first step or a trusted-device cookie). Per-client throttling was tried and reverted because it made guessing easier.
+- **Silent IMAP failures:** `saveToSent` and flag changes (`changeFlags`) still report success when the IMAP operation silently fails.
+- **Client state after logout:** local drafts stay in the browser after logout, and the contacts cache is cleared only on explicit logout, not on session expiry.
+- **Email iframe CSP:** could add `base-uri` and `form-action` restrictions.
+- **Search:** `after:` / `before:` dates are UTC days, not local time; `has:attachment` is unsupported.
+- **PDF preview:** a safe preview is still open. Inline PDFs were removed because they would run on the app origin.
+
 ## Tests
 
 - **Backend:** `bun test` in `backend/`. `bunfig.toml` preloads `tests/setup.js`, which mocks `imapflow` and `nodemailer` with `tests/helpers/fake-imap.js` / `fake-smtp.js` and points `DB_PATH` at a temporary file. `tests/helpers/http.js` calls the Elysia app in-process. Filter operations use a service-level fake; real ManageSieve and MIME workflows need manual server checks. So do snippets (partial fetch, charsets), server drafts (UIDPLUS), folder rename/delete and search operators on your IMAP server.
