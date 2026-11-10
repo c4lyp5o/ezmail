@@ -295,6 +295,55 @@ describe("message list", () => {
 		expect(uids(tiny)).toEqual([3]);
 	});
 
+	test("an unsolicited flag update during the FETCH is not listed as a message", async () => {
+		fill(3);
+		imap.flagUpdates = [1];
+		const res = await get("/messages/INBOX");
+		expect(res.status).toBe(200);
+		expect(uids(res)).toEqual([3, 2, 1]);
+		imap.flagUpdates = [2];
+		const found = await get("/messages/INBOX?search=msg");
+		expect(uids(found)).toEqual([3, 2, 1]);
+	});
+
+	test("an unsolicited row for a message off the page is dropped", async () => {
+		fill(3);
+		imap.flagUpdates = [1];
+		const res = await get("/messages/INBOX?pageSize=1");
+		expect(res.status).toBe(200);
+		expect(res.json.data.messages).toHaveLength(1);
+		expect(res.json.data.messages[0]).toMatchObject({ uid: 3, subject: "msg 3" });
+	});
+
+	test("a later flag update for a listed message wins", async () => {
+		fill(2);
+		imap.flagUpdates = [{ uid: 2, flags: ["\\Seen"] }];
+		const res = await get("/messages/INBOX");
+		expect(res.json.data.messages[0]).toMatchObject({ uid: 2, seen: true });
+		imap.flagUpdates = [{ uid: 1, flags: ["\\Seen"] }];
+		const found = await get("/messages/INBOX?search=msg");
+		expect(found.json.data.messages[1]).toMatchObject({ uid: 1, seen: true });
+	});
+
+	test("an unsolicited row sent before the answer keeps newest-first order", async () => {
+		fill(3);
+		imap.flagUpdates = [{ uid: 3, before: true }, { uid: 1, before: true }];
+		const res = await get("/messages/INBOX");
+		expect(uids(res)).toEqual([3, 2, 1]);
+		imap.flagUpdates = [{ uid: 3, before: true }];
+		const found = await get("/messages/INBOX?search=msg");
+		expect(uids(found)).toEqual([3, 2, 1]);
+	});
+
+	test("a message with ENVELOPE NIL is still listed", async () => {
+		fill(1);
+		imap.addMessage("INBOX", { noEnvelope: true });
+		const res = await get("/messages/INBOX");
+		expect(res.status).toBe(200);
+		expect(uids(res)).toEqual([2, 1]);
+		expect(res.json.data.messages[0].subject).toBe("(no subject)");
+	});
+
 	test("empty folder", async () => {
 		const res = await get("/messages/Trash");
 		expect(res.json.data).toMatchObject({ messages: [], total: 0 });

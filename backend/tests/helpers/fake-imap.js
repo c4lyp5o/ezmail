@@ -19,6 +19,13 @@ export const imap = {
 	failAppend: false, // true: append throws like a NO/BAD reply; "undefined": resolves undefined
 	failSearch: false, // search resolves false, like imapflow on a failed SEARCH
 	failBodyParts: false, // a fetch with bodyParts (snippets) throws
+	// UIDs whose flags another session changed. Like a real server (RFC 9051
+	// 7.5.2), the next fetch reports them as extra unsolicited FETCH rows
+	// carrying only seq and FLAGS, plus UID during a UID FETCH (RFC 3501
+	// 6.4.8); imapflow's fetch() yields those rows like requested ones.
+	// An entry is a UID, or { uid, flags, before } to report given flags
+	// and/or send the row ahead of the requested ones.
+	flagUpdates: [],
 	clients: [], // every FakeImapFlow created, for pushing IDLE events
 	reset() {
 		this.boxes = new Map();
@@ -31,6 +38,7 @@ export const imap = {
 		this.failAppend = false;
 		this.failSearch = false;
 		this.failBodyParts = false;
+		this.flagUpdates = [];
 		this.clients = [];
 	},
 	addBox(path, specialUse) {
@@ -40,7 +48,7 @@ export const imap = {
 	},
 	addMessage(
 		path,
-		{ subject = "s", from = "a@x.io", to, date, seen = false, source, bodyStructure, parts, rawParts } = {},
+		{ subject = "s", from = "a@x.io", to, date, seen = false, source, bodyStructure, parts, rawParts, noEnvelope } = {},
 	) {
 		const box = this.boxes.get(path);
 		const uid = box.nextUid++;
@@ -53,7 +61,10 @@ export const imap = {
 			uid,
 			flags: new Set(seen ? ["\\Seen"] : []),
 			internalDate: date || new Date(Date.UTC(2026, 0, 1, 0, uid)),
-			envelope: { subject, from: [{ address: from, name: "" }], to: to ? [{ address: to, name: "" }] : [] },
+			// ENVELOPE NIL: imapflow leaves envelope unset
+			envelope: noEnvelope
+				? undefined
+				: { subject, from: [{ address: from, name: "" }], to: to ? [{ address: to, name: "" }] : [] },
 			bodyStructure,
 			parts, // decoded bytes, like download()/downloadMany()
 			rawParts, // transfer-encoded bytes, like FETCH BODY[part]; defaults to parts
@@ -263,8 +274,17 @@ export class FakeImapFlow extends EventEmitter {
 		const bodyParts = query?.bodyParts;
 		imap.calls.push({ cmd: "fetch", range, uid: !!opts.uid, ...(bodyParts ? { bodyParts } : {}) });
 		if (bodyParts && imap.failBodyParts) throw mailboxError("FETCH");
+		const msgs = this.box(this.mailbox.path).messages;
+		const updates = imap.flagUpdates.splice(0).map((u) => (typeof u === "number" ? { uid: u } : u));
+		const unsolicited = function* (before) {
+			for (const u of updates.filter((x) => !!x.before === before)) {
+				const seq = msgs.findIndex((m) => m.uid === u.uid) + 1;
+				if (seq) yield { seq, flags: new Set(u.flags || msgs[seq - 1].flags), ...(opts.uid ? { uid: u.uid } : {}) };
+			}
+		};
+		yield* unsolicited(true);
 		for (const m of this.select(range, opts)) {
-			const out = { ...m };
+			const out = { ...m, seq: msgs.indexOf(m) + 1 };
 			if (bodyParts?.length) {
 				out.bodyParts = new Map();
 				for (const bp of bodyParts) {
@@ -277,6 +297,7 @@ export class FakeImapFlow extends EventEmitter {
 			}
 			yield out;
 		}
+		yield* unsolicited(false);
 	}
 
 	async fetchOne(uid, _query, opts = {}) {

@@ -305,6 +305,24 @@ function inlineType(declared) {
 	return undefined;
 }
 
+// imapflow's fetch() yields every FETCH row the server sends during the
+// command, including unsolicited flag updates for any message (RFC 9051
+// 7.5.2), which on a sequence FETCH carry no UID, and answers split over
+// several rows. Merge rows per message (by UID on a UID FETCH, as sequence
+// numbers shift on EXPUNGE), keep requested messages (ENVELOPE NIL leaves
+// envelope unset, so internalDate counts too) and return them in IMAP order.
+async function fetchMessages(client, range, query, options) {
+	const keyOf = options?.uid ? "uid" : "seq";
+	const rows = new Map();
+	for await (const msg of client.fetch(range, query, options)) {
+		const key = msg?.[keyOf];
+		if (key) rows.set(key, { ...rows.get(key), ...msg });
+	}
+	return [...rows.values()]
+		.filter((msg) => msg.uid && (msg.envelope || msg.internalDate))
+		.sort((a, b) => a[keyOf] - b[keyOf]);
+}
+
 function mapEnvelope(msg) {
 	const from = msg.envelope?.from?.[0];
 	const flags = toFlagsArray(msg.flags);
@@ -716,14 +734,9 @@ export const MailService = {
 					byUid = false;
 				}
 
-				const pageItems = [];
-				if (range?.length) {
-					for await (const msg of client.fetch(range, fetchOpts, {
-						uid: byUid,
-					})) {
-						pageItems.push(msg);
-					}
-				}
+				const pageItems = range?.length
+					? await fetchMessages(client, range, fetchOpts, { uid: byUid })
+					: [];
 
 				// IMAP returns sequence/UID order; reverse for newest arrival first.
 				if (sort !== "asc") pageItems.reverse();
@@ -869,7 +882,8 @@ export const MailService = {
 				try {
 					const uids = await client.search(query, { uid: true });
 					if (!uids?.length) continue;
-					for await (const m of client.fetch(
+					for (const m of await fetchMessages(
+						client,
 						uids,
 						{ envelope: true, flags: true, internalDate: true },
 						{ uid: true },
