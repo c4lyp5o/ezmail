@@ -31,3 +31,27 @@ test("hides the control when no handler is provided", () => {
 	render(<FolderList folders={folders} active="INBOX" onSelect={() => {}} />);
 	expect(screen.queryByRole("button", { name: "New folder" })).toBeNull();
 });
+
+test("folders highlight and accept only ezmail message drags", async () => {
+	const { createEvent } = await import("@testing-library/react");
+	const onDrop = vi.fn();
+	const two = [...folders, { path: "Archive", name: "Archive", specialUse: "\\Archive" }];
+	render(<FolderList folders={two} active="INBOX" onSelect={() => {}} onDropMessages={onDrop} />);
+	const target = screen.getByRole("button", { name: "Archive" });
+	const fire = (type, data) => {
+		const ev = createEvent[type](target);
+		Object.defineProperty(ev, "dataTransfer", {
+			value: { types: Object.keys(data), getData: (t) => data[t] || "", dropEffect: "" },
+		});
+		fireEvent(target, ev);
+		return ev.defaultPrevented;
+	};
+	expect(fire("dragOver", { "text/plain": "x" })).toBe(false);
+	expect(target.className).not.toContain("ring-accent");
+	const payload = { "application/x-ezmail-uids": JSON.stringify({ uids: [5, "x", -1, 7], folder: "INBOX" }) };
+	expect(fire("dragOver", payload)).toBe(true);
+	expect(target.className).toContain("ring-accent");
+	fire("drop", payload);
+	expect(onDrop).toHaveBeenCalledWith("Archive", [5, 7], "INBOX");
+	expect(target.className).not.toContain("ring-accent");
+});

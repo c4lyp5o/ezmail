@@ -37,7 +37,7 @@ import { useDialogFocus } from "../utils/useDialogFocus.js";
 import { useMailEvents } from "../utils/useMailEvents.js";
 
 const SHORTCUTS = [
-	["j / k, ↑ / ↓", "Next / previous message"],
+	["j / k, ↑ / ↓", "Next / previous message (also while reading)"],
 	["PgUp / PgDn, Home / End", "Jump a page / to the ends"],
 	["Shift + any of the above", "Extend selection"],
 	["x", "Select / deselect message"],
@@ -45,6 +45,8 @@ const SHORTCUTS = [
 	["c", "Compose"],
 	["r / a / f", "Reply / reply all / forward"],
 	["e", "Archive"],
+	["s", "Star / unstar"],
+	["u", "Mark unread"],
 	["# / Delete", "Delete"],
 	["z", "Undo last move"],
 	["/", "Search"],
@@ -441,8 +443,24 @@ export default function MailPage() {
 	};
 
 	const bulkMove = (toFolder) => {
+		const target = movePopup;
 		setMovePopup(false);
+		if (target?.from)
+			return actOnOpen((uids, from) => moveMessages(uids, from, toFolder)).catch(
+				(err) => showToast({ text: err.message || "Move failed" }),
+			);
 		return runBulk((uids) => moveMessages(uids, activeFolder, toFolder));
+	};
+
+	// Drag from the list onto a sidebar folder. UIDs only mean something in
+	// the folder they came from, so a payload from elsewhere is ignored and
+	// the request uses the app's current folder. Trash goes via delete.
+	const dropMessages = (to, uids, from) => {
+		if (to === activeFolder || from !== activeFolder || !uids.length) return;
+		(to === trashFolder
+			? deleteMessages(uids, activeFolder)
+			: moveMessages(uids, activeFolder, to)
+		).catch((err) => showToast({ text: err.message || "Move failed" }));
 	};
 
 	const createFolder = async (name) => {
@@ -510,6 +528,58 @@ export default function MailPage() {
 	}, [composeBusy, composeHasUploads, view.type]);
 	const openListMessage = useCallback((msg) => openMessageWithBody(activeFolder, msg.uid, msg), [activeFolder, openMessageWithBody]);
 
+	// ---- actions on the open message ----
+	// Archive / move / delete: open the next message in list order (else the
+	// previous one), or go back to the list when none is left.
+	const actOnOpen = async (fn) => {
+		const uid = Number(view.uid);
+		let next = null;
+		if (view.folder === activeFolder) {
+			const uids = (listState.getMessages?.() || []).map((m) => m.uid);
+			const i = uids.indexOf(uid);
+			if (i >= 0) next = uids[i + 1] ?? uids[i - 1] ?? null;
+		}
+		await fn([uid], view.folder);
+		if (next != null) listState.openUid?.(next);
+		else handleBack();
+	};
+
+	// Flag changes that keep the reader open (the bulk path closes it).
+	const setOpenFlag = async (flag, add) => {
+		const uid = Number(view.uid);
+		if (!add && flag === "\\Seen") await listState.pendingRead?.(uid); // let the auto mark-read land first
+		const res = await apiCall.post(`/mail/${add ? "flags" : "unflag"}`, {
+			folder: view.folder,
+			uids: [uid],
+			action: add ? "add" : "remove",
+			flags: [flag],
+		});
+		applyInboxUnseen(res.data?.inboxUnseen);
+		refreshList?.();
+		loadFolders();
+	};
+	const openStarred = !!(fullMessage ?? view.msg)?.flags?.includes("\\Flagged");
+	const toggleOpenStar = async () => {
+		const uid = Number(view.uid);
+		const add = !openStarred;
+		await setOpenFlag("\\Flagged", add);
+		setFullMessage((m) =>
+			m && Number(m.uid) === uid
+				? {
+						...m,
+						flags: add
+							? [...(m.flags || []), "\\Flagged"]
+							: (m.flags || []).filter((f) => f !== "\\Flagged"),
+					}
+				: m,
+		);
+	};
+	// Back to the list afterwards (like Gmail) so the reader doesn't re-mark it.
+	const markOpenUnread = async () => {
+		await setOpenFlag("\\Seen", false);
+		handleBack();
+	};
+
 	// ---- global shortcuts (list navigation lives in MessageList) ----
 	const modalOpen = settingsOpen || movePopup || emptyTrashOpen || helpOpen;
 	const keyHandler = useRef(null);
@@ -537,6 +607,8 @@ export default function MailPage() {
 				? [openUid]
 				: [];
 		const fail = (err) => showToast({ text: err.message || "Action failed" });
+		// No selection: the shortcut acts on the open message.
+		const onOpen = !selectedUids.length && targets.length > 0;
 
 		switch (e.key) {
 			case "c":
@@ -554,12 +626,36 @@ export default function MailPage() {
 			case "e":
 				if (!targets.length || !archiveFolder || activeFolder === archiveFolder)
 					return;
-				moveMessages(targets, activeFolder, archiveFolder).catch(fail);
+				(onOpen
+					? actOnOpen((uids, from) => moveMessages(uids, from, archiveFolder))
+					: moveMessages(targets, activeFolder, archiveFolder)
+				).catch(fail);
 				break;
 			case "#":
 			case "Delete":
 				if (!targets.length) return;
-				deleteMessages(targets, activeFolder).catch(fail);
+				(onOpen
+					? actOnOpen(deleteMessages)
+					: deleteMessages(targets, activeFolder)
+				).catch(fail);
+				break;
+			case "s": {
+				if (!targets.length) return;
+				if (onOpen) {
+					toggleOpenStar().catch(fail);
+					break;
+				}
+				const msgs = listState.getMessages?.() || [];
+				const allStarred = targets.every((uid) =>
+					msgs.find((m) => m.uid === uid)?.flags?.includes("\\Flagged"),
+				);
+				handleBulkFlags(["\\Flagged"], allStarred ? "remove" : "add");
+				break;
+			}
+			case "u":
+				if (!targets.length) return;
+				if (onOpen) markOpenUnread().catch(fail);
+				else bulkMarkUnread();
 				break;
 			case "z":
 				if (!toast?.undo) return;
@@ -667,6 +763,7 @@ export default function MailPage() {
 					active={activeFolder}
 					onSelect={selectFolder}
 					onCreate={createFolder}
+					onDropMessages={dropMessages}
 				/>
 				{folderError && <div role="alert" className="px-4 text-xs text-danger">{folderError} <button type="button" onClick={loadFolders} className="underline">Retry</button></div>}
 
@@ -910,6 +1007,7 @@ export default function MailPage() {
 								: undefined
 						}
 						keyboardEnabled={!modalOpen && view.type !== "compose"}
+						draggable={!isMobile}
 					/>
 				</div>
 
@@ -987,7 +1085,19 @@ export default function MailPage() {
 						uid={view.uid}
 						initialMsg={view.msg}
 						onBack={handleBack}
-						onDelete={() => deleteMessages([Number(view.uid)], view.folder)}
+						onDelete={() => actOnOpen(deleteMessages)}
+						onArchive={
+							archiveFolder && view.folder !== archiveFolder
+								? () =>
+										actOnOpen((uids, from) =>
+											moveMessages(uids, from, archiveFolder),
+										)
+								: undefined
+						}
+						onMove={() => setMovePopup({ from: view.folder })}
+						onToggleStar={toggleOpenStar}
+						starred={openStarred}
+						onMarkUnread={markOpenUnread}
 						onCompose={openCompose}
 						onOpenThread={(folder, uid) =>
 							openMessageWithBody(folder, uid, null)
@@ -1039,7 +1149,7 @@ export default function MailPage() {
 						<h3 className="mb-3 text-sm font-semibold text-ink-2">Move to</h3>
 						<div className="max-h-72 space-y-1 overflow-y-auto">
 							{folders
-								.filter((f) => f.path !== activeFolder)
+								.filter((f) => f.path !== (movePopup.from || activeFolder))
 								.map((f) => (
 									<button
 										type="button"

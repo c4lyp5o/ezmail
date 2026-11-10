@@ -3,7 +3,9 @@ import { marked } from "marked";
 import DOMPurify from "dompurify";
 import { apiCall } from "../utils/apiCall.js";
 import {
+	Archive,
 	ArrowLeft,
+	FolderInput,
 	Mail as MailIcon,
 	Trash2,
 	ChevronDown,
@@ -16,6 +18,8 @@ import {
 	Image as ImageIcon,
 	Reply,
 	ReplyAll,
+	Star,
+	StarOff,
 } from "lucide-react";
 
 function DetailRow({ label, value }) {
@@ -134,6 +138,11 @@ export default function MessageView({
 	setShowRemote,
 	showRemote,
 	onLoaded,
+	onArchive, // omitted where archiving makes no sense
+	onMove,
+	onToggleStar,
+	starred = false,
+	onMarkUnread,
 }) {
 	const [msg, setMsg] = useState(initialMsg || null);
 	const [loading, setLoading] = useState(true);
@@ -209,14 +218,15 @@ export default function MessageView({
 	// Inline (cid:) images render in the body; only real files get cards.
 	const files = (msg?.attachments || []).filter((a) => !a.related);
 
-	const remove = async () => {
+	// The parent navigates afterwards (next message, or back to the list).
+	const run = (fn, fallback) => async () => {
 		try {
-			await onDelete();
-			onBack?.();
+			await fn?.();
 		} catch (err) {
-			setError(err.message || "Failed to delete");
+			setError(err.message || fallback);
 		}
 	};
+	const remove = run(onDelete, "Failed to delete");
 
 	// Size the body frame to its content (and keep it fitted as images load)
 	// so the reader scrolls as one page instead of a fixed-height box.
@@ -307,6 +317,32 @@ export default function MessageView({
 						<span className="hidden lg:inline">{label}</span>
 					</button>
 				))}
+				{[
+					onArchive && ["archive", Archive, "Archive", "e", onArchive],
+					onMove && ["move", FolderInput, "Move to…", null, onMove],
+					onToggleStar && [
+						"star",
+						starred ? StarOff : Star,
+						starred ? "Unstar" : "Star",
+						"s",
+						onToggleStar,
+					],
+					onMarkUnread && ["unread", MailIcon, "Mark unread", "u", onMarkUnread],
+				]
+					.filter(Boolean)
+					.map(([id, Icon, label, key, fn]) => (
+						<button
+							key={id}
+							type="button"
+							onClick={run(fn, `${label} failed`)}
+							aria-label={label}
+							title={key ? `${label} (${key})` : label}
+							className="flex items-center gap-1 rounded-lg px-2 py-1.5 text-sm text-ink-muted transition hover:bg-hover hover:text-ink-2"
+						>
+							<Icon className="h-4 w-4" />
+							<span className="hidden xl:inline">{label}</span>
+						</button>
+					))}
 				<button
 					type="button"
 					onClick={remove}

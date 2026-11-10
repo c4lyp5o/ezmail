@@ -10,6 +10,20 @@ import {
 	Trash2,
 } from "lucide-react";
 import { useState } from "react";
+import { DRAG_MIME } from "./MessageList.jsx";
+
+// Reads a message drag payload; only positive integer UIDs survive.
+function readDrop(e) {
+	try {
+		const { uids, folder } = JSON.parse(e.dataTransfer.getData(DRAG_MIME));
+		const clean = Array.isArray(uids)
+			? uids.filter((u) => Number.isInteger(u) && u > 0)
+			: [];
+		return clean.length ? { uids: clean, folder: String(folder || "") } : null;
+	} catch {
+		return null;
+	}
+}
 
 // Icons by RFC 6154 special-use flag; names are only a fallback.
 const SPECIAL_USE_ICONS = {
@@ -81,7 +95,31 @@ function NewFolder({ onCreate }) {
 	);
 }
 
-export default function FolderList({ folders, active, onSelect, onCreate }) {
+export default function FolderList({ folders, active, onSelect, onCreate, onDropMessages }) {
+	const [dropTarget, setDropTarget] = useState(null);
+	const carriesMessages = (e) =>
+		!!onDropMessages && [...(e.dataTransfer?.types || [])].includes(DRAG_MIME);
+	const dropProps = (path) =>
+		onDropMessages
+			? {
+					onDragOver: (e) => {
+						if (!carriesMessages(e)) return;
+						e.preventDefault();
+						e.dataTransfer.dropEffect = path === active ? "none" : "move";
+						if (dropTarget !== path) setDropTarget(path);
+					},
+					onDragLeave: (e) => {
+						if (!e.currentTarget.contains(e.relatedTarget)) setDropTarget(null);
+					},
+					onDrop: (e) => {
+						setDropTarget(null);
+						if (!carriesMessages(e)) return;
+						e.preventDefault();
+						const payload = readDrop(e);
+						if (payload) onDropMessages(path, payload.uids, payload.folder);
+					},
+				}
+			: {};
 	return (
 		<nav className="flex-1 space-y-0.5 overflow-y-auto px-2 py-2">
 			{folders.length === 0 && (
@@ -100,8 +138,11 @@ export default function FolderList({ folders, active, onSelect, onCreate }) {
 						type="button"
 						key={folder.path}
 						onClick={() => onSelect(folder.path)}
+						{...dropProps(folder.path)}
 						className={`relative flex w-full items-center gap-3 rounded-md pl-6 py-1.5 text-sm transition ${
-							isActive
+							dropTarget === folder.path && !isActive
+								? "bg-accent/20 text-ink ring-1 ring-accent"
+								: isActive
 								? "bg-accent/12 text-ink font-medium"
 								: "text-ink-muted hover:bg-hover hover:text-ink"
 						}`}
