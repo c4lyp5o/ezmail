@@ -10,6 +10,7 @@ import {
 	Trash2,
 } from "lucide-react";
 import { useState } from "react";
+import { FolderMenu, RenameFolder } from "./FolderActions.jsx";
 import { DRAG_MIME } from "./MessageList.jsx";
 
 // Reads a message drag payload; only positive integer UIDs survive.
@@ -95,8 +96,14 @@ function NewFolder({ onCreate }) {
 	);
 }
 
-export default function FolderList({ folders, active, onSelect, onCreate, onDropMessages }) {
+// Only plain user folders can be renamed/deleted: not INBOX and nothing the
+// sidebar treats as special (by special-use flag or conventional name).
+const isUserFolder = (folder) =>
+	folder.path.toUpperCase() !== "INBOX" && !folder.specialUse && !Object.hasOwn(NAME_ICONS, folder.name);
+
+export default function FolderList({ folders, active, onSelect, onCreate, onDropMessages, onRename, onDelete }) {
 	const [dropTarget, setDropTarget] = useState(null);
+	const [renaming, setRenaming] = useState(null);
 	const carriesMessages = (e) =>
 		!!onDropMessages && [...(e.dataTransfer?.types || [])].includes(DRAG_MIME);
 	const dropProps = (path) =>
@@ -127,19 +134,30 @@ export default function FolderList({ folders, active, onSelect, onCreate, onDrop
 			)}
 			{folders.map((folder) => {
 				const Icon =
-					SPECIAL_USE_ICONS[folder.specialUse] || NAME_ICONS[folder.name] || Folder;
+					SPECIAL_USE_ICONS[folder.specialUse] || (Object.hasOwn(NAME_ICONS, folder.name) ? NAME_ICONS[folder.name] : null) || Folder;
 				const isActive = folder.path === active;
 				// Unread counts are noise for Sent/Drafts/Trash.
 				const unread = /\\(Sent|Drafts|Trash)/.test(folder.specialUse || "")
 					? 0
 					: folder.unread || 0;
+				const editable = !!(onRename && onDelete) && isUserFolder(folder);
+				if (editable && renaming === folder.path) {
+					return (
+						<RenameFolder
+							key={folder.path}
+							folder={folder}
+							onSubmit={(name) => onRename(folder.path, name)}
+							onClose={() => setRenaming(null)}
+						/>
+					);
+				}
+				// Drop handlers sit on the row so the "…" button is a target too.
 				return (
+					<div key={folder.path} className="group relative" {...dropProps(folder.path)}>
 					<button
 						type="button"
-						key={folder.path}
 						onClick={() => onSelect(folder.path)}
-						{...dropProps(folder.path)}
-						className={`relative flex w-full items-center gap-3 rounded-md pl-6 py-1.5 text-sm transition ${
+						className={`relative flex w-full items-center gap-3 rounded-md pl-6 py-1.5 text-sm transition ${editable ? "pr-8" : ""} ${
 							dropTarget === folder.path && !isActive
 								? "bg-accent/20 text-ink ring-1 ring-accent"
 								: isActive
@@ -165,6 +183,10 @@ export default function FolderList({ folders, active, onSelect, onCreate, onDrop
 							</span>
 						)}
 					</button>
+					{editable && (
+						<FolderMenu folder={folder} onRename={() => setRenaming(folder.path)} onDelete={onDelete} />
+					)}
+					</div>
 				);
 			})}
 			{onCreate && <NewFolder onCreate={onCreate} />}

@@ -11,6 +11,7 @@ import {
 	Star,
 	Trash2,
 } from "lucide-react";
+import SearchHelp from "./SearchHelp.jsx";
 
 export const DRAG_MIME = "application/x-ezmail-uids";
 const PAGE_SIZE = 50;
@@ -465,11 +466,17 @@ export default function MessageList({
 						value={searchInput}
 						onChange={(e) => setSearchInput(e.target.value)}
 						onKeyDown={(e) => e.key === "Escape" && e.currentTarget.blur()}
-						placeholder="Search mail…"
+						placeholder="Search (from:, is:unread…)"
 						className="w-full rounded-md border border-hair bg-panel/60 py-1.5 pl-8 pr-10 text-sm text-ink-2 outline-none transition placeholder:text-ink-faint focus:border-indigo-600"
 					/>
 					{searchInput && <button type="button" onClick={() => setSearchInput("")} aria-label="Clear search" className="absolute right-2 top-1 text-ink-muted">×</button>}
 				</div>
+				<SearchHelp
+					onInsert={(op) => {
+						setSearchInput((cur) => (cur.trim() ? `${cur.trim()} ${op}` : op));
+						document.getElementById("mail-search")?.focus();
+					}}
+				/>
 				<button
 					type="button"
 					onClick={() => setSort(sort === "desc" ? "asc" : "desc")}

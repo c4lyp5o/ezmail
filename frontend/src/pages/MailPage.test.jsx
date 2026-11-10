@@ -414,3 +414,161 @@ describe("drag messages onto a folder", () => {
 		expect(screen.getByText("Bravo").closest("[data-uid]").hasAttribute("draggable")).toBe(false);
 	});
 });
+
+describe("compose undo countdown", () => {
+	test("folder navigation is blocked while counting down and works again after Undo", async () => {
+		const calls = mailbox();
+		await renderMail();
+		const nav = within(screen.getByRole("navigation"));
+		fireEvent.click(screen.getByRole("button", { name: /compose|new message/i }));
+		fireEvent.change(await screen.findByPlaceholderText("recipient@example.com"), { target: { value: "bob@x.io" } });
+		fireEvent.click(screen.getByRole("button", { name: "Send" }));
+		const undo = await screen.findByRole("button", { name: "Undo" });
+		fireEvent.click(nav.getByRole("button", { name: "Archive" }));
+		fireEvent.click(screen.getByText("Alpha"));
+		expect(screen.getByRole("button", { name: "Undo" })).toBeTruthy(); // still composing, send still pending
+		expect(screen.getByPlaceholderText("Subject")).toBeTruthy();
+		await new Promise((r) => setTimeout(r, 450)); // past the double-click guard
+		fireEvent.click(undo);
+		await waitFor(() => expect(screen.queryByRole("button", { name: "Undo" })).toBeNull());
+		fireEvent.click(nav.getByRole("button", { name: "Archive" }));
+		await waitFor(() => expect(screen.queryByPlaceholderText("Subject")).toBeNull());
+		expect(posted(calls, "/mail/send")).toHaveLength(0);
+	});
+});
+
+describe("rename and delete folders", () => {
+	const list = (subject, uid = 5) => ({ messages: [mk(uid, subject)], total: 1, page: 1, pageSize: 50 });
+	// INBOX + system folders + "Projects" with a child "Projects/2026".
+	function folderMailbox({ rename, remove } = {}) {
+		let folders = [...FOLDERS, folder("Projects"), { ...folder("Projects/2026"), name: "2026" }];
+		return mockApi({
+			"GET /me": ME,
+			"GET /mail/folders": () => folders,
+			"GET /mail/messages/INBOX": list("Alpha", 30),
+			"GET /mail/messages/Projects": list("Plans"),
+			"GET /mail/messages/Projects%2F2026": list("Budget"),
+			"GET /mail/messages/Work%2F2026": list("Budget"),
+			"GET /mail/messages/Work": list("Plans"),
+			"GET /filters": { rules: [] },
+			"POST /mail/folders/rename": (b) => {
+				const out = rename?.(b);
+				if (out) return out;
+				folders = folders.map((f) =>
+					f.path.startsWith("Projects") ? { ...f, path: f.path.replace("Projects", b.newName), name: f.name === "Projects" ? b.newName : f.name } : f,
+				);
+				return { path: b.path, newPath: b.newName };
+			},
+			"POST /mail/folders/delete": (b) => {
+				const out = remove?.(b);
+				if (out) return out;
+				folders = folders.filter((f) => f.path !== b.path);
+				return { path: b.path, filtersAffected: false };
+			},
+		});
+	}
+	const nav = () => within(screen.getByRole("navigation"));
+	const openFolder = async (name, subject) => {
+		fireEvent.click(await nav().findByRole("button", { name }));
+		await screen.findByText(subject);
+	};
+	const menu = async (name, item) => {
+		fireEvent.click(await nav().findByRole("button", { name: `Folder actions for ${name}` }));
+		fireEvent.click(await screen.findByRole("menuitem", { name: item }));
+	};
+	const heading = () => screen.getAllByRole("heading", { level: 2 })[0].textContent;
+
+	test("system folders get no menu; user folders do", async () => {
+		folderMailbox();
+		await renderMail();
+		await nav().findByRole("button", { name: "Folder actions for Projects" });
+		expect(nav().getAllByRole("button", { name: /^Folder actions for/ }).map((b) => b.getAttribute("aria-label"))).toEqual([
+			"Folder actions for Projects",
+			"Folder actions for 2026",
+		]);
+	});
+
+	test("renaming the parent of the open folder follows it to the new path", async () => {
+		const calls = folderMailbox();
+		await renderMail();
+		await openFolder("2026", "Budget");
+		await menu("Projects", "Rename");
+		fireEvent.change(screen.getByLabelText("New name for Projects"), { target: { value: "Work" } });
+		fireEvent.click(screen.getByRole("button", { name: "Rename" }));
+		await waitFor(() => expect(heading()).toBe("Work/2026"));
+		expect(posted(calls, "/mail/folders/rename").map((c) => c.body)).toEqual([{ path: "Projects", newName: "Work" }]);
+		expect(await nav().findByRole("button", { name: "Work" })).toBeTruthy();
+		expect(await screen.findByText(/Folder renamed to “Work”/)).toBeTruthy();
+		expect(screen.queryByText(/Filter rules/)).toBeNull();
+	});
+
+	test("a 409 from rename stays inline in the form", async () => {
+		folderMailbox({ rename: () => ({ status: 409, json: { success: false, message: "A folder with that name already exists." } }) });
+		await renderMail();
+		await menu("Projects", "Rename");
+		fireEvent.change(screen.getByLabelText("New name for Projects"), { target: { value: "Archive" } });
+		fireEvent.click(screen.getByRole("button", { name: "Rename" }));
+		expect((await screen.findByText("A folder with that name already exists.")).getAttribute("role")).toBe("alert");
+		expect(screen.getByLabelText("New name for Projects").value).toBe("Archive");
+		expect(heading()).toBe("INBOX");
+	});
+
+	test("deleting the open folder falls back to INBOX", async () => {
+		const calls = folderMailbox();
+		await renderMail();
+		await openFolder("Projects", "Plans");
+		await menu("Projects", "Delete");
+		fireEvent.click(await screen.findByRole("button", { name: "Delete folder" }));
+		await waitFor(() => expect(heading()).toBe("INBOX"));
+		await screen.findByText("Alpha");
+		expect(posted(calls, "/mail/folders/delete").map((c) => c.body)).toEqual([{ path: "Projects" }]);
+		await waitFor(() => expect(nav().queryByRole("button", { name: "Projects" })).toBeNull());
+		expect(await screen.findByText("Folder deleted.")).toBeTruthy();
+	});
+
+	test("a 409 from delete is shown and nothing changes", async () => {
+		folderMailbox({ remove: () => ({ status: 409, json: { success: false, message: "Only empty folders can be deleted. Move or delete its messages first." } }) });
+		await renderMail();
+		await openFolder("Projects", "Plans");
+		await menu("Projects", "Delete");
+		fireEvent.click(await screen.findByRole("button", { name: "Delete folder" }));
+		const dialog = await screen.findByRole("alertdialog");
+		expect((await within(dialog).findByRole("alert")).textContent).toContain("Only empty folders can be deleted. Move");
+		expect(heading()).toBe("Projects");
+		fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+		await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+	});
+
+	test("shortcuts don't fire behind the delete confirmation", async () => {
+		const calls = mockApi({
+			"GET /me": ME,
+			"GET /mail/folders": [...FOLDERS, folder("Projects")],
+			"GET /mail/messages/INBOX": list("Alpha", 30),
+			"GET /mail/message/INBOX/30": { ...mk(30, "Alpha"), folder: "INBOX", to: ME.mailbox, html: "", text: "body of Alpha", attachments: [] },
+			"POST /mail/delete": { uids: [30], folder: "INBOX", trash: "Trash", inboxUnseen: 0, movedUids: [1] },
+			"POST /mail/move": { inboxUnseen: 0 },
+		});
+		await renderMail();
+		await open("Alpha");
+		await menu("Projects", "Delete");
+		const dialog = await screen.findByRole("alertdialog");
+		const target = within(dialog).getByRole("button", { name: "Delete folder" });
+		for (const key of ["#", "Delete", "e", "c", "j", "k"]) fireEvent.keyDown(target, { key });
+		expect(posted(calls, "/mail/delete")).toHaveLength(0);
+		expect(posted(calls, "/mail/move")).toHaveLength(0);
+		expect(screen.queryByPlaceholderText("Subject")).toBeNull(); // "c" didn't open compose
+		expect(screen.getByText("body of Alpha")).toBeTruthy();
+	});
+
+	test("filtersAffected warns and links to Settings → Filters", async () => {
+		folderMailbox({ rename: (b) => ({ path: b.path, newPath: b.newName, filtersAffected: true }) });
+		await renderMail();
+		await menu("Projects", "Rename");
+		fireEvent.change(screen.getByLabelText("New name for Projects"), { target: { value: "Work" } });
+		fireEvent.click(screen.getByRole("button", { name: "Rename" }));
+		expect(await screen.findByText(/Filter rules still point at the old folder/)).toBeTruthy();
+		fireEvent.click(screen.getByRole("button", { name: "Review filters" }));
+		const settings = await screen.findByRole("dialog", { name: /settings/i });
+		expect(within(settings).getByRole("button", { name: "Filters" }).getAttribute("aria-current")).toBe("page");
+	});
+});

@@ -106,11 +106,12 @@ export default function MailPage() {
 	const [emptyTrashOpen, setEmptyTrashOpen] = useState(false);
 	const [emptyTrashBusy, setEmptyTrashBusy] = useState(false);
 	const [settingsOpen, setSettingsOpen] = useState(false);
+	const [settingsTab, setSettingsTab] = useState(undefined);
 	const [showRemote, setShowRemote] = useState(false);
 	const [helpOpen, setHelpOpen] = useState(false);
 	const moveDialogRef = useDialogFocus(movePopup, () => setMovePopup(false));
 	const helpDialogRef = useDialogFocus(helpOpen, () => setHelpOpen(false));
-	const [toast, setToast] = useState(null); // { text, undo?: fn }
+	const [toast, setToast] = useState(null); // { text, undo?: fn, action?: { label, run } }
 	const toastTimer = useRef(null);
 	const [live, setLive] = useState(false); // SSE stream connected
 	const [notifyOn, setNotifyOn] = useState(readNotifyPref);
@@ -469,6 +470,48 @@ export default function MailPage() {
 		selectFolder(res.data.path);
 	};
 
+	// Rename/delete leave the active folder (or a child of it) dangling, so
+	// it moves along without the compose guards selectFolder applies.
+	const inFolder = (path, target) => {
+		const delim = folders.find((f) => f.path === path)?.delimiter || "/";
+		return target === path || target.startsWith(path + delim);
+	};
+	const relocate = (from, to) => {
+		if (!inFolder(from, activeFolder)) return;
+		clearSelection();
+		setActiveFolder(to);
+		if (view.type === "message") setView({ type: "folder" });
+	};
+	const openFilters = () => {
+		setToast(null);
+		setSettingsTab("filters");
+		setSettingsOpen(true);
+	};
+	const folderToast = (text, filtersAffected) =>
+		showToast(
+			filtersAffected
+				? {
+						text: `${text} Filter rules still point at the old folder.`,
+						action: { label: "Review filters", run: openFilters },
+					}
+				: { text },
+		);
+
+	const renameFolder = async (path, newName) => {
+		const res = await apiCall.post("/mail/folders/rename", { path, newName });
+		const { newPath, filtersAffected } = res.data || {};
+		relocate(path, newPath + activeFolder.slice(path.length));
+		await loadFolders();
+		folderToast(`Folder renamed to “${newName}”.`, filtersAffected);
+	};
+
+	const deleteFolder = async (path) => {
+		const res = await apiCall.post("/mail/folders/delete", { path });
+		relocate(path, "INBOX");
+		await loadFolders();
+		folderToast("Folder deleted.", res.data?.filtersAffected);
+	};
+
 	// ---- folder / message selection ----
 	const selectFolder = (f) => {
 		if (composeBusy) return;
@@ -764,6 +807,8 @@ export default function MailPage() {
 					onSelect={selectFolder}
 					onCreate={createFolder}
 					onDropMessages={dropMessages}
+					onRename={renameFolder}
+					onDelete={deleteFolder}
 				/>
 				{folderError && <div role="alert" className="px-4 text-xs text-danger">{folderError} <button type="button" onClick={loadFolders} className="underline">Retry</button></div>}
 
@@ -777,7 +822,7 @@ export default function MailPage() {
 					<div className="mt-3 flex items-center justify-between px-1">
 						<button
 							type="button"
-							onClick={() => setSettingsOpen(true)}
+							onClick={() => { setSettingsTab(undefined); setSettingsOpen(true); }}
 							aria-label="Settings"
 				title="Settings"
 							className="flex h-8 w-8 items-center justify-center rounded-md text-ink-muted transition hover:bg-hover hover:text-ink-2"
@@ -1189,6 +1234,15 @@ export default function MailPage() {
 							Undo
 						</button>
 					)}
+					{toast.action && (
+						<button
+							type="button"
+							onClick={toast.action.run}
+							className="font-medium text-accent hover:underline"
+						>
+							{toast.action.label}
+						</button>
+					)}
 					<button
 						type="button"
 						onClick={() => setToast(null)}
@@ -1243,6 +1297,7 @@ export default function MailPage() {
 			<SettingsModal
 				open={settingsOpen}
 				onClose={() => setSettingsOpen(false)}
+				initialTab={settingsTab}
 				mailbox={user?.mailbox}
 				folders={folders}
 				notifyOn={notifyOn}

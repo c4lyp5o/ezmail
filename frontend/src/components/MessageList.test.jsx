@@ -102,7 +102,7 @@ describe("plain navigation", () => {
 
 	test("ignored while typing in search", async () => {
 		const onOpen = await setup();
-		fireEvent.keyDown(screen.getByPlaceholderText("Search mail…"), { key: "j" });
+		fireEvent.keyDown(screen.getByLabelText("Search current folder"), { key: "j" });
 		expect(onOpen).not.toHaveBeenCalled();
 	});
 
@@ -219,5 +219,39 @@ describe("swipe (mobile)", () => {
 		fireEvent.touchMove(row(), { touches: [{ clientX: 200, clientY: 100 }] });
 		expect(screen.getByText("Archive")).toBeTruthy();
 		expect(row().style.transform).toBe("translateX(-100px)");
+	});
+});
+
+describe("search operators", () => {
+	test("the help lists the operators and inserts an example", async () => {
+		await setup();
+		const toggle = screen.getByRole("button", { name: "Search operators" });
+		fireEvent.click(toggle);
+		const help = screen.getByRole("dialog", { name: "Search operators" });
+		for (const op of ["from:", "to:", "subject:", "is:unread", "is:starred", "after:", "before:"]) {
+			expect(help.textContent).toContain(op);
+		}
+		expect(help.textContent).toContain("UTC");
+		expect(help.textContent).not.toContain("has:");
+		await waitFor(() => expect(help.contains(document.activeElement)).toBe(true));
+		fireEvent.keyDown(document.activeElement, { key: "Escape" });
+		expect(screen.queryByRole("dialog")).toBeNull();
+		expect(document.activeElement).toBe(toggle);
+
+		const input = screen.getByLabelText("Search current folder");
+		fireEvent.change(input, { target: { value: "invoice" } });
+		fireEvent.click(toggle);
+		fireEvent.click(screen.getByText("is:unread"));
+		expect(input.value).toBe("invoice is:unread");
+		expect(document.activeElement).toBe(input);
+	});
+
+	test("a typed operator query is sent verbatim", async () => {
+		await setup();
+		const query = 'from:alice subject:"weekly report" before:2026-01-01';
+		fireEvent.change(screen.getByLabelText("Search current folder"), { target: { value: query } });
+		await waitFor(() =>
+			expect(calls.some((c) => c.path === "/mail/messages/INBOX" && new URL(c.url, "http://x").searchParams.get("search") === query)).toBe(true),
+		);
 	});
 });
