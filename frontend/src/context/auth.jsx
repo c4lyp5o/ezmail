@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback } from "react";
 import { apiCall } from "../utils/apiCall.js";
+import { clearContacts } from "../utils/contacts.js";
 
 const AuthContext = createContext(null);
 
@@ -46,6 +47,7 @@ export function AuthProvider({ children }) {
 	);
 
 	const logout = useCallback(async () => {
+		clearContacts(); // forget recipient autocomplete history kept in this browser
 		await apiCall.post("/logout");
 		setUser(null);
 	}, []);

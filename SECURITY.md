@@ -19,7 +19,7 @@ Only the latest release (the `master` branch and the `calypso666/ezmail:latest` 
 
 ## Known limitations
 
-- Rate limits are per mailbox and in memory. An attacker can temporarily lock out a mailbox, and the counts reset when the server restarts. Put a per-IP limit at your reverse proxy if ezmail is exposed publicly.
+- Rate limits are in memory. Password and discovery limits are per client address and mailbox with a mailbox-wide ceiling; TOTP code and recovery attempts (5 per 15 minutes) are per mailbox. An attacker can temporarily lock out a mailbox, and the counts reset when the server restarts. Put a per-IP limit at your reverse proxy if ezmail is exposed publicly.
 - With passwordless TOTP, the first login step reveals whether a mailbox has TOTP enabled. This step is rate-limited.
 - A server compromise exposes the stored, encrypted passwords of active sessions and TOTP enrolments, together with the key if it lives on the same host.
 

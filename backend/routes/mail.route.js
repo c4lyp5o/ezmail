@@ -36,11 +36,45 @@ export const MailRoutes = new Elysia({ prefix: "/api/v1/mail" })
 			tags: ["Mail"],
 		},
 	})
+	.post("/folders/rename", MailService.renameFolder, {
+		body: MailModel.renameFolderBody,
+		response: {
+			200: MailModel.renameFolderResponse,
+			400: MailModel.renameFolderResponse,
+			404: MailModel.renameFolderResponse,
+			409: MailModel.renameFolderResponse,
+			502: MailModel.renameFolderResponse,
+		},
+		detail: {
+			summary: "Rename a folder",
+			description:
+				"Renames a user folder in place (same parent). INBOX and special-use folders are refused (400); 404 when the folder doesn't exist; 409 when the target exists. Filter rules are not rewritten: `filtersAffected` warns when they reference the folder.",
+			tags: ["Mail"],
+		},
+	})
+	.post("/folders/delete", MailService.deleteFolder, {
+		body: MailModel.deleteFolderBody,
+		response: {
+			200: MailModel.deleteFolderResponse,
+			400: MailModel.deleteFolderResponse,
+			404: MailModel.deleteFolderResponse,
+			409: MailModel.deleteFolderResponse,
+			502: MailModel.deleteFolderResponse,
+		},
+		detail: {
+			summary: "Delete an empty folder",
+			description:
+				"Deletes a user folder with no messages and no child folders (409 otherwise). INBOX and special-use folders are refused (400). `filtersAffected` warns when filter rules reference it.",
+			tags: ["Mail"],
+		},
+	})
 	.get("/messages/:folder", MailService.listMessages, {
+		query: MailModel.listMessagesQuery,
 		response: MailModel.listMessagesResponse,
 		detail: {
 			summary: "List messages in a folder",
-			description: "Paginated envelope listing for a folder (default INBOX).",
+			description:
+				"Paginated envelope listing for a folder (default INBOX). `?snippets=1` adds a `snippet` (start of the body text, at most 140 characters) to each row; best effort, never fails the list.",
 			tags: ["Mail"],
 		},
 	})
@@ -52,7 +86,7 @@ export const MailRoutes = new Elysia({ prefix: "/api/v1/mail" })
 		response: MailModel.getMessageResponse,
 		detail: {
 			summary: "Get a single message",
-			description: "Fetches full body (text/html) + flags for one message.",
+			description: "Fetches full body (text/html) + flags for one message. 404 when it no longer exists.",
 			tags: ["Mail"],
 		},
 	})
@@ -72,10 +106,11 @@ export const MailRoutes = new Elysia({ prefix: "/api/v1/mail" })
 			uid: t.String(),
 			index: t.String(),
 		}),
+		query: t.Object({ inline: t.Optional(t.String()) }),
 		detail: {
 			summary: "Download an attachment",
 			description:
-				"Streams one attachment's bytes (also backs inline cid: images). Always served as a download with a sandboxing CSP.",
+				"Streams one attachment's bytes (also backs inline cid: images). Served as a download with a sandboxing CSP; with `?inline=1`, PNG/JPEG/GIF/WebP are served `inline` (other types ignore the flag).",
 			tags: ["Mail"],
 		},
 	})
@@ -108,10 +143,11 @@ export const MailRoutes = new Elysia({ prefix: "/api/v1/mail" })
 	})
 	.post("/delete", MailService.deleteMessage, {
 		body: MailModel.deleteMessageBody,
+		response: MailModel.deleteMessageResponse,
 		detail: {
-			summary: "Permanently delete a message",
+			summary: "Delete messages",
 			description:
-				"Flags a message as \\Deleted and expunges it from the folder (permanent, used on Trash items).",
+				"Outside Trash: moves to Trash (created if missing) and returns `trash` and, with UIDPLUS, `movedUids`. Inside Trash: flags \\Deleted and expunges (permanent, no `trash`).",
 			tags: ["Mail"],
 		},
 	})
@@ -130,6 +166,35 @@ export const MailRoutes = new Elysia({ prefix: "/api/v1/mail" })
 		detail: {
 			summary: "Send an email",
 			description: "Sends an email via SMTP.",
+			tags: ["Mail"],
+		},
+	})
+	.post("/drafts", MailService.saveDraft, {
+		body: MailModel.saveDraftBody,
+		response: {
+			200: MailModel.saveDraftResponse,
+			400: MailModel.saveDraftResponse,
+			401: MailModel.saveDraftResponse,
+			502: MailModel.saveDraftResponse,
+		},
+		detail: {
+			summary: "Save a draft",
+			description:
+				"Stores the draft (Bcc kept) in the Drafts folder (created if missing) flagged \\Draft \\Seen. `uid` is returned when the server reports it (UIDPLUS), otherwise looked up by Message-ID on a best-effort basis. With `replaces`, that UID is removed from Drafts after the new copy is stored, only if it is flagged \\Draft; `replaced` says whether it was. `replaced: false` after a successful save means the earlier copy was not removed and may remain (e.g. the mailbox does not keep \\Draft).",
+			tags: ["Mail"],
+		},
+	})
+	.post("/drafts/discard", MailService.discardDraft, {
+		body: MailModel.discardDraftBody,
+		response: {
+			200: MailModel.discardDraftResponse,
+			401: MailModel.discardDraftResponse,
+			502: MailModel.discardDraftResponse,
+		},
+		detail: {
+			summary: "Discard a draft",
+			description:
+				"Removes one message from the Drafts folder if it is flagged \\Draft. Idempotent: an unknown or non-draft UID answers 200 with `removed: false`.",
 			tags: ["Mail"],
 		},
 	})

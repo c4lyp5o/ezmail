@@ -1,5 +1,6 @@
 import { generalLogger as logger } from "../logger.js";
 import { getUser } from "../plugins/auth.plugin.js";
+import { REQUEST_TIMEOUTS } from "./imap-pool.service.js";
 import { buildImapClient } from "./mail.service.js";
 
 // Live INBOX updates over Server-Sent Events, fed by IMAP IDLE.
@@ -10,6 +11,7 @@ import { buildImapClient } from "./mail.service.js";
 // Events are hints — the client refetches; nothing mail-related is sent.
 
 const HEARTBEAT_MS = 20000; // < Bun's idleTimeout (index.js)
+const ERROR_RETRY_MS = 30000; // SSE reconnect delay after a failed watch
 const watchers = new Map(); // mailbox -> { listeners: Set, client, ready }
 
 export const activeWatchers = () => watchers.size;
@@ -19,7 +21,7 @@ function emit(w, event) {
 }
 
 function startWatcher(user) {
-	const w = { listeners: new Set(), client: buildImapClient(user) };
+	const w = { listeners: new Set(), client: buildImapClient(user, REQUEST_TIMEOUTS) };
 	const { client } = w;
 	client.on("exists", (d) => {
 		if (d.count > d.prevCount)
@@ -98,6 +100,8 @@ export const PushService = {
 					else send({ type: "ready" });
 				} catch (err) {
 					logger.warn(`[PUSH] watch failed for ${user.mailbox}: ${err.message}`);
+					// Slow the browser's automatic reconnect (default ~3 s) while the server is down.
+					write(`retry: ${ERROR_RETRY_MS}\n\n`);
 					send({ type: "error" });
 					cleanup();
 				}

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { createPool } from "../services/imap-pool.service.js";
 import { closeImapPool } from "../services/mail.service.js";
 import { imap } from "./helpers/fake-imap.js";
 import { call, login } from "./helpers/http.js";
@@ -45,6 +46,37 @@ describe("IMAP connection pool", () => {
 		imap.failMove = false;
 		expect((await folders()).status).toBe(200);
 		expect(imap.clients.at(-1)).not.toBe(broken);
+	});
+
+	test("a waiter woken while the pool empties does not push it past three", async () => {
+		process.env.IMAP_POOL_IDLE_MS = "0"; // every release drops its connection
+		let open = 0;
+		let maxOpen = 0;
+		const pool = createPool(() => ({
+			on() {},
+			async connect() { maxOpen = Math.max(maxOpen, ++open); },
+			async logout() { open--; },
+		}));
+		const user = { mailbox: "race@x.io", password: "p" };
+		const held = [];
+		let draining = false;
+		const hold = () => pool.use(user, () => new Promise((resolve) => (draining ? resolve() : held.push(resolve))));
+		const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+		const first = [hold(), hold(), hold()];
+		await tick();
+		const waiter = hold(); // queued behind the three
+		await tick();
+		// Release all three at once: A wakes the waiter, then B and C empty the entry
+		// before the waiter resumes.
+		for (const resolve of held.splice(0, 3)) resolve();
+		await Promise.all(first);
+		await tick();
+		const more = [hold(), hold(), hold()];
+		await tick();
+		draining = true;
+		for (const resolve of held.splice(0)) resolve();
+		await Promise.all([waiter, ...more]);
+		expect(maxOpen).toBeLessThanOrEqual(3);
 	});
 
 	test("closeIdle logs pooled connections out", async () => {

@@ -15,7 +15,7 @@ const SECTIONS = [
 ];
 const pickSection = (id) => SECTIONS.some((section) => section.id === id) ? id : "general";
 
-export default function SettingsModal({ open, onClose, mailbox, folders = [], initialTab, notifyOn = false, onToggleNotify }) {
+export default function SettingsModal({ open, onClose, mailbox, folders = [], initialTab, notifyOn = false, onToggleNotify, previewsOn = true, onTogglePreviews }) {
 	const [section, setSection] = useState(() => pickSection(initialTab));
 	const [notificationError, setNotificationError] = useState("");
 	const [filtersDirty, setFiltersDirty] = useState(false);
@@ -72,6 +72,10 @@ export default function SettingsModal({ open, onClose, mailbox, folders = [], in
 							<div className="flex items-center justify-between gap-4 py-4 first:pt-0">
 								<div><p className="text-sm font-medium text-ink-2">Appearance</p><p className="mt-1 text-xs text-ink-muted">Choose a light or dark theme.</p></div>
 								<button type="button" onClick={toggle} aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"} className="shrink-0 rounded-lg border border-hair-strong px-3 py-2 text-sm text-ink-2 hover:bg-hover">{theme === "dark" ? "Dark" : "Light"}</button>
+							</div>
+							<div className="flex items-center justify-between gap-4 py-4">
+								<div><p className="text-sm font-medium text-ink-2">Show message previews</p><p className="mt-1 text-xs text-ink-muted">Show the start of each message under its subject in the list.</p></div>
+								<button type="button" onClick={onTogglePreviews} aria-label="Show message previews" aria-pressed={previewsOn} disabled={!onTogglePreviews} className="shrink-0 rounded-lg border border-hair-strong px-3 py-2 text-sm text-ink-2 hover:bg-hover disabled:opacity-50">{previewsOn ? "On" : "Off"}</button>
 							</div>
 							<div className="flex items-center justify-between gap-4 py-4">
 								<div><p className="flex items-center gap-2 text-sm font-medium text-ink-2"><Bell className="h-4 w-4" /> Desktop notifications</p><p className="mt-1 text-xs text-ink-muted">Get notified about new mail when this tab is in the background.</p></div>
