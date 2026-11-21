@@ -23,12 +23,14 @@ import {
 	StarOff,
 } from "lucide-react";
 import ImagePreview, { isPreviewable } from "./ImagePreview.jsx";
+import CopyButton from "./CopyButton.jsx";
 
-function DetailRow({ label, value }) {
+function DetailRow({ label, value, copy }) {
 	return (
 		<div className="flex gap-3">
 			<span className="w-24 shrink-0 text-ink-muted">{label}</span>
 			<span className="min-w-0 break-all text-ink-2">{value}</span>
+			{copy && <CopyButton value={copy} label={`Copy ${label} address`} />}
 		</div>
 	);
 }
@@ -386,9 +388,12 @@ export default function MessageView({
 						<div className="font-medium text-ink-2">
 							{msg.fromName || msg.from}
 						</div>
-						<div className="text-xs text-ink-muted">
-							{msg.from}
-							{msg.to ? `  →  ${msg.to}` : ""}
+						<div className="flex items-center gap-1 text-xs text-ink-muted">
+							<span className="min-w-0 break-all">
+								{msg.from}
+								{msg.to ? `  →  ${msg.to}` : ""}
+							</span>
+							<CopyButton value={msg.from} label="Copy sender address" />
 						</div>
 					</div>
 					<div className="flex-1" />
@@ -425,9 +430,9 @@ export default function MessageView({
 				{/* Toggleable full detail panel */}
 				{showDetails && (
 					<div className="mt-4 space-y-1.5 rounded-lg border border-hair bg-panel/40 p-4 text-sm">
-						<DetailRow label="From" value={msg.from || "—"} />
-						<DetailRow label="Reply-to" value={msg.replyTo || "—"} />
-						<DetailRow label="To" value={msg.to || "—"} />
+						<DetailRow label="From" value={msg.from || "—"} copy={msg.from} />
+						<DetailRow label="Reply-to" value={msg.replyTo || "—"} copy={msg.replyTo} />
+						<DetailRow label="To" value={msg.to || "—"} copy={msg.to} />
 						<DetailRow
 							label="Date"
 							value={msg.date ? new Date(msg.date).toLocaleString() : "—"}

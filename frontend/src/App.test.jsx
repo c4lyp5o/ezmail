@@ -243,7 +243,7 @@ describe("live updates", () => {
 		const hidden = vi.spyOn(document, "hidden", "get").mockReturnValue(true);
 		act(() => ES.last.emit({ type: "new", path: "INBOX", count: 3 }));
 		expect(shown).toEqual([
-			{ title: "ezmail", body: "3 new messages", tag: "ezmail-new", icon: "/favicon.ico" },
+			{ title: "ezmail", body: "3 new messages", tag: "ezmail-new", icon: "/icons/icon-192.png" },
 		]);
 
 		hidden.mockReturnValue(false); // visible tab: no popup
