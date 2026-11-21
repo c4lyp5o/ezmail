@@ -35,6 +35,7 @@ import { specialFolder } from "../utils/folders.js";
 import { buildDraft, resumeDraft } from "../utils/reply.js";
 import { useDialogFocus } from "../utils/useDialogFocus.js";
 import { useMailEvents } from "../utils/useMailEvents.js";
+import CopyButton from "../components/CopyButton.jsx";
 
 const SHORTCUTS = [
 	["j / k, ↑ / ↓", "Next / previous message (also while reading)"],
@@ -772,7 +773,7 @@ export default function MailPage() {
 				const n = new Notification("ezmail", {
 					body: ev.count > 1 ? `${ev.count} new messages` : "New message",
 					tag: "ezmail-new",
-					icon: "/favicon.ico",
+					icon: "/icons/icon-192.png",
 				});
 				n.onclick = () => {
 					window.focus();
@@ -843,8 +844,11 @@ export default function MailPage() {
 
 				<div className="mt-auto border-t border-hair p-4">
 					<div className="px-1">
-						<div className="min-w-0 truncate text-sm font-medium text-ink-2">
-							{user?.mailbox || "mailbox"}
+						<div className="flex min-w-0 items-center gap-1">
+							<div className="min-w-0 truncate text-sm font-medium text-ink-2" title={user?.mailbox}>
+								{user?.mailbox || "mailbox"}
+							</div>
+							<CopyButton value={user?.mailbox} label="Copy your email address" />
 						</div>
 						<div className="text-xs text-ink-muted" role="status">{live ? "Live updates connected" : "Live updates reconnecting; polling active"}</div>
 					</div>

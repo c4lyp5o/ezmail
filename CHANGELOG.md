@@ -4,7 +4,11 @@ All notable changes to ezmail are recorded here. The format follows [Keep a Chan
 
 ## [Unreleased]
 
+## [3.0.1] - 2026-11-21
+
 ### Added
+- Copy buttons next to email addresses: the sender line, the From / Reply-to / To rows in Details, and your own mailbox in the sidebar (now also shown in full on hover). On plain-HTTP origins, where the Clipboard API is unavailable, it falls back to a hidden textarea copy.
+- The shared ez app icon (from ezconv) as favicon, home-screen icon and desktop notification icon, replacing `favicon.ico`.
 - Reader toolbar with Archive, Move to…, Star/Unstar and Mark unread; shortcuts `s` (star) and `u` (mark unread). After archiving, deleting or moving from the reader the next message opens, and `j` / `k` also step between messages while reading.
 - Drag messages onto a sidebar folder (desktop pointers only), with undo; dropping on Trash deletes.
 - Recipient autocomplete in To, Cc and Bcc from addresses you have sent to. The history is kept in this browser per mailbox (`ezmail_contacts:<mailbox>`, at most 200 entries) and is cleared on logout.
